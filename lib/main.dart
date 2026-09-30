@@ -68,8 +68,10 @@ class _RootAppState extends State<RootApp> {
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
+          // المزوّدات فوق الـ Navigator حتى تصل لكل الشاشات
+          builder: (context, child) => _ready ? _Providers(child: child!) : child!,
           home: _ready
-              ? const _Providers(child: Gate())
+              ? const Gate()
               : (AppConfig.isConfigured && _error == null)
                   ? const SplashView()
                   : SetupScreen(
