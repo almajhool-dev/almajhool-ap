@@ -55,7 +55,12 @@ class _SetupScreenState extends State<SetupScreen> {
                 textDirection: TextDirection.ltr,
                 keyboardType: TextInputType.url,
                 decoration: const InputDecoration(labelText: 'Supabase URL', hintText: 'https://xxxx.supabase.co'),
-                validator: (v) => (v ?? '').trim().startsWith('https://') ? null : 'يجب أن يبدأ بـ https://',
+                validator: (v) {
+                  final u = (v ?? '').trim();
+                  return RegExp(r'^https://[A-Za-z0-9.-]+(/)?$').hasMatch(u)
+                      ? null
+                      : 'الصق Project URL فقط، مثل https://xxxx.supabase.co';
+                },
               ),
               const SizedBox(height: 14),
               TextFormField(
@@ -63,7 +68,13 @@ class _SetupScreenState extends State<SetupScreen> {
                 textDirection: TextDirection.ltr,
                 maxLines: 3,
                 decoration: const InputDecoration(labelText: 'Anon public key'),
-                validator: (v) => (v ?? '').trim().length > 30 ? null : 'المفتاح غير صالح',
+                validator: (v) {
+                  final k = (v ?? '').trim();
+                  final ok = (k.startsWith('eyJ') || k.startsWith('sb_publishable_')) &&
+                      !k.contains(RegExp(r'\s')) &&
+                      k.length > 30;
+                  return ok ? null : 'هذا ليس المفتاح. انسخ anon public key (يبدأ بـ eyJ أو sb_publishable_)';
+                },
               ),
               const SizedBox(height: 24),
               FilledButton(

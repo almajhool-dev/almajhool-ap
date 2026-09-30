@@ -32,6 +32,12 @@ class AppConfig {
     anonKey = prefs.getString(_prefKey) ?? '';
   }
 
+  static Future<void> clear() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_prefUrl);
+    await prefs.remove(_prefKey);
+  }
+
   static Future<void> save(String newUrl, String newKey) async {
     final prefs = await SharedPreferences.getInstance();
     url = newUrl.trim().replaceAll(RegExp(r'/+$'), '');

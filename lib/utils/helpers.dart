@@ -87,6 +87,13 @@ class Validators {
 
 /// تحويل الأخطاء إلى رسائل عربية مفهومة.
 String friendlyError(Object e) {
+  final raw = e.toString();
+  if (raw.contains('Bearer') || raw.contains('Invalid API key') || raw.contains('No API key')) {
+    return 'مفتاح الخادم غير صحيح. اضغط «تغيير إعدادات الخادم» وأدخل anon public key الصحيح';
+  }
+  if (raw.contains('relation') && raw.contains('does not exist') || raw.contains('PGRST202') || raw.contains('Could not find the function')) {
+    return 'قاعدة البيانات غير مهيأة. شغّل ملف schema.sql في Supabase → SQL Editor';
+  }
   if (e is AuthException) {
     final m = e.message.toLowerCase();
     if (m.contains('invalid login')) return 'البريد أو كلمة المرور غير صحيحة';
@@ -106,11 +113,12 @@ String friendlyError(Object e) {
     return m;
   }
   if (e is StorageException) return 'فشل رفع الملف: ${e.message}';
-  final s = e.toString();
+  final s = raw;
   if (s.contains('SocketException') || s.contains('Failed host lookup') || s.contains('ClientException')) {
-    return 'لا يوجد اتصال بالإنترنت';
+    return 'لا يوجد اتصال بالإنترنت أو رابط الخادم غير صحيح';
   }
-  return s.replaceFirst('Exception: ', '');
+  final clean = s.replaceFirst('Exception: ', '');
+  return clean.length > 180 ? '${clean.substring(0, 180)}…' : clean;
 }
 
 void showSnack(BuildContext context, String message, {bool error = false}) {

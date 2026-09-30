@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/config.dart';
 import '../../repositories/user_repositories.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
@@ -31,6 +32,23 @@ class _LoginScreenState extends State<LoginScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _resetServer() async {
+    if (!await confirmDialog(context, 'تغيير إعدادات الخادم',
+        'سيتم مسح رابط ومفتاح Supabase المحفوظين. بعدها أغلق التطبيق وافتحه من جديد لإدخالهما.')) {
+      return;
+    }
+    await AppConfig.clear();
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('تم المسح'),
+        content: const Text('أغلق التطبيق نهائيًا (من قائمة التطبيقات المفتوحة) ثم افتحه من جديد.'),
+        actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('حسنًا'))],
+      ),
+    );
   }
 
   @override
@@ -109,6 +127,12 @@ class _LoginScreenState extends State<LoginScreen> {
                         ],
                       ),
                     ],
+                    if (!AppConfig.isBaked)
+                      TextButton.icon(
+                        onPressed: _resetServer,
+                        icon: const Icon(Icons.dns_outlined, size: 18),
+                        label: const Text('تغيير إعدادات الخادم'),
+                      ),
                   ],
                 ),
               ),
