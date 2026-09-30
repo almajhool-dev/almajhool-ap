@@ -16,7 +16,13 @@ class AuthRepository {
     required String username,
     required String displayName,
   }) async {
-    if (!await usernameAvailable(username)) {
+    bool available = true;
+    try {
+      available = await usernameAvailable(username);
+    } catch (_) {
+      // إذا تعذّر الفحص المسبق، قاعدة البيانات ستضمن عدم التكرار
+    }
+    if (!available) {
       throw Exception('اسم المستخدم محجوز، اختر اسمًا آخر');
     }
     final res = await supa.auth.signUp(

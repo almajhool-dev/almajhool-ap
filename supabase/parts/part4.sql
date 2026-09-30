@@ -146,3 +146,5 @@ grant execute on function public.username_available(text) to anon, authenticated
 --
 --   update public.profiles set is_admin = true where username = 'your_username';
 -- =====================================================================
+
+notify pgrst, 'reload schema';

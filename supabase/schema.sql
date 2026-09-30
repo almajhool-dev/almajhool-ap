@@ -866,3 +866,6 @@ grant execute on function public.username_available(text) to anon, authenticated
 --
 --   update public.profiles set is_admin = true where username = 'your_username';
 -- =====================================================================
+
+-- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
+notify pgrst, 'reload schema';

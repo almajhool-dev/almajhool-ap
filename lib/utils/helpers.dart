@@ -92,7 +92,10 @@ String friendlyError(Object e) {
     return 'مفتاح الخادم غير صحيح. اضغط «تغيير إعدادات الخادم» وأدخل anon public key الصحيح';
   }
   if (raw.contains('relation') && raw.contains('does not exist') || raw.contains('PGRST202') || raw.contains('Could not find the function')) {
-    return 'قاعدة البيانات غير مهيأة. شغّل ملف schema.sql في Supabase → SQL Editor';
+    return 'قاعدة البيانات غير مهيأة أو تحتاج تحديث. شغّل في SQL Editor: notify pgrst, \'reload schema\';';
+  }
+  if (raw.contains('Database error saving new user')) {
+    return 'خطأ في قاعدة البيانات أثناء إنشاء الحساب (جرّب اسم مستخدم آخر)';
   }
   if (e is AuthException) {
     final m = e.message.toLowerCase();
