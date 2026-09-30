@@ -1,0 +1,57 @@
+name: almajhool_app
+description: "المبرمج المجهول — تطبيق تواصل ومراسلة"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  supabase_flutter: ^2.8.0
+  provider: ^6.1.2
+  shared_preferences: ^2.3.0
+  cached_network_image: ^3.4.1
+  image_picker: ^1.1.2
+  file_picker: '>=8.3.0 <11.0.0'
+  record: '>=5.1.0 <7.0.0'
+  audioplayers: '>=6.0.0 <7.0.0'
+  path_provider: ^2.1.4
+  connectivity_plus: '>=6.0.0 <8.0.0'
+  flutter_local_notifications: '>=17.2.0 <20.0.0'
+  url_launcher: ^6.3.0
+  intl: any
+  uuid: ^4.4.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.1
+  flutter_native_splash: ^2.4.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/branding/
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/branding/icon.png"
+  adaptive_icon_background: "#0A0E17"
+  adaptive_icon_foreground: "assets/branding/icon_foreground.png"
+  min_sdk_android: 23
+
+flutter_native_splash:
+  color: "#0A0E17"
+  image: assets/branding/splash.png
+  android_12:
+    color: "#0A0E17"
+    image: assets/branding/splash_android12.png
+  android: true
+  ios: false
+  web: false

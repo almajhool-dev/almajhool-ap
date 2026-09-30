@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>لوحة تحكم المبرمج المجهول</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{--bg:#0A0E17;--card:#121826;--card2:#1A2233;--txt:#E8ECF5;--mut:#8C97AD;--cyan:#00E5FF;--vio:#7C4DFF;--ok:#00E676;--bad:#FF5252}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--txt);font-family:system-ui,"Segoe UI",Tahoma,sans-serif}
+  header{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid #ffffff14;position:sticky;top:0;background:var(--bg);z-index:2}
+  header h1{font-size:18px;margin:0;background:linear-gradient(90deg,var(--cyan),var(--vio));-webkit-background-clip:text;color:transparent}
+  header .sp{flex:1} main{max-width:1000px;margin:auto;padding:16px}
+  .card{background:var(--card);border-radius:16px;padding:16px;margin-bottom:14px;border:1px solid #ffffff10}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  .stat{background:var(--card2);border-radius:14px;padding:14px}.stat b{display:block;font-size:26px}.stat span{color:var(--mut);font-size:13px}
+  input,textarea{width:100%;padding:12px;border-radius:12px;border:1px solid #ffffff1f;background:var(--card2);color:var(--txt);font:inherit}
+  button{border:0;border-radius:12px;padding:10px 16px;font:inherit;font-weight:700;cursor:pointer;background:linear-gradient(90deg,var(--cyan),var(--vio));color:#fff}
+  button.ghost{background:transparent;border:1px solid #ffffff2a;color:var(--txt)} button.bad{background:var(--bad)} button.ok{background:var(--ok);color:#012}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap} .mut{color:var(--mut);font-size:13px}
+  .tabs{display:flex;gap:6px;overflow-x:auto;margin-bottom:14px}.tabs button{background:var(--card);white-space:nowrap}.tabs button.on{background:linear-gradient(90deg,var(--cyan),var(--vio))}
+  table{width:100%;border-collapse:collapse;font-size:14px} td,th{padding:10px 6px;border-bottom:1px solid #ffffff10;text-align:right}
+  .pill{padding:3px 10px;border-radius:99px;font-size:12px;background:#ffffff14}.pill.bad{background:#ff525233;color:#ff8a8a}
+  .switch{font-size:22px;font-weight:900}.hidden{display:none} #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#222c40;padding:10px 18px;border-radius:12px;display:none}
+</style>
+</head>
+<body>
+<header><h1>المبرمج المجهول · لوحة التحكم</h1><div class="sp"></div><button id="logout" class="ghost hidden">خروج</button></header>
+<main>
+  <section id="cfg" class="card hidden">
+    <h3>ربط Supabase</h3>
+    <p class="mut">من Supabase → Project Settings → API. تُحفظ في هذا المتصفح فقط.</p>
+    <input id="url" placeholder="https://xxxx.supabase.co" dir="ltr"><br><br>
+    <input id="key" placeholder="anon public key" dir="ltr"><br><br>
+    <button onclick="saveCfg()">حفظ</button>
+  </section>
+
+  <section id="login" class="card hidden">
+    <h3>دخول المدير</h3>
+    <input id="email" type="email" placeholder="البريد" dir="ltr"><br><br>
+    <input id="pass" type="password" placeholder="كلمة المرور" dir="ltr"><br><br>
+    <div class="row"><button onclick="login()">دخول</button><button class="ghost" onclick="resetCfg()">تغيير الخادم</button></div>
+  </section>
+
+  <section id="app" class="hidden">
+    <div class="tabs">
+      <button data-t="home" class="on">الرئيسية</button><button data-t="users">المستخدمون</button>
+      <button data-t="reports">البلاغات</button><button data-t="groups">المجموعات</button><button data-t="bc">إشعار عام</button>
+    </div>
+
+    <div id="t-home">
+      <div class="card">
+        <div class="row"><div style="flex:1"><div class="mut">حالة التطبيق</div><div id="appState" class="switch">...</div></div>
+          <button id="btnOn" class="ok" onclick="setApp(true)">تشغيل التطبيق</button>
+          <button id="btnOff" class="bad" onclick="setApp(false)">إيقاف التطبيق</button></div><br>
+        <textarea id="mmsg" rows="2" placeholder="رسالة الصيانة"></textarea>
+      </div>
+      <div class="card"><div id="stats" class="grid"></div></div>
+    </div>
+
+    <div id="t-users" class="card hidden">
+      <input id="uq" placeholder="بحث..." oninput="debounce(loadUsers)"><br><br>
+      <table><thead><tr><th>المستخدم</th><th>آخر ظهور</th><th></th></tr></thead><tbody id="ulist"></tbody></table>
+    </div>
+
+    <div id="t-reports" class="card hidden"><div id="rlist"></div></div>
+    <div id="t-groups" class="card hidden"><table><tbody id="glist"></tbody></table></div>
+
+    <div id="t-bc" class="card hidden">
+      <input id="bt" placeholder="العنوان"><br><br><textarea id="bb" rows="4" placeholder="النص"></textarea><br><br>
+      <button onclick="broadcast()">إرسال للجميع</button>
+    </div>
+  </section>
+</main>
+<div id="toast"></div>
+<script>
+const $ = s => document.querySelector(s);
+let sb = null, t = null;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function toast(m){const e=$('#toast');e.textContent=m;e.style.display='block';clearTimeout(e._t);e._t=setTimeout(()=>e.style.display='none',2600)}
+function debounce(f){clearTimeout(t);t=setTimeout(f,350)}
+function show(id){['#cfg','#login','#app'].forEach(s=>$(s).classList.add('hidden'));$(id).classList.remove('hidden')}
+function saveCfg(){localStorage.sbUrl=$('#url').value.trim();localStorage.sbKey=$('#key').value.trim();boot()}
+function resetCfg(){localStorage.removeItem('sbUrl');localStorage.removeItem('sbKey');boot()}
+async function rpc(n,p){const {data,error}=await sb.rpc(n,p);if(error){toast(error.message);throw error}return data}
+
+async function boot(){
+  if(!localStorage.sbUrl||!localStorage.sbKey){show('#cfg');return}
+  sb = supabase.createClient(localStorage.sbUrl, localStorage.sbKey);
+  const {data:{session}} = await sb.auth.getSession();
+  if(!session){show('#login');return}
+  const {data:p} = await sb.from('profiles').select('is_admin').eq('id',session.user.id).single();
+  if(!p?.is_admin){toast('هذا الحساب ليس مديرًا');await sb.auth.signOut();show('#login');return}
+  $('#logout').classList.remove('hidden'); show('#app'); loadHome();
+}
+async function login(){
+  const {error}=await sb.auth.signInWithPassword({email:$('#email').value.trim(),password:$('#pass').value});
+  if(error){toast(error.message);return} boot();
+}
+$('#logout').onclick=async()=>{await sb.auth.signOut();$('#logout').classList.add('hidden');boot()};
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+  ['home','users','reports','groups','bc'].forEach(k=>$('#t-'+k).classList.toggle('hidden',k!==b.dataset.t));
+  ({home:loadHome,users:loadUsers,reports:loadReports,groups:loadGroups}[b.dataset.t]||(()=>{}))();
+});
+
+async function loadHome(){
+  const s = await rpc('admin_stats');
+  const {data:cfg} = await sb.from('app_settings').select().eq('id',1).single();
+  $('#appState').textContent = cfg.app_enabled ? '🟢 يعمل' : '🔴 متوقف';
+  $('#mmsg').value = cfg.maintenance_message;
+  const L={users:'المستخدمون',active_5m:'نشطون الآن',active_24h:'نشطون 24س',banned:'محظورون',messages:'الرسائل',messages_24h:'رسائل اليوم',groups:'المجموعات',open_reports:'بلاغات مفتوحة'};
+  $('#stats').innerHTML = Object.keys(L).map(k=>`<div class="stat"><b>${s[k]??0}</b><span>${L[k]}</span></div>`).join('');
+}
+async function setApp(on){
+  if(!on && !confirm('إيقاف التطبيق عند جميع المستخدمين؟')) return;
+  await rpc('admin_set_app',{enabled:on,message:$('#mmsg').value}); toast(on?'تم التشغيل':'تم الإيقاف'); loadHome();
+}
+async function loadUsers(){
+  let q = sb.from('profiles').select().order('created_at',{ascending:false}).limit(100);
+  const s = $('#uq').value.trim().replace(/[%,()*]/g,'');
+  if(s) q = q.or(`username.ilike.%${s}%,display_name.ilike.%${s}%`);
+  const {data} = await q;
+  $('#ulist').innerHTML = (data||[]).map(u=>`<tr><td><b>${esc(u.display_name)}</b> ${u.is_admin?'✔️':''}<div class="mut" dir="ltr">@${esc(u.username)}</div></td>
+    <td class="mut">${new Date(u.last_seen).toLocaleString('ar')}</td>
+    <td>${u.is_banned?'<span class="pill bad">محظور</span>':''}
+    <button class="${u.is_banned?'ok':'bad'}" onclick="ban('${u.id}',${!u.is_banned})">${u.is_banned?'إلغاء الحظر':'حظر'}</button></td></tr>`).join('');
+}
+async function ban(id,b){await rpc('admin_set_ban',{target:id,banned:b});toast('تم');loadUsers()}
+async function loadReports(){
+  const r = await rpc('admin_list_reports');
+  $('#rlist').innerHTML = r.length? r.map(x=>`<div class="card" style="background:var(--card2)">
+    <div class="row"><b style="flex:1">@${esc(x.reporter_username)} ← @${esc(x.reported_username||'-')}</b><span class="pill ${x.status==='open'?'bad':''}">${x.status==='open'?'مفتوح':'معالج'}</span></div>
+    <p>السبب: ${esc(x.reason)}</p>${x.message_id?`<p class="mut">الرسالة: ${esc(x.message_content||x.message_type)}</p>`:''}
+    ${x.status==='open'?`<div class="row">${x.message_id?`<button class="bad" onclick="resolve('${x.id}',true)">حذف المحتوى</button>`:''}
+    ${x.reported_user_id?`<button class="bad" onclick="banAndResolve('${x.reported_user_id}','${x.id}')">حظر المستخدم</button>`:''}
+    <button class="ghost" onclick="resolve('${x.id}',false)">تجاهل</button></div>`:''}</div>`).join('') : '<p class="mut">لا توجد بلاغات</p>';
+}
+async function resolve(id,del){await rpc('admin_resolve_report',{rid:id,delete_msg:del});toast('تم');loadReports()}
+async function banAndResolve(u,r){await rpc('admin_set_ban',{target:u,banned:true});await resolve(r,false)}
+async function loadGroups(){
+  const g = await rpc('admin_list_groups');
+  $('#glist').innerHTML = g.map(x=>`<tr><td><b>${esc(x.name)}</b><div class="mut">${x.member_count} عضو · ${x.message_count} رسالة · ${x.is_public?'عامة':'خاصة'}</div></td>
+    <td><button class="bad" onclick="delGroup('${x.id}')">حذف</button></td></tr>`).join('') || '<tr><td class="mut">لا توجد مجموعات</td></tr>';
+}
+async function delGroup(id){if(!confirm('حذف المجموعة نهائيًا؟'))return;await rpc('delete_group',{conv:id});loadGroups()}
+async function broadcast(){
+  if(!$('#bt').value.trim()) return toast('أدخل العنوان');
+  if(!confirm('إرسال لجميع المستخدمين؟')) return;
+  const n = await rpc('admin_broadcast',{ntitle:$('#bt').value.trim(),nbody:$('#bb').value.trim()});
+  toast('تم الإرسال إلى '+n+' مستخدم'); $('#bt').value=''; $('#bb').value='';
+}
+boot();
+</script>
+</body>
+</html>

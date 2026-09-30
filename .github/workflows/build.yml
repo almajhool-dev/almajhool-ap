@@ -1,0 +1,84 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'admin/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build debug APK, release APK and AAB
+        id: build
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          set -o pipefail
+          bash tool/ci_build.sh 2>&1 | tee ci.log
+
+      - name: Upload build files
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: almajhool-app-${{ github.run_number }}
+          path: dist/*
+
+      - name: Publish GitHub Release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: المبرمج المجهول v1.0.${{ github.run_number }}
+          make_latest: true
+          body: |
+            ## تحميل التطبيق
+            - **almajhool-app.apk** ← هذا الملف للتثبيت على الهاتف
+            - almajhool-app-debug.apk ← نسخة التجربة (Debug)
+            - almajhool-app.aab ← للنشر على Google Play
+          files: dist/*
+
+      - name: Save build log
+        if: always()
+        run: |
+          [ -f ci.log ] || echo "no log" > ci.log
+          STATUS="${{ steps.build.outcome }}"
+          mkdir -p /tmp/logs
+          tail -n 400 ci.log > /tmp/logs/last.log
+          echo "run=${{ github.run_number }} sha=${{ github.sha }} status=$STATUS" > /tmp/logs/status.txt
+          grep -nE "error|Error|ERROR|FAILURE|Exception" ci.log | head -n 200 > /tmp/logs/errors.log || true
+          cd /tmp/logs
+          git init -q -b ci-logs
+          git config user.name "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git add -A && git commit -qm "log run ${{ github.run_number }}: $STATUS"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-logs

@@ -1,0 +1,29 @@
+# Flutter / Dart
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.idea/
+.vscode/
+.metadata
+
+# Android (generated in CI by `flutter create`)
+/android/
+/ios/
+/linux/
+/macos/
+/windows/
+/web/
+
+# Secrets — never commit
+key.properties
+*.jks
+*.keystore
+.env
+
+dist/
+ci.log
