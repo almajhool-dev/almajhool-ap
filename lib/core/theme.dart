@@ -105,9 +105,6 @@ class AppTheme {
         thickness: 0.6,
       ),
       snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
-      pageTransitionsTheme: const PageTransitionsTheme(builders: {
-        TargetPlatform.android: CupertinoPageTransitionsBuilder(),
-      }),
     );
   }
 }

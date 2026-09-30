@@ -35,10 +35,12 @@ class _PeoplePickerState extends State<PeoplePicker> {
   void initState() {
     super.initState();
     ContactRepository().load().then((r) {
-      if (mounted) setState(() {
-        _contacts = r.contacts;
-        _loading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _contacts = r.contacts;
+          _loading = false;
+        });
+      }
     }).catchError((_) {
       if (mounted) setState(() => _loading = false);
     });
