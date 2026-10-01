@@ -59,4 +59,12 @@ mkdir -p dist
 cp build/app/outputs/flutter-apk/app-release.apk dist/almajhool-app.apk
 cp build/app/outputs/bundle/release/app-release.aab dist/almajhool-app.aab
 ls -la dist
+
+echo ">> Verifying APK signature"
+APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+if [[ -n "$APKSIGNER" ]]; then
+  "$APKSIGNER" verify --verbose --print-certs dist/almajhool-app.apk | grep -E "Verified|Signer #1 certificate SHA-256|DOES NOT VERIFY|ERROR" || true
+  "$APKSIGNER" verify dist/almajhool-app.apk
+fi
+unzip -l dist/almajhool-app.apk | grep -E "lib/.*/libflutter.so" || true
 echo ">> BUILD OK"
