@@ -5,6 +5,7 @@ import '../../models/models.dart';
 import '../../providers/providers.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
+import '../feed/feed_screens.dart';
 import '../home/home_shell.dart';
 import '../profile/profile_screens.dart';
 
@@ -51,10 +52,17 @@ class _NotificationsTabState extends State<NotificationsTab> {
         'group_added' => Icons.group_add_rounded,
         'mention' => Icons.alternate_email_rounded,
         'broadcast' => Icons.campaign_rounded,
+        'post_like' => Icons.favorite_rounded,
+        'post_comment' => Icons.mode_comment_rounded,
         _ => Icons.notifications_rounded,
       };
 
   void _open(AppNotification n) {
+    final post = n.data['post_id'] as String?;
+    if (post != null) {
+      openPost(context, post);
+      return;
+    }
     final conv = n.data['conversation_id'] as String?;
     final user = n.data['user_id'] as String?;
     if (conv != null) {

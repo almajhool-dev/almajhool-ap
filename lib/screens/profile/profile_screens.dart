@@ -12,6 +12,7 @@ import '../../services/media_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../contacts/contacts_tab.dart';
+import '../feed/feed_screens.dart';
 import '../home/home_shell.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -30,6 +31,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _blocked = false;
   List<GroupSearchResult> _common = [];
   bool _loading = true;
+  late final PostsController _posts = PostsController(authorId: widget.userId);
+
+  @override
+  void dispose() {
+    _posts.dispose();
+    super.dispose();
+  }
 
   bool get _isMe => widget.userId == myId;
 
@@ -169,9 +177,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: Text(p.displayName,
                       textAlign: TextAlign.center, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
                 ),
-                if (p.isAdmin) ...[
+                if (p.verified) ...[
                   const SizedBox(width: 6),
-                  const Icon(Icons.verified_rounded, color: Color(0xFF00E5FF), size: 22),
+                  const VerifiedBadge(size: 22),
                 ],
               ],
             ),
@@ -182,6 +190,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
               textAlign: TextAlign.center,
               style: TextStyle(color: p.isBanned ? Colors.redAccent : (online ? Colors.green : Theme.of(context).hintColor)),
             ),
+            const SizedBox(height: 14),
+            _LevelCard(profile: p),
             if (p.bio.isNotEmpty) ...[
               const SizedBox(height: 16),
               Card(
@@ -212,6 +222,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 padding: EdgeInsets.only(top: 12),
                 child: Text('لقد حظرت هذا المستخدم', textAlign: TextAlign.center, style: TextStyle(color: Colors.redAccent)),
               ),
+            const SizedBox(height: 20),
+            const Text('المنشورات', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+            ListenableBuilder(
+              listenable: _posts,
+              builder: (context, _) {
+                if (_posts.loading) {
+                  return const Padding(padding: EdgeInsets.all(20), child: Center(child: CircularProgressIndicator()));
+                }
+                if (_posts.posts.isEmpty) {
+                  return const Padding(padding: EdgeInsets.all(16), child: Text('لا توجد منشورات بعد'));
+                }
+                return Column(
+                  children: [for (final post in _posts.posts) PostCard(post: post, controller: _posts)],
+                );
+              },
+            ),
             if (_common.isNotEmpty) ...[
               const SizedBox(height: 24),
               Text('المجموعات المشتركة (${_common.length})', style: const TextStyle(fontWeight: FontWeight.w800)),
@@ -353,6 +379,50 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               maxLines: 4,
               maxLength: 300,
               decoration: const InputDecoration(labelText: 'نبذة عنك'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+class _LevelCard extends StatelessWidget {
+  final Profile profile;
+  const _LevelCard({required this.profile});
+
+  @override
+  Widget build(BuildContext context) {
+    final p = profile;
+    final toVerify = (50 - p.level).clamp(0, 50);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                LevelChip(p.level),
+                const SizedBox(width: 8),
+                Text('${p.xp} نقطة', style: const TextStyle(fontWeight: FontWeight.w700)),
+                const Spacer(),
+                if (p.verified)
+                  const Row(children: [VerifiedBadge(size: 18), SizedBox(width: 4), Text('موثّق')])
+                else
+                  Text('باقي $toVerify مستوى للتوثيق', style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(value: p.levelProgress, minHeight: 8),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'اكسب النقاط: منشور +10 · تعليق +3 · إعجاب أو تعليق على منشورك +2 · رسالة +1 · صديق جديد +5',
+              style: TextStyle(fontSize: 11.5, color: Theme.of(context).hintColor),
             ),
           ],
         ),

@@ -46,13 +46,13 @@ echo ">> [6/7] Static analysis"
 flutter analyze --no-fatal-infos --no-fatal-warnings
 
 echo ">> [7/7] Building"
-flutter build apk --debug --build-number="$BUILD_NUMBER" "${DEFINES[@]}"
-flutter build apk --release --build-number="$BUILD_NUMBER" "${DEFINES[@]}"
+# نسخة لكل معالج = حجم أصغر بكثير وتثبيت وتشغيل أسرع
+flutter build apk --release --split-per-abi --build-number="$BUILD_NUMBER" "${DEFINES[@]}"
 flutter build appbundle --release --build-number="$BUILD_NUMBER" "${DEFINES[@]}"
 
 mkdir -p dist
-cp build/app/outputs/flutter-apk/app-release.apk dist/almajhool-app.apk
-cp build/app/outputs/flutter-apk/app-debug.apk dist/almajhool-app-debug.apk
+cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/almajhool-app.apk
+cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist/almajhool-app-old-phones.apk
 cp build/app/outputs/bundle/release/app-release.aab dist/almajhool-app.aab
 ls -la dist
 echo ">> BUILD OK"

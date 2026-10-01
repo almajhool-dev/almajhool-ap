@@ -11,6 +11,9 @@ class Profile {
   final bool notificationsEnabled;
   final DateTime? lastSeen;
   final DateTime? createdAt;
+  final int xp;
+  final bool isVerified;
+  final bool isOwner;
 
   const Profile({
     required this.id,
@@ -23,7 +26,15 @@ class Profile {
     this.notificationsEnabled = true,
     this.lastSeen,
     this.createdAt,
+    this.xp = 0,
+    this.isVerified = false,
+    this.isOwner = false,
   });
+
+  /// المستوى: كل 100 نقطة = مستوى، والتوثيق عند المستوى 50
+  int get level => (xp ~/ 100 + 1).clamp(1, 100);
+  double get levelProgress => (xp % 100) / 100;
+  bool get verified => isVerified || isOwner;
 
   factory Profile.fromMap(Map<String, dynamic> m) => Profile(
         id: m['id'] as String,
@@ -36,6 +47,9 @@ class Profile {
         notificationsEnabled: (m['notifications_enabled'] ?? true) as bool,
         lastSeen: _dt(m['last_seen']),
         createdAt: _dt(m['created_at']),
+        xp: ((m['xp'] ?? 0) as num).toInt(),
+        isVerified: (m['is_verified'] ?? false) as bool,
+        isOwner: (m['is_owner'] ?? false) as bool,
       );
 }
 
@@ -57,6 +71,7 @@ class ConversationSummary {
   final String? otherAvatarUrl;
   final DateTime? otherLastSeen;
   final int memberCount;
+  final bool otherVerified;
 
   const ConversationSummary({
     required this.id,
@@ -76,6 +91,7 @@ class ConversationSummary {
     this.otherAvatarUrl,
     this.otherLastSeen,
     this.memberCount = 0,
+    this.otherVerified = false,
   });
 
   bool get isGroup => type == 'group';
@@ -101,6 +117,7 @@ class ConversationSummary {
         otherAvatarUrl: m['other_avatar_url'] as String?,
         otherLastSeen: _dt(m['other_last_seen']),
         memberCount: ((m['member_count'] ?? 0) as num).toInt(),
+        otherVerified: (m['other_verified'] ?? false) as bool,
       );
 
   Map<String, dynamic> toMap() => {
@@ -121,6 +138,7 @@ class ConversationSummary {
         'other_avatar_url': otherAvatarUrl,
         'other_last_seen': otherLastSeen?.toIso8601String(),
         'member_count': memberCount,
+        'other_verified': otherVerified,
       };
 }
 
@@ -343,5 +361,80 @@ class GroupSearchResult {
         name: (m['name'] ?? '') as String,
         avatarUrl: m['avatar_url'] as String?,
         description: (m['description'] ?? '') as String,
+      );
+}
+
+class Post {
+  final String id;
+  final String authorId;
+  final String content;
+  final String? imageUrl;
+  final int likeCount;
+  final int commentCount;
+  final DateTime createdAt;
+  final Profile? author;
+  final bool likedByMe;
+
+  const Post({
+    required this.id,
+    required this.authorId,
+    required this.content,
+    this.imageUrl,
+    this.likeCount = 0,
+    this.commentCount = 0,
+    required this.createdAt,
+    this.author,
+    this.likedByMe = false,
+  });
+
+  factory Post.fromMap(Map<String, dynamic> m, {bool liked = false}) => Post(
+        id: m['id'] as String,
+        authorId: m['author_id'] as String,
+        content: (m['content'] ?? '') as String,
+        imageUrl: m['image_url'] as String?,
+        likeCount: ((m['like_count'] ?? 0) as num).toInt(),
+        commentCount: ((m['comment_count'] ?? 0) as num).toInt(),
+        createdAt: _dt(m['created_at']) ?? DateTime.now(),
+        author: m['author'] is Map<String, dynamic> ? Profile.fromMap(m['author'] as Map<String, dynamic>) : null,
+        likedByMe: liked,
+      );
+
+  Post copyWith({int? likeCount, int? commentCount, bool? likedByMe}) => Post(
+        id: id,
+        authorId: authorId,
+        content: content,
+        imageUrl: imageUrl,
+        likeCount: likeCount ?? this.likeCount,
+        commentCount: commentCount ?? this.commentCount,
+        createdAt: createdAt,
+        author: author,
+        likedByMe: likedByMe ?? this.likedByMe,
+      );
+}
+
+class PostComment {
+  final String id;
+  final String postId;
+  final String authorId;
+  final String content;
+  final DateTime createdAt;
+  final Profile? author;
+
+  const PostComment({
+    required this.id,
+    required this.postId,
+    required this.authorId,
+    required this.content,
+    required this.createdAt,
+    this.author,
+  });
+
+  factory PostComment.fromMap(Map<String, dynamic> m) => PostComment(
+        id: m['id'] as String,
+        postId: m['post_id'] as String,
+        authorId: m['author_id'] as String,
+        content: (m['content'] ?? '') as String,
+        createdAt: _dt(m['created_at']) ?? DateTime.now(),
+        author: m['author'] is Map<String, dynamic> ? Profile.fromMap(m['author'] as Map<String, dynamic>) : null,
       );
 }

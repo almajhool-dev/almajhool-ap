@@ -62,8 +62,8 @@ jobs:
           make_latest: true
           body: |
             ## تحميل التطبيق
-            - **almajhool-app.apk** ← هذا الملف للتثبيت على الهاتف
-            - almajhool-app-debug.apk ← نسخة التجربة (Debug)
+            - **almajhool-app.apk** ← للتثبيت على الهاتف (أغلب الهواتف)
+            - almajhool-app-old-phones.apk ← فقط إذا رفض هاتفك القديم تثبيت الأول
             - almajhool-app.aab ← للنشر على Google Play
           files: dist/*
 

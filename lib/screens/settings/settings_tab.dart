@@ -9,6 +9,8 @@ import '../../services/local_notifications.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../admin/admin_screen.dart';
+import '../../repositories/post_repository.dart';
+import '../contacts/contacts_tab.dart';
 import '../profile/profile_screens.dart';
 
 class SettingsTab extends StatefulWidget {
@@ -38,8 +40,8 @@ class _SettingsTabState extends State<SettingsTab> {
               child: ListTile(
                 contentPadding: const EdgeInsets.all(12),
                 leading: Avatar(url: p.avatarUrl, name: p.displayName, size: 58),
-                title: Text(p.displayName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
-                subtitle: Text('@${p.username}${p.isAdmin ? ' · مدير' : ''}'),
+                title: NameWithBadge(p.displayName, verified: p.verified, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+                subtitle: Text('@${p.username} · المستوى ${p.level}${p.isOwner ? ' · المالك' : p.isAdmin ? ' · مدير' : ''}'),
                 trailing: const Icon(Icons.chevron_left),
                 onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: p.id))),
               ),
@@ -110,6 +112,21 @@ class _SettingsTabState extends State<SettingsTab> {
               }
             },
           ),
+          if (!(p?.isOwner ?? false))
+            ListTile(
+              leading: const Icon(Icons.support_agent_rounded),
+              title: const Text('مراسلة الإدارة'),
+              subtitle: const Text('اقتراح، مشكلة، أو طلب توثيق'),
+              onTap: () async {
+                try {
+                  final owner = await PostRepository().ownerId();
+                  if (owner == null) throw Exception('لا يوجد مالك للتطبيق بعد');
+                  if (context.mounted) await startDirectChat(context, owner);
+                } catch (e) {
+                  if (context.mounted) showSnack(context, friendlyError(e), error: true);
+                }
+              },
+            ),
           _section('حول'),
           ListTile(
             leading: const Icon(Icons.info_outline),

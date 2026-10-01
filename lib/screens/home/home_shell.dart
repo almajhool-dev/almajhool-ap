@@ -9,6 +9,7 @@ import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../chat/chat_screen.dart';
 import '../contacts/contacts_tab.dart';
+import '../feed/feed_screens.dart';
 import '../groups/group_screens.dart';
 import '../notifications/notifications_tab.dart';
 import '../search/search_screen.dart';
@@ -28,7 +29,8 @@ class _HomeShellState extends State<HomeShell> {
     final hub = context.watch<ChatHub>();
     final online = context.watch<ConnectivityService>().online;
     final pages = [
-      ChatsTab(onOpenRequests: () => setState(() => _index = 1)),
+      const FeedTab(),
+      ChatsTab(onOpenRequests: () => setState(() => _index = 2)),
       const ContactsTab(),
       const NotificationsTab(),
       const SettingsTab(),
@@ -44,6 +46,11 @@ class _HomeShellState extends State<HomeShell> {
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
         destinations: [
+          const NavigationDestination(
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home_rounded),
+            label: 'الرئيسية',
+          ),
           NavigationDestination(
             icon: Badge(
               isLabelVisible: hub.totalUnread > 0,
@@ -60,7 +67,7 @@ class _HomeShellState extends State<HomeShell> {
               child: const Icon(Icons.people_outline_rounded),
             ),
             selectedIcon: const Icon(Icons.people_rounded),
-            label: 'جهات الاتصال',
+            label: 'الأصدقاء',
           ),
           NavigationDestination(
             icon: Badge(
@@ -274,10 +281,12 @@ class ConversationTile extends StatelessWidget {
       title: Row(
         children: [
           Expanded(
-            child: Text(conv.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontWeight: bold ? FontWeight.w800 : FontWeight.w600)),
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: NameWithBadge(conv.title,
+                  verified: !conv.isGroup && conv.otherVerified,
+                  style: TextStyle(fontWeight: bold ? FontWeight.w800 : FontWeight.w600)),
+            ),
           ),
           if (conv.muted) Icon(Icons.volume_off_rounded, size: 16, color: scheme.onSurface.withValues(alpha: 0.4)),
           const SizedBox(width: 6),

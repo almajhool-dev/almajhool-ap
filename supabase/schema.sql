@@ -526,7 +526,8 @@ begin
   update messages set pinned = not pinned where id = mid and not deleted;
 end $$;
 
-create or replace function public.get_my_conversations()
+drop function if exists public.get_my_conversations();
+create function public.get_my_conversations()
 returns table(
   id uuid, type text, name text, avatar_url text, is_public boolean,
   last_message_at timestamptz, last_message_preview text,
@@ -860,12 +861,399 @@ alter table public.conversation_members replica identity full;
 -- ---------------------------------------------------------------------
 grant execute on function public.username_available(text) to anon, authenticated;
 
+
 -- =====================================================================
--- بعد إنشاء حسابك من التطبيق، اجعل نفسك مديرًا بتشغيل هذا السطر
--- (استبدل your_username باسم المستخدم الخاص بك):
---
---   update public.profiles set is_admin = true where username = 'your_username';
+--  الإصدار 2: المالك، المستويات (XP)، التوثيق، المنشورات
 -- =====================================================================
+
+alter table public.profiles add column if not exists xp int not null default 0;
+alter table public.profiles add column if not exists is_verified boolean not null default false;
+alter table public.profiles add column if not exists is_owner boolean not null default false;
+
+create table if not exists public.xp_daily (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  day date not null default current_date,
+  msg_xp int not null default 0,
+  post_xp int not null default 0,
+  comment_xp int not null default 0,
+  primary key (user_id, day)
+);
+alter table public.xp_daily enable row level security;
+
+create or replace function public.xp_level(x int) returns int
+language sql immutable as $$ select least(100, greatest(0, coalesce(x, 0)) / 100 + 1); $$;
+
+-- عمليات داخلية موثوقة تتجاوز حماية الأعمدة
+create or replace function public.trusted_begin() returns void
+language sql as $$ select set_config('app.trusted', '1', true); $$;
+
+create or replace function public.protect_profile_columns() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is not null
+     and coalesce(current_setting('app.trusted', true), '') <> '1'
+     and not is_admin() then
+    new.is_admin := old.is_admin;
+    new.is_banned := old.is_banned;
+    new.is_verified := old.is_verified;
+    new.xp := old.xp;
+  end if;
+  -- لا أحد يغيّر صفة المالك إلا من SQL Editor
+  if auth.uid() is not null and coalesce(current_setting('app.trusted', true), '') <> '1' then
+    new.is_owner := old.is_owner;
+  end if;
+  if old.is_owner and auth.uid() is distinct from old.id and auth.uid() is not null
+     and coalesce(current_setting('app.trusted', true), '') <> '1' then
+    new.is_admin := true;
+    new.is_banned := false;
+  end if;
+  new.id := old.id;
+  new.created_at := old.created_at;
+  new.username := lower(new.username);
+  return new;
+end $$;
+
+create or replace function public.add_xp(uid uuid, amount int) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if uid is null or amount = 0 then return; end if;
+  perform trusted_begin();
+  update profiles set xp = greatest(0, xp + amount),
+    is_verified = is_verified or xp_level(greatest(0, xp + amount)) >= 50
+  where id = uid;
+  perform set_config('app.trusted', '', true);
+end $$;
+revoke execute on function public.add_xp(uuid, int) from public, anon, authenticated;
+
+-- نقاط بحد يومي
+create or replace function public.add_capped_xp(uid uuid, kind text, amount int, cap int) returns void
+language plpgsql security definer set search_path = public as $$
+declare used int;
+begin
+  insert into xp_daily(user_id, day) values (uid, current_date) on conflict do nothing;
+  execute format('update xp_daily set %I = %I + $1 where user_id = $2 and day = current_date returning %I',
+                 kind, kind, kind) into used using amount, uid;
+  if used <= cap then perform add_xp(uid, amount); end if;
+end $$;
+revoke execute on function public.add_capped_xp(uuid, text, int, int) from public, anon, authenticated;
+
+-- أول حساب في التطبيق = المالك (مدير + موثّق)
+create or replace function public.handle_new_user() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  uname text := lower(coalesce(new.raw_user_meta_data->>'username', ''));
+  first_user boolean := not exists(select 1 from profiles where is_owner);
+begin
+  if uname !~ '^[a-z0-9_.]{3,24}$' or exists(select 1 from profiles where username = uname) then
+    uname := 'user_' || substr(replace(new.id::text, '-', ''), 1, 10);
+  end if;
+  insert into profiles(id, username, display_name, is_admin, is_owner, is_verified)
+  values (new.id, uname,
+          coalesce(nullif(trim(new.raw_user_meta_data->>'display_name'), ''), uname),
+          first_user, first_user, first_user);
+  return new;
+end $$;
+
+-- إذا كانت هناك حسابات سابقة بلا مالك: أقدم حساب يصبح المالك
+do $$
+begin
+  if not exists(select 1 from public.profiles where is_owner) then
+    update public.profiles set is_owner = true, is_admin = true, is_verified = true
+    where id = (select id from public.profiles order by created_at asc limit 1);
+  end if;
+end $$;
+update public.profiles set is_verified = true, is_admin = true where is_owner;
+
+-- XP من الرسائل (+1، حد 50 يوميًا)
+create or replace function public.xp_on_message() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.type <> 'system' and new.sender_id is not null then
+    perform add_capped_xp(new.sender_id, 'msg_xp', 1, 50);
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_xp_message on public.messages;
+create trigger trg_xp_message after insert on public.messages
+  for each row execute function public.xp_on_message();
+
+-- XP عند قبول طلب تواصل (+5 للطرفين)
+create or replace function public.xp_on_contact() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.status = 'accepted' and old.status <> 'accepted' then
+    perform add_xp(new.sender_id, 5);
+    perform add_xp(new.receiver_id, 5);
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_xp_contact on public.contact_requests;
+create trigger trg_xp_contact after update on public.contact_requests
+  for each row execute function public.xp_on_contact();
+
+-- ---------------------------------------------------------------------
+-- المنشورات
+-- ---------------------------------------------------------------------
+create table if not exists public.posts (
+  id uuid primary key default gen_random_uuid(),
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  content text not null default '' check (char_length(content) <= 3000),
+  image_url text,
+  like_count int not null default 0,
+  comment_count int not null default 0,
+  deleted boolean not null default false,
+  created_at timestamptz not null default now(),
+  check (char_length(content) > 0 or image_url is not null)
+);
+create index if not exists idx_posts_created on public.posts(created_at desc) where not deleted;
+create index if not exists idx_posts_author on public.posts(author_id, created_at desc);
+
+create table if not exists public.post_likes (
+  post_id uuid not null references public.posts(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (post_id, user_id)
+);
+create index if not exists idx_post_likes_user on public.post_likes(user_id);
+
+create table if not exists public.post_comments (
+  id uuid primary key default gen_random_uuid(),
+  post_id uuid not null references public.posts(id) on delete cascade,
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  content text not null check (char_length(content) between 1 and 1000),
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_comments_post on public.post_comments(post_id, created_at);
+
+alter table public.posts enable row level security;
+alter table public.post_likes enable row level security;
+alter table public.post_comments enable row level security;
+
+create or replace function public.can_post() returns boolean
+language sql stable security definer set search_path = public as $$
+  select auth.uid() is not null and not is_banned()
+     and ((select app_enabled from app_settings where id = 1) or is_admin());
+$$;
+
+drop policy if exists posts_select on public.posts;
+create policy posts_select on public.posts for select to authenticated
+  using ((not deleted and not is_blocked_between(auth.uid(), author_id)) or is_admin());
+drop policy if exists posts_insert on public.posts;
+create policy posts_insert on public.posts for insert to authenticated
+  with check (author_id = auth.uid() and can_post());
+
+drop policy if exists likes_select on public.post_likes;
+create policy likes_select on public.post_likes for select to authenticated using (true);
+drop policy if exists likes_insert on public.post_likes;
+create policy likes_insert on public.post_likes for insert to authenticated
+  with check (user_id = auth.uid() and can_post());
+drop policy if exists likes_delete on public.post_likes;
+create policy likes_delete on public.post_likes for delete to authenticated using (user_id = auth.uid());
+
+drop policy if exists comments_select on public.post_comments;
+create policy comments_select on public.post_comments for select to authenticated
+  using (not is_blocked_between(auth.uid(), author_id) or is_admin());
+drop policy if exists comments_insert on public.post_comments;
+create policy comments_insert on public.post_comments for insert to authenticated
+  with check (author_id = auth.uid() and can_post());
+
+-- حماية الأعمدة المحسوبة + منع الإغراق
+create or replace function public.before_post_insert() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if (select count(*) from posts where author_id = new.author_id
+      and created_at > now() - interval '1 minute') >= 3 then
+    raise exception 'rate_limited: انتظر قليلًا قبل نشر منشور جديد';
+  end if;
+  new.like_count := 0; new.comment_count := 0; new.deleted := false; new.created_at := now();
+  return new;
+end $$;
+drop trigger if exists trg_before_post on public.posts;
+create trigger trg_before_post before insert on public.posts
+  for each row execute function public.before_post_insert();
+
+create or replace function public.after_post_insert() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform add_capped_xp(new.author_id, 'post_xp', 10, 50);
+  return new;
+end $$;
+drop trigger if exists trg_after_post on public.posts;
+create trigger trg_after_post after insert on public.posts
+  for each row execute function public.after_post_insert();
+
+create or replace function public.on_like_change() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare author uuid; liker_name text;
+begin
+  if tg_op = 'INSERT' then
+    update posts set like_count = like_count + 1 where id = new.post_id returning author_id into author;
+    if author is not null and author <> new.user_id then
+      perform add_xp(author, 2);
+      select display_name into liker_name from profiles where id = new.user_id;
+      perform notify_user(author, 'post_like', 'إعجاب جديد',
+        coalesce(liker_name, '') || ' أعجبه منشورك', jsonb_build_object('post_id', new.post_id));
+    end if;
+    return new;
+  else
+    update posts set like_count = greatest(0, like_count - 1) where id = old.post_id;
+    return old;
+  end if;
+end $$;
+drop trigger if exists trg_like_change on public.post_likes;
+create trigger trg_like_change after insert or delete on public.post_likes
+  for each row execute function public.on_like_change();
+
+create or replace function public.on_comment_change() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare author uuid; n text;
+begin
+  if tg_op = 'INSERT' then
+    if (select count(*) from post_comments where author_id = new.author_id
+        and created_at > now() - interval '30 seconds') > 5 then
+      raise exception 'rate_limited: تعليقات كثيرة بسرعة';
+    end if;
+    update posts set comment_count = comment_count + 1 where id = new.post_id returning author_id into author;
+    perform add_capped_xp(new.author_id, 'comment_xp', 3, 30);
+    if author is not null and author <> new.author_id then
+      perform add_xp(author, 2);
+      select display_name into n from profiles where id = new.author_id;
+      perform notify_user(author, 'post_comment', 'تعليق جديد',
+        coalesce(n, '') || ': ' || left(new.content, 80), jsonb_build_object('post_id', new.post_id));
+    end if;
+    return new;
+  else
+    update posts set comment_count = greatest(0, comment_count - 1) where id = old.post_id;
+    return old;
+  end if;
+end $$;
+drop trigger if exists trg_comment_change on public.post_comments;
+create trigger trg_comment_change after insert or delete on public.post_comments
+  for each row execute function public.on_comment_change();
+
+create or replace function public.delete_post(pid uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  update posts set deleted = true
+  where id = pid and (author_id = auth.uid() or is_admin());
+  if not found then raise exception 'لا يمكن حذف هذا المنشور'; end if;
+end $$;
+
+create or replace function public.delete_comment(cid uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  delete from post_comments c
+  where c.id = cid and (c.author_id = auth.uid() or is_admin()
+        or exists(select 1 from posts p where p.id = c.post_id and p.author_id = auth.uid()));
+  if not found then raise exception 'لا يمكن حذف هذا التعليق'; end if;
+end $$;
+
+-- صورة المنشورات: bucket عام، الكتابة في مجلد المستخدم فقط
+insert into storage.buckets (id, name, public, file_size_limit)
+  values ('posts', 'posts', true, 10485760)
+  on conflict (id) do update set public = true, file_size_limit = 10485760;
+drop policy if exists posts_read on storage.objects;
+create policy posts_read on storage.objects for select using (bucket_id = 'posts');
+drop policy if exists posts_write on storage.objects;
+create policy posts_write on storage.objects for insert to authenticated
+  with check (bucket_id = 'posts' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- ---------------------------------------------------------------------
+-- تحديثات الدوال للإصدار 2
+-- ---------------------------------------------------------------------
+drop function if exists public.get_my_conversations();
+create function public.get_my_conversations()
+returns table(
+  id uuid, type text, name text, avatar_url text, is_public boolean,
+  last_message_at timestamptz, last_message_preview text,
+  muted boolean, archived boolean, my_role text, unread_count bigint,
+  other_user_id uuid, other_username text, other_display_name text,
+  other_avatar_url text, other_last_seen timestamptz, member_count bigint,
+  other_verified boolean)
+language sql stable security definer set search_path = public as $$
+  select c.id, c.type, c.name, c.avatar_url, c.is_public,
+         c.last_message_at, c.last_message_preview,
+         m.muted, m.archived, m.role,
+         (select count(*) from messages x
+            where x.conversation_id = c.id and x.created_at > m.last_read_at
+              and x.sender_id is distinct from auth.uid() and not x.deleted and x.type <> 'system'),
+         o.user_id, p.username, p.display_name, p.avatar_url, p.last_seen,
+         (select count(*) from conversation_members z where z.conversation_id = c.id),
+         coalesce(p.is_verified, false)
+  from conversation_members m
+  join conversations c on c.id = m.conversation_id
+  left join lateral (
+    select mm.user_id from conversation_members mm
+    where mm.conversation_id = c.id and mm.user_id <> auth.uid() and c.type = 'direct'
+    limit 1) o on true
+  left join profiles p on p.id = o.user_id
+  where m.user_id = auth.uid()
+  order by c.last_message_at desc;
+$$;
+
+create or replace function public.get_owner_id() returns uuid
+language sql stable security definer set search_path = public as $$
+  select id from profiles where is_owner order by created_at limit 1;
+$$;
+
+create or replace function public.admin_set_ban(target uuid, banned boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  if target = auth.uid() then raise exception 'لا يمكنك حظر نفسك'; end if;
+  if exists(select 1 from profiles where id = target and is_owner) then raise exception 'لا يمكن حظر مالك التطبيق'; end if;
+  update profiles set is_banned = banned where id = target;
+end $$;
+
+create or replace function public.admin_set_role(target uuid, make_admin boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  if target = auth.uid() then raise exception 'لا يمكنك تغيير صلاحيتك'; end if;
+  if exists(select 1 from profiles where id = target and is_owner) then raise exception 'لا يمكن تغيير صلاحية المالك'; end if;
+  update profiles set is_admin = make_admin where id = target;
+end $$;
+
+create or replace function public.admin_set_verified(target uuid, verified boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  if exists(select 1 from profiles where id = target and is_owner) and not verified then
+    raise exception 'المالك موثّق دائمًا';
+  end if;
+  update profiles set is_verified = verified where id = target;
+end $$;
+
+create or replace function public.admin_stats() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  return jsonb_build_object(
+    'users', (select count(*) from profiles),
+    'active_24h', (select count(*) from profiles where last_seen > now() - interval '24 hours'),
+    'active_5m', (select count(*) from profiles where last_seen > now() - interval '5 minutes'),
+    'banned', (select count(*) from profiles where is_banned),
+    'verified', (select count(*) from profiles where is_verified),
+    'messages', (select count(*) from messages),
+    'messages_24h', (select count(*) from messages where created_at > now() - interval '24 hours'),
+    'posts', (select count(*) from posts where not deleted),
+    'posts_24h', (select count(*) from posts where not deleted and created_at > now() - interval '24 hours'),
+    'groups', (select count(*) from conversations where type = 'group'),
+    'open_reports', (select count(*) from reports where status = 'open'),
+    'app_enabled', (select app_enabled from app_settings where id = 1)
+  );
+end $$;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['posts','post_likes','post_comments'] loop
+    begin
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    exception when duplicate_object then null;
+    end;
+  end loop;
+end $$;
 
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

@@ -22,7 +22,7 @@ class AdminScreen extends StatelessWidget {
       return Scaffold(appBar: AppBar(), body: const EmptyState(icon: Icons.lock, title: 'للمدير فقط'));
     }
     return DefaultTabController(
-      length: 5,
+      length: 6,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('لوحة التحكم'),
@@ -32,6 +32,7 @@ class AdminScreen extends StatelessWidget {
             tabs: [
               Tab(icon: Icon(Icons.dashboard_rounded), text: 'الرئيسية'),
               Tab(icon: Icon(Icons.people_alt_rounded), text: 'المستخدمون'),
+              Tab(icon: Icon(Icons.dynamic_feed_rounded), text: 'المنشورات'),
               Tab(icon: Icon(Icons.flag_rounded), text: 'البلاغات'),
               Tab(icon: Icon(Icons.groups_rounded), text: 'المجموعات'),
               Tab(icon: Icon(Icons.campaign_rounded), text: 'إشعار عام'),
@@ -39,7 +40,7 @@ class AdminScreen extends StatelessWidget {
           ),
         ),
         body: const TabBarView(
-          children: [_Overview(), _Users(), _Reports(), _Groups(), _Broadcast()],
+          children: [_Overview(), _Users(), _Posts(), _Reports(), _Groups(), _Broadcast()],
         ),
       ),
     );
@@ -169,6 +170,9 @@ class _OverviewState extends State<_Overview> {
                 _stat('نشطون الآن', s['active_5m'], Icons.bolt_rounded, AppColors.green),
                 _stat('نشطون 24 ساعة', s['active_24h'], Icons.schedule, AppColors.violet),
                 _stat('محظورون', s['banned'], Icons.gpp_bad_rounded, AppColors.danger),
+                _stat('موثّقون', s['verified'], Icons.verified_rounded, const Color(0xFF1D9BF0)),
+                _stat('المنشورات', s['posts'], Icons.dynamic_feed_rounded, AppColors.violet),
+                _stat('منشورات اليوم', s['posts_24h'], Icons.post_add_rounded, AppColors.cyan),
                 _stat('الرسائل', s['messages'], Icons.chat_rounded, AppColors.pink),
                 _stat('رسائل اليوم', s['messages_24h'], Icons.today_rounded, Colors.orange),
                 _stat('المجموعات', s['groups'], Icons.groups_rounded, AppColors.cyan),
@@ -242,6 +246,16 @@ class _UsersState extends State<_Users> {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.verified_rounded, color: Color(0xFF1D9BF0)),
+              title: Text(p.isVerified ? 'إلغاء التوثيق' : 'توثيق الحساب ✔️'),
+              enabled: !p.isOwner,
+              onTap: () async {
+                Navigator.pop(c);
+                await _run(() => _admin.setVerified(p.id, !p.isVerified));
+              },
+            ),
+            if (!p.isOwner)
+            ListTile(
               leading: Icon(p.isBanned ? Icons.lock_open : Icons.gpp_bad, color: p.isBanned ? Colors.green : Colors.redAccent),
               title: Text(p.isBanned ? 'إلغاء الحظر' : 'حظر الحساب'),
               onTap: () async {
@@ -249,6 +263,7 @@ class _UsersState extends State<_Users> {
                 await _run(() => _admin.setBan(p.id, !p.isBanned));
               },
             ),
+            if (!p.isOwner)
             ListTile(
               leading: const Icon(Icons.admin_panel_settings_outlined),
               title: Text(p.isAdmin ? 'إزالة صلاحية المدير' : 'منح صلاحية المدير'),
@@ -302,10 +317,13 @@ class _UsersState extends State<_Users> {
                       return ListTile(
                         leading: Avatar(url: p.avatarUrl, name: p.displayName),
                         title: Row(children: [
-                          Flexible(child: Text(p.displayName, overflow: TextOverflow.ellipsis)),
-                          if (p.isAdmin) const Padding(padding: EdgeInsets.only(right: 4), child: Icon(Icons.verified, size: 16, color: AppColors.cyan)),
+                          Flexible(child: NameWithBadge(p.displayName, verified: p.verified)),
+                          const SizedBox(width: 6),
+                          LevelChip(p.level),
+                          if (p.isOwner) const Padding(padding: EdgeInsets.only(right: 6), child: Text('👑')),
+                          if (p.isAdmin && !p.isOwner) const Padding(padding: EdgeInsets.only(right: 6), child: Icon(Icons.shield, size: 14, color: AppColors.cyan)),
                         ]),
-                        subtitle: Text('@${p.username} · ${Fmt.lastSeen(p.lastSeen)}'),
+                        subtitle: Text('@${p.username} · ${p.xp} نقطة · ${Fmt.lastSeen(p.lastSeen)}'),
                         trailing: p.isBanned
                             ? const Chip(label: Text('محظور'), visualDensity: VisualDensity.compact)
                             : null,
@@ -545,6 +563,72 @@ class _BroadcastState extends State<_Broadcast> {
           label: const Text('إرسال للجميع'),
         ),
       ],
+    );
+  }
+}
+
+
+class _Posts extends StatefulWidget {
+  const _Posts();
+  @override
+  State<_Posts> createState() => _PostsState();
+}
+
+class _PostsState extends State<_Posts> {
+  List<Post> _items = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final r = await _admin.posts();
+      if (mounted) setState(() => _items = r);
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_items.isEmpty) return const EmptyState(icon: Icons.dynamic_feed_outlined, title: 'لا توجد منشورات');
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView.separated(
+        itemCount: _items.length,
+        separatorBuilder: (_, __) => const Divider(height: 1),
+        itemBuilder: (_, i) {
+          final p = _items[i];
+          return ListTile(
+            leading: Avatar(url: p.author?.avatarUrl, name: p.author?.displayName ?? ''),
+            title: NameWithBadge(p.author?.displayName ?? '', verified: p.author?.verified ?? false),
+            subtitle: Text(
+              '${p.content.isEmpty ? '📷 صورة' : p.content}\n❤ ${p.likeCount} · 💬 ${p.commentCount} · ${Fmt.chatListTime(p.createdAt)}',
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+            isThreeLine: true,
+            trailing: IconButton(
+              icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+              onPressed: () async {
+                if (!await confirmDialog(context, 'حذف المنشور', 'حذف هذا المنشور؟', ok: 'حذف', danger: true)) return;
+                try {
+                  await _admin.deletePost(p.id);
+                  await _load();
+                } catch (e) {
+                  if (context.mounted) showSnack(context, friendlyError(e), error: true);
+                }
+              },
+            ),
+          );
+        },
+      ),
     );
   }
 }

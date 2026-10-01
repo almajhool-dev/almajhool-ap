@@ -93,6 +93,21 @@ class AdminRepository {
   Future<void> setBan(String userId, bool banned) =>
       supa.rpc('admin_set_ban', params: {'target': userId, 'banned': banned});
 
+  Future<void> setVerified(String userId, bool verified) =>
+      supa.rpc('admin_set_verified', params: {'target': userId, 'verified': verified});
+
+  Future<List<Post>> posts() async {
+    final r = await supa
+        .from('posts')
+        .select('*, author:profiles!posts_author_id_fkey(id,username,display_name,avatar_url,xp,is_verified,is_owner)')
+        .eq('deleted', false)
+        .order('created_at', ascending: false)
+        .limit(100);
+    return r.map((m) => Post.fromMap(m)).toList();
+  }
+
+  Future<void> deletePost(String id) => supa.rpc('delete_post', params: {'pid': id});
+
   Future<void> setAdmin(String userId, bool admin) =>
       supa.rpc('admin_set_role', params: {'target': userId, 'make_admin': admin});
 

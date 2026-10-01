@@ -239,3 +239,49 @@ class Badge2 extends StatelessWidget {
     );
   }
 }
+
+/// علامة التوثيق الزرقاء.
+class VerifiedBadge extends StatelessWidget {
+  final double size;
+  const VerifiedBadge({super.key, this.size = 16});
+  @override
+  Widget build(BuildContext context) =>
+      Icon(Icons.verified_rounded, size: size, color: const Color(0xFF1D9BF0));
+}
+
+/// اسم المستخدم مع علامة التوثيق.
+class NameWithBadge extends StatelessWidget {
+  final String name;
+  final bool verified;
+  final TextStyle? style;
+  final double badgeSize;
+  const NameWithBadge(this.name, {super.key, this.verified = false, this.style, this.badgeSize = 16});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: style)),
+        if (verified) ...[const SizedBox(width: 4), VerifiedBadge(size: badgeSize)],
+      ],
+    );
+  }
+}
+
+class LevelChip extends StatelessWidget {
+  final int level;
+  const LevelChip(this.level, {super.key});
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        gradient: AppColors.brandGradient,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text('Lv $level',
+          style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)),
+    );
+  }
+}

@@ -702,7 +702,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 17)),
+                    NameWithBadge(title, verified: !isGroup && (c?.otherVerified ?? false), style: const TextStyle(fontSize: 17)),
                     Text(
                       _statusLine(hub),
                       maxLines: 1,

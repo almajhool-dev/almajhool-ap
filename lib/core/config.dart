@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// إعدادات الاتصال بـ Supabase.
-/// الترتيب: إعداد يدوي محفوظ ← ملف config.json على GitHub ← القيم المدمجة في التطبيق.
+/// الترتيب: ملف config.json على GitHub (آخر نسخة محفوظة) ← القيم المدمجة في التطبيق.
 class AppConfig {
   AppConfig._();
 
@@ -37,32 +37,12 @@ class AppConfig {
   static Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
 
-    // 1) إعداد أدخله المستخدم يدويًا سابقًا
-    final manualUrl = prefs.getString(_prefUrl) ?? '';
-    final manualKey = prefs.getString(_prefKey) ?? '';
-    if (manualUrl.isNotEmpty && manualKey.isNotEmpty) {
-      url = manualUrl;
-      anonKey = manualKey;
-      return;
-    }
+    // كل الأجهزة على نفس الخادم: نتجاهل أي إعداد يدوي قديم
+    await prefs.remove(_prefUrl);
+    await prefs.remove(_prefKey);
 
-    // 2) ملف config.json على GitHub (مع حفظ آخر نسخة ناجحة)
-    try {
-      final res = await http
-          .get(Uri.parse(_remoteConfig))
-          .timeout(const Duration(seconds: 5));
-      if (res.statusCode == 200) {
-        final j = jsonDecode(res.body) as Map<String, dynamic>;
-        final u = (j['supabase_url'] ?? '').toString().trim();
-        final k = (j['supabase_key'] ?? '').toString().trim();
-        if (u.startsWith('https://') && k.length > 30) {
-          await prefs.setString(_prefRemoteUrl, u);
-          await prefs.setString(_prefRemoteKey, k);
-        }
-      }
-    } catch (_) {
-      // بدون إنترنت أو تعذر الوصول: نستخدم آخر نسخة محفوظة
-    }
+    // 2) آخر إعداد من config.json على GitHub (يُحدَّث بالخلفية لتشغيل فوري)
+    _refreshRemote(prefs);
     final rUrl = prefs.getString(_prefRemoteUrl) ?? '';
     final rKey = prefs.getString(_prefRemoteKey) ?? '';
     if (rUrl.isNotEmpty && rKey.isNotEmpty) {
@@ -74,6 +54,22 @@ class AppConfig {
     // 3) القيم المدمجة
     url = _defaultUrl;
     anonKey = _defaultKey;
+  }
+
+  static Future<void> _refreshRemote(SharedPreferences prefs) async {
+    try {
+      final res = await http.get(Uri.parse(_remoteConfig)).timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) return;
+      final j = jsonDecode(res.body) as Map<String, dynamic>;
+      final u = (j['supabase_url'] ?? '').toString().trim();
+      final k = (j['supabase_key'] ?? '').toString().trim();
+      if (u.startsWith('https://') && k.length > 30) {
+        await prefs.setString(_prefRemoteUrl, u);
+        await prefs.setString(_prefRemoteKey, k);
+      }
+    } catch (_) {
+      // بدون إنترنت: لا شيء
+    }
   }
 
   static Future<void> clear() async {
