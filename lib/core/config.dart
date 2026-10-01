@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -33,22 +34,50 @@ class AppConfig {
 
   static const _prefIce = 'cfg_ice_servers';
 
-  /// خوادم الاتصال (STUN/TURN) للمكالمات — قابلة للتغيير من config.json
-  static List<Map<String, dynamic>> iceServers = _defaultIce;
-  static const List<Map<String, dynamic>> _defaultIce = [
-    {
-      'urls': ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'],
-    },
-    {
+  /// خوادم الاتصال (STUN/TURN) للمكالمات — قابلة للاستبدال من config.json
+  static List<Map<String, dynamic>>? _remoteIce;
+
+  /// بيانات دخول مؤقتة لخادم الوسيط (طريقة TURN REST القياسية: HMAC-SHA1 بسر مشترك)
+  static Map<String, String> _turnCreds(String secret) {
+    final expiry = DateTime.now().add(const Duration(hours: 12)).millisecondsSinceEpoch ~/ 1000;
+    final user = '$expiry:almajhool';
+    final pass = base64.encode(Hmac(sha1, utf8.encode(secret)).convert(utf8.encode(user)).bytes);
+    return {'username': user, 'credential': pass};
+  }
+
+  static List<Map<String, dynamic>> get iceServers {
+    final list = <Map<String, dynamic>>[
+      {
+        'urls': [
+          'stun:stun.l.google.com:19302',
+          'stun:stun1.l.google.com:19302',
+          'stun:stun.cloudflare.com:3478',
+        ],
+      },
+    ];
+    if (_remoteIce != null && _remoteIce!.isNotEmpty) {
+      list.addAll(_remoteIce!);
+    }
+    final c = _turnCreds('openrelayprojectsecret');
+    list.add({
+      'urls': [
+        'turn:staticauth.openrelay.metered.ca:80',
+        'turn:staticauth.openrelay.metered.ca:80?transport=tcp',
+        'turn:staticauth.openrelay.metered.ca:443',
+        'turns:staticauth.openrelay.metered.ca:443?transport=tcp',
+      ],
+      ...c,
+    });
+    list.add({
       'urls': [
         'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:443',
         'turn:openrelay.metered.ca:443?transport=tcp',
       ],
       'username': 'openrelayproject',
       'credential': 'openrelayproject',
-    },
-  ];
+    });
+    return list;
+  }
 
   static bool get isConfigured => url.isNotEmpty && anonKey.isNotEmpty;
   static bool get isBaked => true;
@@ -65,7 +94,7 @@ class AppConfig {
     try {
       final ice = prefs.getString(_prefIce);
       if (ice != null) {
-        iceServers = (jsonDecode(ice) as List).cast<Map>().map((e) => e.cast<String, dynamic>()).toList();
+        _remoteIce = (jsonDecode(ice) as List).cast<Map>().map((e) => e.cast<String, dynamic>()).toList();
       }
     } catch (_) {}
     final rUrl = prefs.getString(_prefRemoteUrl) ?? '';
