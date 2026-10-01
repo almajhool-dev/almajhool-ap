@@ -68,6 +68,11 @@ def main():
     realm, nonce = a[0x0014], a[0x0015]
     key = hashlib.md5(user.encode() + b":" + realm + b":" + pwd.encode()).digest()
     attrs = [attr(0x0019, bytes([17, 0, 0, 0])), attr(0x0006, user.encode()), attr(0x0014, realm), attr(0x0015, nonce)]
+    if 0x8002 in a:
+        # RFC 8489: الخادم يعرض خوارزميات كلمة السر — نختار MD5 ونعيد القائمة كما هي
+        attrs.append(attr(0x8002, a[0x8002]))
+        attrs.append(attr(0x001D, struct.pack("!HH", 1, 0)))
+        print("info: server uses RFC8489 password algorithms")
     mtype, a = parse(exchange(s, proto, msg(0x0003, attrs, key), addr))
     if mtype == 0x0103:
         print("RESULT", host, port, proto, "ALLOCATE OK ✅")
