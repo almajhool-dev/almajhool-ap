@@ -18,13 +18,9 @@ jobs:
           U="$(( $(date +%s) + 3600 )):almajhool"
           P=$(printf '%s' "$U" | openssl dgst -binary -sha1 -hmac openrelayprojectsecret | base64)
           {
-            for proto in udp tcp; do
-              for port in 80 443 3478; do
-                python3 tool/turn_test.py staticauth.openrelay.metered.ca $port $proto "$U" "$P"
-              done
+            for t in "global.relay.metered.ca 80 udp" "global.relay.metered.ca 80 tcp" "global.relay.metered.ca 443 tcp"; do
+              python3 tool/turn_test.py $t b6ba53a1ce65d87ca79ec24b lee1tKAVUEX33OWG
             done
-            python3 tool/turn_test.py openrelay.metered.ca 80 udp openrelayproject openrelayproject
-            python3 tool/turn_test.py openrelay.metered.ca 443 tcp openrelayproject openrelayproject
           } 2>&1 | tee turn.log
       - name: Save result
         if: always()
