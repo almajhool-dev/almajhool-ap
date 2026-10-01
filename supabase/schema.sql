@@ -1617,5 +1617,115 @@ begin
 end $$;
 grant execute on function public.reset_password_with_code(text, text, text) to anon, authenticated;
 
+-- =====================================================================
+--  الإصدار 7: إشارات المكالمات عبر قاعدة البيانات (لا تضيع مهما كانت الشبكة)
+--  + تحديث تلقائي لقاعدة البيانات من GitHub (لا حاجة لتشغيل السكربت يدويًا مستقبلًا)
+-- =====================================================================
+
+create table if not exists public.call_sessions (
+  id uuid primary key,
+  caller uuid not null references auth.users(id) on delete cascade,
+  callee uuid not null references auth.users(id) on delete cascade,
+  video boolean not null default false,
+  status text not null default 'ringing',  -- ringing, accepted, rejected, busy, ended
+  offer jsonb,
+  answer jsonb,
+  caller_ice jsonb not null default '[]'::jsonb,
+  callee_ice jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists call_sessions_callee_idx on public.call_sessions(callee, created_at desc);
+alter table public.call_sessions enable row level security;
+
+drop policy if exists call_sessions_select on public.call_sessions;
+create policy call_sessions_select on public.call_sessions for select to authenticated
+  using (auth.uid() in (caller, callee));
+
+-- لا إدخال/تعديل مباشر: فقط عبر الدوال أدناه
+create or replace function public.call_create(p_id uuid, p_callee uuid, p_video boolean) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null or is_banned() then raise exception 'غير مسموح'; end if;
+  if exists(select 1 from blocks where (blocker_id = p_callee and blocked_id = auth.uid())
+                                    or (blocker_id = auth.uid() and blocked_id = p_callee)) then
+    raise exception 'لا يمكن الاتصال بهذا المستخدم';
+  end if;
+  if (select count(*) from call_sessions where caller = auth.uid() and created_at > now() - interval '1 minute') >= 6 then
+    raise exception 'rate_limited: مكالمات كثيرة، انتظر قليلًا';
+  end if;
+  delete from call_sessions where created_at < now() - interval '2 days';
+  insert into call_sessions(id, caller, callee, video) values (p_id, auth.uid(), p_callee, coalesce(p_video, false));
+end $$;
+
+-- تحديث حقل في المكالمة: الحالة، العرض (للمتصل)، الرد (للمستقبل)، أو إضافة عنوان شبكة
+create or replace function public.call_update(p_id uuid, p_status text default null, p_offer jsonb default null,
+  p_answer jsonb default null, p_ice jsonb default null) returns void
+language plpgsql security definer set search_path = public as $$
+declare c call_sessions;
+begin
+  select * into c from call_sessions where id = p_id;
+  if c.id is null or auth.uid() not in (c.caller, c.callee) then raise exception 'مكالمة غير موجودة'; end if;
+  if p_status is not null and p_status not in ('accepted', 'rejected', 'busy', 'ended') then
+    raise exception 'حالة غير صالحة';
+  end if;
+  update call_sessions set
+    status = case when p_status is null or status = 'ended' then status else p_status end,
+    offer = case when auth.uid() = c.caller and p_offer is not null then p_offer else offer end,
+    answer = case when auth.uid() = c.callee and p_answer is not null then p_answer else answer end,
+    caller_ice = case when auth.uid() = c.caller and p_ice is not null and jsonb_array_length(caller_ice) < 60
+                      then caller_ice || jsonb_build_array(p_ice) else caller_ice end,
+    callee_ice = case when auth.uid() = c.callee and p_ice is not null and jsonb_array_length(callee_ice) < 60
+                      then callee_ice || jsonb_build_array(p_ice) else callee_ice end,
+    updated_at = now()
+  where id = p_id;
+end $$;
+
+-- مكالمات واردة لم يُرد عليها (احتياطي إذا لم تصل الدعوة الفورية)
+create or replace function public.call_pending() returns setof public.call_sessions
+language sql stable security definer set search_path = public as $$
+  select * from call_sessions
+  where callee = auth.uid() and status = 'ringing' and created_at > now() - interval '40 seconds'
+  order by created_at desc limit 1;
+$$;
+
+grant execute on function public.call_create(uuid, uuid, boolean) to authenticated;
+grant execute on function public.call_update(uuid, text, jsonb, jsonb, jsonb) to authenticated;
+grant execute on function public.call_pending() to authenticated;
+revoke execute on function public.call_create(uuid, uuid, boolean) from anon;
+revoke execute on function public.call_update(uuid, text, jsonb, jsonb, jsonb) from anon;
+revoke execute on function public.call_pending() from anon;
+
+do $$
+begin
+  execute 'alter publication supabase_realtime add table public.call_sessions';
+exception when duplicate_object then null; when others then null;
+end $$;
+
+-- تحديث تلقائي: كل 10 دقائق يجلب هذا الملف من GitHub ويطبّقه فقط إذا تغيّر
+create or replace function public._auto_update_schema() returns text
+language plpgsql security definer set search_path = public, extensions as $$
+declare body text; h text; old text;
+begin
+  select content into body from extensions.http_get(
+    'https://raw.githubusercontent.com/almajhool-dev/almajhool-ap/main/supabase/schema.sql');
+  if body is null or position('notify pgrst' in body) = 0 then return 'skip'; end if;
+  h := md5(body);
+  select value into old from private_settings where key = 'schema_hash';
+  if old = h then return 'same'; end if;
+  execute body;
+  insert into private_settings(key, value) values ('schema_hash', h)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  return 'updated';
+end $$;
+revoke execute on function public._auto_update_schema() from public, anon, authenticated;
+
+do $$
+begin
+  create extension if not exists pg_cron;
+  perform cron.schedule('almajhool-auto-update', '*/10 * * * *', 'select public._auto_update_schema()');
+exception when others then raise notice 'auto update not scheduled: %', sqlerrm;
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

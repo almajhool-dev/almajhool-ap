@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/config.dart';
 import '../../core/theme.dart';
@@ -37,7 +36,8 @@ class IncomingCallScreen extends StatefulWidget {
 class _IncomingCallScreenState extends State<IncomingCallScreen> {
   Timer? _vibe;
   Timer? _timeout;
-  RealtimeChannel? _room;
+  Timer? _poll;
+  bool _closed = false;
 
   @override
   void initState() {
@@ -46,41 +46,42 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
     _vibe = Timer.periodic(const Duration(milliseconds: 1500), (_) => HapticFeedback.vibrate());
     _timeout = Timer(const Duration(seconds: 45), _close);
     // إذا ألغى المتصل قبل الرد
-    _room = supa
-        .channel(CallService.roomTopic(widget.callId))
-        .onBroadcast(event: 'hangup', callback: (_) => _close())
-        .subscribe();
+    _poll = Timer.periodic(const Duration(milliseconds: 1500), (_) async {
+      try {
+        final r = await CallSignal.fetch(widget.callId);
+        final st = r?['status'] as String?;
+        if (st != null && st != 'ringing' && st != 'accepted') _close();
+      } catch (_) {}
+    });
   }
 
   @override
   void dispose() {
     _vibe?.cancel();
     _timeout?.cancel();
-    if (_room != null) supa.removeChannel(_room!);
+    _poll?.cancel();
     super.dispose();
   }
 
   void _close() {
+    if (_closed) return;
+    _closed = true;
+    _poll?.cancel();
     CallService.instance.inCall = false;
     if (mounted) Navigator.of(context).pop();
   }
 
   Future<void> _decline() async {
     _vibe?.cancel();
-    try {
-      await _room?.sendBroadcastMessage(event: 'reject', payload: {'from': myId});
-    } catch (_) {}
+    unawaited(CallSignal.update(widget.callId, status: 'rejected').catchError((_) {}));
     _close();
   }
 
   Future<void> _accept() async {
     _vibe?.cancel();
     _timeout?.cancel();
-    // نغادر قناة الغرفة هنا قبل أن تشترك بها شاشة المكالمة
-    if (_room != null) {
-      await supa.removeChannel(_room!);
-      _room = null;
-    }
+    _poll?.cancel();
+    _closed = true;
     if (!mounted) return;
     Navigator.of(context).pushReplacement(MaterialPageRoute(
       builder: (_) => CallScreen(
@@ -132,6 +133,28 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
   }
 }
 
+/// إشارات المكالمة محفوظة في قاعدة البيانات (جدول call_sessions):
+/// لا تضيع حتى لو كانت الشبكة ضعيفة، وكل طرف يقرأها بشكل دوري.
+class CallSignal {
+  CallSignal._();
+
+  static Future<Map<String, dynamic>?> fetch(String id) =>
+      supa.from('call_sessions').select().eq('id', id).maybeSingle().timeout(const Duration(seconds: 6));
+
+  static Future<void> create(String id, String callee, bool video) =>
+      supa.rpc('call_create', params: {'p_id': id, 'p_callee': callee, 'p_video': video});
+
+  static Future<void> update(String id,
+          {String? status, Map<String, dynamic>? offer, Map<String, dynamic>? answer, Map<String, dynamic>? ice}) =>
+      supa.rpc('call_update', params: {
+        'p_id': id,
+        'p_status': status,
+        'p_offer': offer,
+        'p_answer': answer,
+        'p_ice': ice,
+      }).timeout(const Duration(seconds: 8));
+}
+
 /// شاشة المكالمة (صوت أو فيديو) — WebRTC.
 class CallScreen extends StatefulWidget {
   final String callId;
@@ -162,23 +185,25 @@ class _CallScreenState extends State<CallScreen> {
   final _remote = RTCVideoRenderer();
   RTCPeerConnection? _pc;
   MediaStream? _stream;
-  RealtimeChannel? _room;
-  final List<RTCIceCandidate> _pendingIce = [];
+  List<Map<String, dynamic>> _iceAll = const [];
+
+  // حالة الإشارات
+  Timer? _poll;
+  bool _polling = false;
+  int _myVersion = 0; // إصدار العرض الذي أرسلناه (المتصل) أو أجبنا عليه (المستقبل)
   bool _remoteSet = false;
-  // خدمة Realtime تُسقط الرسائل المتلاحقة بسرعة، لذلك نرسل العناوين داخل الـ SDP دفعة واحدة
-  // وأي عناوين متأخرة تُرسل ببطء عبر طابور
-  bool _localSent = false;
-  bool _offering = false;
-  Map<String, dynamic>? _lastSignal; // آخر عرض/رد مرسل لإعادة إرساله إذا ضاع
-  final List<Map<String, dynamic>> _iceOut = [];
-  Timer? _iceTimer;
+  int _remoteIceApplied = 0;
+  bool _accepted = false;
+  bool _gatheringDone = false;
+  bool _sdpSent = false;
   Completer<void>? _gathered;
-  bool _awaitingAnswer = false;
-  String? _lastOfferSdp;
   bool _relayTried = false;
   Timer? _connectWatch;
-  String _diag = ''; // تشخيص: أنواع العناوين المتاحة
-  List<Map<String, dynamic>> _iceAll = const [];
+
+  // تشخيص
+  String _diagLocal = '';
+  String _diagRemote = '';
+  String _iceState = '';
 
   static List<Map<String, dynamic>>? _iceCache;
   static DateTime? _iceCacheAt;
@@ -238,6 +263,11 @@ class _CallScreenState extends State<CallScreen> {
     _init();
   }
 
+  void _setStatus(String s) {
+    if (_connected || _ended) return;
+    if (mounted) setState(() => _status = s);
+  }
+
   Future<void> _init() async {
     try {
       await _local.initialize();
@@ -257,26 +287,50 @@ class _CallScreenState extends State<CallScreen> {
       _local.srcObject = _stream;
       await Helper.setSpeakerphoneOn(_speaker);
 
-      // بيانات الخادم الوسيط تُجلب من قاعدة البيانات للمستخدم المسجّل فقط (غير مخزنة في التطبيق)
+      if (widget.outgoing) {
+        // ننشئ المكالمة في قاعدة البيانات أولًا ثم نرسل الدعوة الفورية
+        await CallSignal.create(widget.callId, widget.peerId, widget.video);
+        unawaited(CallService.sendOnce(CallService.inboxTopic(widget.peerId), 'invite', widget.inviteePayload!)
+            .catchError((_) {}));
+        _setStatus('يرن...');
+        _ringTimeout = Timer(const Duration(seconds: 45), () {
+          if (!_connected) _end(_accepted ? 'تعذّر الاتصال، حاول مجددًا' : 'لا يوجد رد');
+        });
+      } else {
+        await CallSignal.update(widget.callId, status: 'accepted');
+        _ringTimeout = Timer(const Duration(seconds: 50), () {
+          if (!_connected) _end('تعذّر الاتصال، تحقق من الإنترنت وحاول مجددًا');
+        });
+      }
+
       final ice = [...AppConfig.iceServers, ...await _privateIce()];
       _iceAll = ice;
       _pc = await createPeerConnection({
         'iceServers': ice,
         'sdpSemantics': 'unified-plan',
+        'iceCandidatePoolSize': 2,
       });
       for (final t in _stream!.getTracks()) {
         await _pc!.addTrack(t, _stream!);
       }
       _pc!.onIceCandidate = (c) {
-        if (c.candidate == null || !_localSent) return; // قبل الإرسال: موجودة داخل الـ SDP
-        _iceOut.add({'candidate': c.candidate, 'sdpMid': c.sdpMid, 'sdpMLineIndex': c.sdpMLineIndex});
+        // العناوين قبل الإرسال موجودة داخل الـ SDP، والمتأخرة تُضاف لقاعدة البيانات
+        if (c.candidate == null || !_sdpSent) return;
+        unawaited(CallSignal.update(widget.callId, ice: {
+          'candidate': c.candidate,
+          'sdpMid': c.sdpMid,
+          'sdpMLineIndex': c.sdpMLineIndex,
+        }).catchError((_) {}));
       };
       _pc!.onIceGatheringState = (s) {
-        if (s == RTCIceGatheringState.RTCIceGatheringStateComplete && !(_gathered?.isCompleted ?? true)) {
-          _gathered!.complete();
+        if (s == RTCIceGatheringState.RTCIceGatheringStateComplete) {
+          _gatheringDone = true;
+          if (!(_gathered?.isCompleted ?? true)) _gathered!.complete();
         }
       };
       _pc!.onIceConnectionState = (s) {
+        _iceState = s.toString().split('RTCIceConnectionState').last;
+        if (mounted) setState(() {});
         if (s == RTCIceConnectionState.RTCIceConnectionStateConnected ||
             s == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
           _onConnected();
@@ -284,9 +338,6 @@ class _CallScreenState extends State<CallScreen> {
           _onIceFailed();
         }
       };
-      _iceTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
-        if (_iceOut.isNotEmpty) _send('ice', _iceOut.removeAt(0));
-      });
       _pc!.onTrack = (e) {
         if (e.streams.isNotEmpty) {
           _remote.srcObject = e.streams.first;
@@ -299,62 +350,98 @@ class _CallScreenState extends State<CallScreen> {
           _onConnected();
         } else if (s == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
           _onIceFailed();
-        } else if (s == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
-          if (mounted) setState(() => _status = 'انقطع الاتصال، جارٍ إعادة المحاولة...');
+        } else if (s == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected && _connected) {
+          if (mounted) setState(() => _status = 'الشبكة ضعيفة، جارٍ إعادة الاتصال...');
+        } else if (s == RTCPeerConnectionState.RTCPeerConnectionStateConnected && _connected) {
+          if (mounted) setState(() => _status = '');
         }
       };
 
-      final ready = Completer<void>();
-      _room = supa
-          .channel(CallService.roomTopic(widget.callId))
-          .onBroadcast(event: 'accept', callback: (_) => _onAccept())
-          .onBroadcast(event: 'offer', callback: (p) => _onOffer(unwrapBroadcast(p)))
-          .onBroadcast(event: 'answer', callback: (p) => _onAnswer(unwrapBroadcast(p)))
-          .onBroadcast(event: 'ice', callback: (p) => _onIce(unwrapBroadcast(p)))
-          .onBroadcast(event: 'reject', callback: (_) => _end('رُفضت المكالمة'))
-          .onBroadcast(event: 'busy', callback: (_) => _end('المستخدم في مكالمة أخرى'))
-          .onBroadcast(event: 'hangup', callback: (_) => _end('انتهت المكالمة'))
-          .subscribe((status, _) {
-        if (status == RealtimeSubscribeStatus.subscribed && !ready.isCompleted) ready.complete();
-      });
-      await ready.future.timeout(const Duration(seconds: 10));
-
-      if (widget.outgoing) {
-        await CallService.sendOnce(CallService.inboxTopic(widget.peerId), 'invite', widget.inviteePayload!);
-        if (mounted) setState(() => _status = 'يرن...');
-        _ringTimeout = Timer(const Duration(seconds: 45), () {
-          if (!_connected) _end('لا يوجد رد');
-        });
-      } else {
-        // نعيد إرسال القبول حتى يصل العرض (في حال ضاعت الرسالة)
-        for (var i = 0; i < 6 && !_remoteSet && !_ended; i++) {
-          await _send('accept', {});
-          await Future<void>.delayed(const Duration(seconds: 3));
-        }
-        _ringTimeout = Timer(const Duration(seconds: 30), () {
-          if (!_connected) _end('تعذّر الاتصال، تحقق من الإنترنت وحاول مجددًا');
-        });
-      }
+      _poll = Timer.periodic(const Duration(milliseconds: 700), (_) => _tick());
+      unawaited(_tick());
     } catch (e) {
       _end('تعذّر بدء المكالمة: ${friendlyError(e)}');
     }
   }
 
-  Future<void> _send(String event, Map<String, dynamic> payload) async {
+  /// قراءة حالة المكالمة من قاعدة البيانات والتصرف حسبها.
+  Future<void> _tick() async {
+    if (_polling || _ended || _pc == null) return;
+    _polling = true;
     try {
-      await _room?.sendBroadcastMessage(event: event, payload: payload);
-    } catch (_) {}
-  }
+      final r = await CallSignal.fetch(widget.callId);
+      if (r == null || _ended) return;
+      final st = r['status'] as String? ?? 'ringing';
+      if (st == 'rejected') return _end('رُفضت المكالمة');
+      if (st == 'busy') return _end('المستخدم في مكالمة أخرى');
+      if (st == 'ended') return _end('انتهت المكالمة');
 
-  Future<void> _onAccept() async {
-    if (!widget.outgoing || _pc == null || _offering) return;
-    _offering = true;
-    _ringTimeout?.cancel();
-    _ringTimeout = Timer(const Duration(seconds: 40), () {
-      if (!_connected) _end('تعذّر الاتصال، تحقق من الإنترنت وحاول مجددًا');
-    });
-    if (mounted) setState(() => _status = 'جارٍ الربط...');
-    await _sendOffer();
+      if (widget.outgoing) {
+        if (st == 'accepted' && !_accepted) {
+          _accepted = true;
+          _ringTimeout?.cancel();
+          _ringTimeout = Timer(const Duration(seconds: 45), () {
+            if (!_connected) _end('تعذّر الاتصال، حاول مجددًا');
+          });
+          _setStatus('جارٍ الربط (1/3)...');
+          await _sendOffer();
+        }
+        final ans = r['answer'];
+        if (ans is Map && !_remoteSet && (ans['v'] as num?)?.toInt() == _myVersion && _myVersion > 0) {
+          final sdp = ans['sdp'] as String?;
+          await _pc!.setRemoteDescription(RTCSessionDescription(sdp, ans['type'] as String? ?? 'answer'));
+          _remoteSet = true;
+          _diagRemote = _candTypes(sdp ?? '');
+          _setStatus('جارٍ الربط (3/3)...');
+          _watchConnection();
+        }
+      } else {
+        final off = r['offer'];
+        final v = off is Map ? (off['v'] as num?)?.toInt() ?? 0 : 0;
+        if (off is Map && v > _myVersion) {
+          _myVersion = v;
+          _remoteSet = false;
+          _remoteIceApplied = 0;
+          final sdp = off['sdp'] as String?;
+          if (off['relay'] == true) {
+            await _pc!.setConfiguration({
+              'iceServers': _iceAll,
+              'iceTransportPolicy': 'relay',
+              'sdpSemantics': 'unified-plan',
+            });
+          }
+          _setStatus('جارٍ الربط (2/3)...');
+          await _pc!.setRemoteDescription(RTCSessionDescription(sdp, off['type'] as String? ?? 'offer'));
+          _remoteSet = true;
+          _diagRemote = _candTypes(sdp ?? '');
+          final answer = await _pc!.createAnswer({});
+          final full = await _setLocalAndGather(answer);
+          await CallSignal.update(widget.callId, answer: {'sdp': full.sdp, 'type': full.type, 'v': v});
+          _setStatus('جارٍ الربط (3/3)...');
+          _watchConnection();
+        }
+      }
+
+      // عناوين الشبكة المتأخرة من الطرف الآخر
+      if (_remoteSet) {
+        final list = (widget.outgoing ? r['callee_ice'] : r['caller_ice']) as List? ?? const [];
+        while (_remoteIceApplied < list.length) {
+          final p = list[_remoteIceApplied++];
+          if (p is! Map) continue;
+          try {
+            await _pc!.addCandidate(RTCIceCandidate(
+              p['candidate'] as String?,
+              p['sdpMid'] as String?,
+              (p['sdpMLineIndex'] as num?)?.toInt(),
+            ));
+          } catch (_) {}
+        }
+      }
+    } catch (_) {
+      // خطأ مؤقت في الشبكة: نحاول في الدورة القادمة
+    } finally {
+      _polling = false;
+    }
   }
 
   /// المتصل يرسل العرض. عند إعادة المحاولة نجبر المرور عبر الخادم الوسيط.
@@ -371,11 +458,33 @@ class _CallScreenState extends State<CallScreen> {
       'offerToReceiveVideo': widget.video,
       if (relayOnly) 'iceRestart': true,
     });
-    _awaitingAnswer = true;
-    await _setLocalAndSend(offer, 'offer');
+    final full = await _setLocalAndGather(offer);
+    _myVersion++;
+    _remoteSet = false;
+    _remoteIceApplied = 0;
+    await CallSignal.update(widget.callId,
+        offer: {'sdp': full.sdp, 'type': full.type, 'v': _myVersion, if (relayOnly) 'relay': true});
+    _setStatus(relayOnly ? 'جارٍ تجربة مسار بديل عبر الخادم الوسيط...' : 'جارٍ الربط (2/3)...');
   }
 
-  /// إذا لم يتصل خلال 12 ثانية من وصول الرد: نعيد المحاولة عبر الوسيط مرة واحدة.
+  /// نضبط الوصف المحلي وننتظر جمع العناوين (حتى 6 ثوانٍ) حتى تُرسل كلها مرة واحدة.
+  Future<RTCSessionDescription> _setLocalAndGather(RTCSessionDescription desc) async {
+    _gathered = Completer<void>();
+    _gatheringDone = false;
+    await _pc!.setLocalDescription(desc);
+    if (!_gatheringDone) {
+      try {
+        await _gathered!.future.timeout(const Duration(seconds: 6));
+      } catch (_) {}
+    }
+    final full = await _pc!.getLocalDescription() ?? desc;
+    _sdpSent = true;
+    _diagLocal = _candTypes(full.sdp ?? '');
+    if (mounted) setState(() {});
+    return full;
+  }
+
+  /// إذا لم يتصل خلال 12 ثانية: نعيد المحاولة عبر الوسيط مرة واحدة.
   void _watchConnection() {
     _connectWatch?.cancel();
     _connectWatch = Timer(const Duration(seconds: 12), () {
@@ -387,106 +496,23 @@ class _CallScreenState extends State<CallScreen> {
     if (_connected || _ended) return;
     if (widget.outgoing && !_relayTried) {
       _relayTried = true;
-      if (mounted) setState(() => _status = 'جارٍ تجربة مسار بديل عبر الخادم الوسيط...');
       try {
         await _sendOffer(relayOnly: true);
+        _ringTimeout?.cancel();
+        _ringTimeout = Timer(const Duration(seconds: 30), () {
+          if (!_connected) _end('تعذّر الاتصال: شبكة أحد الطرفين تمنع المكالمات');
+        });
       } catch (_) {
         _end('تعذّر الاتصال (الشبكة)');
       }
     } else if (!widget.outgoing) {
-      // المستقبل ينتظر عرض المسار البديل من المتصل
-      if (mounted) setState(() => _status = 'جارٍ تجربة مسار بديل...');
-    } else {
-      _end('تعذّر الاتصال: شبكة أحد الطرفين تمنع المكالمات');
+      _setStatus('جارٍ تجربة مسار بديل...');
     }
   }
 
-  Future<void> _onOffer(Map<String, dynamic> p) async {
-    if (widget.outgoing || _pc == null) return;
-    final sdp = p['sdp'] as String?;
-    if (sdp == _lastOfferSdp) {
-      if (_lastSignal != null) await _send('answer', _lastSignal!); // الرد السابق ضاع
-      return;
-    }
-    _lastOfferSdp = sdp;
-    if (sdp != null && sdp.contains('typ relay') && !sdp.contains('typ host')) {
-      // المتصل انتقل للمسار الوسيط: نفعل مثله
-      await _pc!.setConfiguration({
-        'iceServers': _iceAll,
-        'iceTransportPolicy': 'relay',
-        'sdpSemantics': 'unified-plan',
-      });
-    }
-    await _pc!.setRemoteDescription(RTCSessionDescription(sdp, p['type'] as String?));
-    _remoteSet = true;
-    await _flushIce();
-    final answer = await _pc!.createAnswer({});
-    await _setLocalAndSend(answer, 'answer');
-    _watchConnection();
-  }
-
-  /// نضبط الوصف المحلي، ننتظر جمع العناوين (حتى 4 ثوانٍ)، ثم نرسل رسالة واحدة كاملة.
-  Future<void> _setLocalAndSend(RTCSessionDescription desc, String event) async {
-    _gathered = Completer<void>();
-    await _pc!.setLocalDescription(desc);
-    try {
-      await _gathered!.future.timeout(const Duration(seconds: 4));
-    } catch (_) {}
-    final full = await _pc!.getLocalDescription() ?? desc;
-    _localSent = true;
-    _lastSignal = {'sdp': full.sdp, 'type': full.type};
-    _updateDiag(full.sdp ?? '');
-    await _send(event, _lastSignal!);
-    if (event == 'offer') {
-      // إعادة إرسال العرض إذا لم يصل رد
-      for (var i = 0; i < 5; i++) {
-        await Future<void>.delayed(const Duration(seconds: 4));
-        if (!_awaitingAnswer || _ended) break;
-        await _send('offer', _lastSignal!);
-      }
-    }
-  }
-
-  void _updateDiag(String sdp) {
-    final host = 'typ host'.allMatches(sdp).length;
-    final srflx = 'typ srflx'.allMatches(sdp).length;
-    final relay = 'typ relay'.allMatches(sdp).length;
-    String mark(int n) => n > 0 ? '✓' : '✗';
-    _diag = 'محلي ${mark(host)} · إنترنت ${mark(srflx)} · وسيط ${mark(relay)}';
-    if (mounted) setState(() {});
-  }
-
-  Future<void> _onAnswer(Map<String, dynamic> p) async {
-    if (!widget.outgoing || _pc == null || !_awaitingAnswer) return;
-    _awaitingAnswer = false;
-    await _pc!.setRemoteDescription(RTCSessionDescription(p['sdp'] as String?, p['type'] as String?));
-    _remoteSet = true;
-    await _flushIce();
-    _watchConnection();
-  }
-
-  Future<void> _onIce(Map<String, dynamic> p) async {
-    final c = RTCIceCandidate(
-      p['candidate'] as String?,
-      p['sdpMid'] as String?,
-      (p['sdpMLineIndex'] as num?)?.toInt(),
-    );
-    if (_remoteSet && _pc != null) {
-      try {
-        await _pc!.addCandidate(c);
-      } catch (_) {}
-    } else {
-      _pendingIce.add(c);
-    }
-  }
-
-  Future<void> _flushIce() async {
-    for (final c in _pendingIce) {
-      try {
-        await _pc?.addCandidate(c);
-      } catch (_) {}
-    }
-    _pendingIce.clear();
+  String _candTypes(String sdp) {
+    String mark(String t) => sdp.contains('typ $t') ? '✓' : '✗';
+    return 'محلي ${mark('host')} · إنترنت ${mark('srflx')} · وسيط ${mark('relay')}';
   }
 
   void _onConnected() {
@@ -495,6 +521,9 @@ class _CallScreenState extends State<CallScreen> {
     _connected = true;
     _ringTimeout?.cancel();
     _startedAt = DateTime.now();
+    // بعد الاتصال نتحقق من الإنهاء كل ثانيتين فقط
+    _poll?.cancel();
+    _poll = Timer.periodic(const Duration(seconds: 2), (_) => _tick());
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
@@ -502,17 +531,19 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _hangup() async {
-    await _send('hangup', {});
+    unawaited(CallSignal.update(widget.callId, status: 'ended').catchError((_) {}));
     _end('انتهت المكالمة');
   }
 
   Future<void> _end(String reason) async {
     if (_ended) return;
     _ended = true;
+    _poll?.cancel();
     _ticker?.cancel();
     _ringTimeout?.cancel();
     final duration = _startedAt == null ? null : DateTime.now().difference(_startedAt!);
     if (mounted) setState(() => _status = reason);
+    unawaited(CallSignal.update(widget.callId, status: 'ended').catchError((_) {}));
 
     // سجل المكالمة في المحادثة (من طرف المتصل فقط)
     if (widget.outgoing) {
@@ -528,12 +559,12 @@ class _CallScreenState extends State<CallScreen> {
     }
 
     await _cleanup();
-    await Future<void>.delayed(const Duration(milliseconds: 1200));
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
     if (mounted) Navigator.of(context).pop();
   }
 
   Future<void> _cleanup() async {
-    _iceTimer?.cancel();
+    _poll?.cancel();
     _connectWatch?.cancel();
     try {
       for (final t in _stream?.getTracks() ?? <MediaStreamTrack>[]) {
@@ -542,10 +573,6 @@ class _CallScreenState extends State<CallScreen> {
       await _stream?.dispose();
       await _pc?.close();
     } catch (_) {}
-    if (_room != null) {
-      await supa.removeChannel(_room!);
-      _room = null;
-    }
     CallService.instance.inCall = false;
   }
 
@@ -553,9 +580,10 @@ class _CallScreenState extends State<CallScreen> {
   void dispose() {
     _ticker?.cancel();
     _ringTimeout?.cancel();
-    _iceTimer?.cancel();
+    _poll?.cancel();
     if (!_ended) {
-      _send('hangup', {});
+      _ended = true;
+      unawaited(CallSignal.update(widget.callId, status: 'ended').catchError((_) {}));
       _cleanup();
     }
     _local.dispose();
@@ -637,9 +665,15 @@ class _CallScreenState extends State<CallScreen> {
                       elapsed != null && _status.isEmpty ? Fmt.duration(elapsed) : _status,
                       style: const TextStyle(color: Colors.white70, fontSize: 16),
                     ),
-                    if (!_connected && _diag.isNotEmpty) ...[
+                    if (!_connected && _diagLocal.isNotEmpty) ...[
                       const SizedBox(height: 10),
-                      Text(_diag, style: const TextStyle(color: Colors.white38, fontSize: 12)),
+                      Text(
+                        'أنا: $_diagLocal'
+                        '${_diagRemote.isEmpty ? '' : '\nهو: $_diagRemote'}'
+                        '${_iceState.isEmpty ? '' : '\nICE: $_iceState'}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.white54, fontSize: 12),
+                      ),
                     ],
                   ],
                 ),
