@@ -98,6 +98,9 @@ class AdminRepository {
     return (r as num?)?.toInt() ?? 0;
   }
 
+  Future<void> setPassword(String userId, String password) =>
+      supa.rpc('admin_set_password', params: {'target': userId, 'new_password': password});
+
   Future<void> clearWarnings(String userId) =>
       supa.rpc('admin_clear_warnings', params: {'target': userId});
 

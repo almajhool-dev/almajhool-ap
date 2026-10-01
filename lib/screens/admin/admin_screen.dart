@@ -259,6 +259,18 @@ class _UsersState extends State<_Users> {
                   await _run(() => _admin.warn(p.id, reason));
                 },
               ),
+            if (!p.isOwner)
+              ListTile(
+                leading: const Icon(Icons.password_rounded),
+                title: const Text('تعيين كلمة مرور جديدة'),
+                subtitle: const Text('إذا نسي المستخدم كلمة المرور ولم يصله الإيميل'),
+                onTap: () async {
+                  Navigator.pop(c);
+                  final pw = await promptText(context, 'كلمة المرور الجديدة لـ ${p.displayName}', hint: '8 أحرف على الأقل');
+                  if (pw == null) return;
+                  await _run(() => _admin.setPassword(p.id, pw));
+                },
+              ),
             if (p.warnings > 0)
               ListTile(
                 leading: const Icon(Icons.restart_alt_rounded),

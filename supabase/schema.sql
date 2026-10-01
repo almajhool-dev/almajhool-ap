@@ -1475,5 +1475,22 @@ begin
 end $$;
 revoke execute on function public.get_ice_servers() from anon;
 
+
+-- =====================================================================
+--  الإصدار 5: المدير يعيّن كلمة مرور جديدة لمستخدم (بديل عند تعذّر الإيميل)
+-- =====================================================================
+create or replace function public.admin_set_password(target uuid, new_password text) returns void
+language plpgsql security definer set search_path = public, extensions, auth as $$
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  if char_length(coalesce(new_password, '')) < 8 then raise exception 'كلمة المرور 8 أحرف على الأقل'; end if;
+  if exists(select 1 from profiles where id = target and is_owner) and target <> auth.uid() then
+    raise exception 'لا يمكن تغيير كلمة مرور المالك';
+  end if;
+  update auth.users set encrypted_password = crypt(new_password, gen_salt('bf')), updated_at = now()
+  where id = target;
+  if not found then raise exception 'المستخدم غير موجود'; end if;
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
