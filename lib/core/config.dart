@@ -31,6 +31,25 @@ class AppConfig {
   static String url = '';
   static String anonKey = '';
 
+  static const _prefIce = 'cfg_ice_servers';
+
+  /// خوادم الاتصال (STUN/TURN) للمكالمات — قابلة للتغيير من config.json
+  static List<Map<String, dynamic>> iceServers = _defaultIce;
+  static const List<Map<String, dynamic>> _defaultIce = [
+    {
+      'urls': ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'],
+    },
+    {
+      'urls': [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp',
+      ],
+      'username': 'openrelayproject',
+      'credential': 'openrelayproject',
+    },
+  ];
+
   static bool get isConfigured => url.isNotEmpty && anonKey.isNotEmpty;
   static bool get isBaked => true;
 
@@ -43,6 +62,12 @@ class AppConfig {
 
     // 2) آخر إعداد من config.json على GitHub (يُحدَّث بالخلفية لتشغيل فوري)
     _refreshRemote(prefs);
+    try {
+      final ice = prefs.getString(_prefIce);
+      if (ice != null) {
+        iceServers = (jsonDecode(ice) as List).cast<Map>().map((e) => e.cast<String, dynamic>()).toList();
+      }
+    } catch (_) {}
     final rUrl = prefs.getString(_prefRemoteUrl) ?? '';
     final rKey = prefs.getString(_prefRemoteKey) ?? '';
     if (rUrl.isNotEmpty && rKey.isNotEmpty) {
@@ -66,6 +91,9 @@ class AppConfig {
       if (u.startsWith('https://') && k.length > 30) {
         await prefs.setString(_prefRemoteUrl, u);
         await prefs.setString(_prefRemoteKey, k);
+      }
+      if (j['ice_servers'] is List && (j['ice_servers'] as List).isNotEmpty) {
+        await prefs.setString(_prefIce, jsonEncode(j['ice_servers']));
       }
     } catch (_) {
       // بدون إنترنت: لا شيء

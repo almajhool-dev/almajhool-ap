@@ -6,6 +6,8 @@ import 'package:provider/provider.dart';
 import '../core/theme.dart';
 import '../providers/providers.dart';
 import '../repositories/user_repositories.dart';
+import '../services/call_service.dart';
+import '../services/core_services.dart';
 import '../widgets/common.dart';
 import 'auth/auth_screens.dart';
 import 'home/home_shell.dart';
@@ -75,14 +77,20 @@ class _GateState extends State<Gate> {
     final session = context.watch<SessionProvider>();
     final status = context.watch<AppStatusProvider>();
     final hub = context.read<ChatHub>();
+    CallService.instance.updateMe(name: session.profile?.displayName, avatar: session.profile?.avatarUrl);
 
     if (_lastStatus != session.status) {
       _lastStatus = session.status;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (session.status == SessionStatus.signedIn) {
           hub.start();
+          final uid = myId;
+          if (uid != null) {
+            CallService.instance.start(uid, name: session.profile?.displayName, avatar: session.profile?.avatarUrl);
+          }
         } else if (session.status == SessionStatus.signedOut) {
           hub.stop();
+          CallService.instance.stop();
         }
       });
     }

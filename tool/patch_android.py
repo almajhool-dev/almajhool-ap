@@ -33,11 +33,16 @@ def patch_manifest():
         "android.permission.RECORD_AUDIO",
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.CAMERA",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.WAKE_LOCK",
     ]
     block = ""
     for p in perms:
         if p not in s:
             block += f'    <uses-permission android:name="{p}"/>\n'
+    if "android.hardware.camera" not in s:
+        block += '    <uses-feature android:name="android.hardware.camera" android:required="false"/>\n'
     if block:
         s = s.replace("<application", block + "    <application", 1)
     # السماح بفتح الروابط (url_launcher) على Android 11+
@@ -143,8 +148,18 @@ def patch_groovy(path):
     print("build.gradle patched")
 
 
+def write_proguard():
+    p = os.path.join(APP, "proguard-rules.pro")
+    rules = "-keep class org.webrtc.** { *; }\n-keep class com.cloudwebrtc.webrtc.** { *; }\n-dontwarn org.webrtc.**\n"
+    existing = read(p) if os.path.exists(p) else ""
+    if "org.webrtc" not in existing:
+        write(p, existing + rules)
+    print("proguard rules written")
+
+
 def main():
     patch_manifest()
+    write_proguard()
     kts = os.path.join(APP, "build.gradle.kts")
     groovy = os.path.join(APP, "build.gradle")
     if os.path.exists(kts):

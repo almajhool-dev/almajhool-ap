@@ -13,6 +13,7 @@ import '../../models/models.dart';
 import '../../providers/providers.dart';
 import '../../repositories/chat_repository.dart';
 import '../../repositories/user_repositories.dart';
+import '../../services/call_service.dart';
 import '../../services/core_services.dart';
 import '../../services/media_service.dart';
 import '../../utils/helpers.dart';
@@ -186,7 +187,8 @@ class _ChatScreenState extends State<ChatScreen> {
         )
         .onBroadcast(
           event: 'typing',
-          callback: (payload) {
+          callback: (raw) {
+            final payload = unwrapBroadcast(raw);
             final uid = payload['user_id'] as String?;
             if (uid == null || uid == myId || !mounted) return;
             _typing[uid]?.cancel();
@@ -722,17 +724,28 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
         actions: [
-          IconButton(
-            tooltip: 'بحث',
-            icon: const Icon(Icons.search),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => ChatSearchScreen(conversationId: _id, members: _members)),
+          if (!isGroup && c?.otherUserId != null && !_blockedByMe) ...[
+            IconButton(
+              tooltip: 'مكالمة صوتية',
+              icon: const Icon(Icons.call_rounded),
+              onPressed: () => CallService.instance.startCall(context,
+                  peerId: c!.otherUserId!, peerName: title, peerAvatar: c.avatar, video: false),
             ),
-          ),
+            IconButton(
+              tooltip: 'مكالمة فيديو',
+              icon: const Icon(Icons.videocam_rounded),
+              onPressed: () => CallService.instance.startCall(context,
+                  peerId: c!.otherUserId!, peerName: title, peerAvatar: c.avatar, video: true),
+            ),
+          ],
           PopupMenuButton<String>(
             onSelected: (v) async {
               switch (v) {
+                case 'search':
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => ChatSearchScreen(conversationId: _id, members: _members)),
+                  );
                 case 'info':
                   _openInfo();
                 case 'mute':
@@ -750,6 +763,7 @@ class _ChatScreenState extends State<ChatScreen> {
               }
             },
             itemBuilder: (_) => [
+              const PopupMenuItem(value: 'search', child: Text('بحث في المحادثة')),
               PopupMenuItem(value: 'info', child: Text(isGroup ? 'معلومات المجموعة' : 'الملف الشخصي')),
               PopupMenuItem(value: 'mute', child: Text((c?.muted ?? false) ? 'إلغاء الكتم' : 'كتم الإشعارات')),
               PopupMenuItem(value: 'archive', child: Text((c?.archived ?? false) ? 'إلغاء الأرشفة' : 'أرشفة المحادثة')),

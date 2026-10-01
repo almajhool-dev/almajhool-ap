@@ -9,6 +9,7 @@ import 'core/theme.dart';
 import 'providers/providers.dart';
 import 'screens/gate.dart';
 import 'screens/setup_screen.dart';
+import 'services/call_service.dart';
 import 'services/core_services.dart';
 import 'services/local_notifications.dart';
 
@@ -57,6 +58,7 @@ class _RootAppState extends State<RootApp> {
       child: Consumer<ThemeProvider>(
         builder: (context, theme, _) => MaterialApp(
           title: AppConfig.appName,
+          navigatorKey: CallService.instance.navigatorKey,
           debugShowCheckedModeBanner: false,
           theme: AppTheme.light(),
           darkTheme: AppTheme.dark(),
