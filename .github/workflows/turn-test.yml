@@ -1,0 +1,35 @@
+name: TURN test
+
+on:
+  push:
+    paths: ['tool/turn_test.py', '.github/workflows/turn-test.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  turn:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test relay servers
+        run: |
+          U="$(( $(date +%s) + 3600 )):almajhool"
+          P=$(printf '%s' "$U" | openssl dgst -binary -sha1 -hmac openrelayprojectsecret | base64)
+          {
+            for proto in udp tcp; do
+              for port in 80 443 3478; do
+                python3 tool/turn_test.py staticauth.openrelay.metered.ca $port $proto "$U" "$P"
+              done
+            done
+            python3 tool/turn_test.py openrelay.metered.ca 80 udp openrelayproject openrelayproject
+            python3 tool/turn_test.py openrelay.metered.ca 443 tcp openrelayproject openrelayproject
+          } 2>&1 | tee turn.log
+      - name: Save result
+        if: always()
+        run: |
+          mkdir -p /tmp/t && cp turn.log /tmp/t/ 2>/dev/null || echo none > /tmp/t/turn.log
+          cd /tmp/t && git init -q -b turn-logs && git config user.name ci && git config user.email ci@users.noreply.github.com
+          git add -A && git commit -qm "turn ${{ github.run_number }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" turn-logs

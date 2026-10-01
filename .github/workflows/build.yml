@@ -46,26 +46,6 @@ jobs:
           set -o pipefail
           bash tool/ci_build.sh 2>&1 | tee ci.log
 
-      - name: Test TURN relay servers (diagnostic)
-        if: always()
-        continue-on-error: true
-        run: |
-          sudo apt-get install -y -qq coturn >/dev/null 2>&1 || true
-          {
-            echo ">> TURN TEST"
-            U="$(( $(date +%s) + 3600 )):almajhool"
-            P=$(printf '%s' "$U" | openssl dgst -binary -sha1 -hmac openrelayprojectsecret | base64)
-            for port in 80 443; do
-              echo "-- staticauth udp:$port"
-              timeout 20 turnutils_uclient -y -c -n 1 -m 1 -u "$U" -w "$P" -p $port staticauth.openrelay.metered.ca 2>&1 | grep -iE "allocat|success|error|fail|401|403" | head -5
-              echo "-- staticauth tcp:$port"
-              timeout 20 turnutils_uclient -t -y -c -n 1 -m 1 -u "$U" -w "$P" -p $port staticauth.openrelay.metered.ca 2>&1 | grep -iE "allocat|success|error|fail|401|403" | head -5
-            done
-            echo "-- legacy static creds udp:80"
-            timeout 20 turnutils_uclient -y -c -n 1 -m 1 -u openrelayproject -w openrelayproject -p 80 openrelay.metered.ca 2>&1 | grep -iE "allocat|success|error|fail|401|403" | head -5
-            echo ">> TURN TEST END"
-          } 2>&1 | tee -a ci.log
-
       - name: Upload build files
         if: success()
         uses: actions/upload-artifact@v4
