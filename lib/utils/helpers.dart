@@ -94,6 +94,10 @@ String friendlyError(Object e) {
   if (raw.contains('relation') && raw.contains('does not exist') || raw.contains('PGRST202') || raw.contains('Could not find the function')) {
     return 'قاعدة البيانات غير مهيأة أو تحتاج تحديث. شغّل في SQL Editor: notify pgrst, \'reload schema\';';
   }
+  if (raw.contains('sending recovery email') || raw.contains('sending confirmation email') ||
+      raw.contains('sending magic link')) {
+    return 'تعذّر إرسال الإيميل حاليًا. استخدم «رمز الاسترداد» أو اطلب من الإدارة تعيين كلمة مرور جديدة';
+  }
   if (raw.contains('Database error saving new user')) {
     return 'خطأ في قاعدة البيانات أثناء إنشاء الحساب (جرّب اسم مستخدم آخر)';
   }

@@ -9,7 +9,9 @@ class AuthRepository {
     return r == true;
   }
 
-  /// يرجع true إذا تم تسجيل الدخول مباشرة، false إذا يحتاج تأكيد البريد.
+  /// إنشاء حساب. يرجع true إذا تم تسجيل الدخول مباشرة، false إذا يحتاج تأكيد البريد.
+  /// نستخدم التسجيل المباشر من قاعدة البيانات (لا يعتمد على إرسال إيميل)،
+  /// وإذا لم يكن متاحًا نرجع للطريقة العادية.
   Future<bool> signUp({
     required String email,
     required String password,
@@ -19,12 +21,23 @@ class AuthRepository {
     bool available = true;
     try {
       available = await usernameAvailable(username);
-    } catch (_) {
-      // إذا تعذّر الفحص المسبق، قاعدة البيانات ستضمن عدم التكرار
+    } catch (_) {}
+    if (!available) throw Exception('اسم المستخدم محجوز، اختر اسمًا آخر');
+
+    try {
+      await supa.rpc('register_user', params: {
+        'p_email': email.trim(),
+        'p_password': password,
+        'p_username': username.toLowerCase().trim(),
+        'p_display': displayName.trim(),
+      });
+      await signIn(email, password);
+      return true;
+    } on PostgrestException catch (e) {
+      final missing = e.code == 'PGRST202' || e.message.contains('Could not find the function');
+      if (!missing) rethrow;
     }
-    if (!available) {
-      throw Exception('اسم المستخدم محجوز، اختر اسمًا آخر');
-    }
+
     final res = await supa.auth.signUp(
       email: email.trim(),
       password: password,
@@ -32,6 +45,20 @@ class AuthRepository {
     );
     return res.session != null;
   }
+
+  /// استعادة كلمة المرور برمز الاسترداد (بدون إيميل) ثم تسجيل الدخول.
+  Future<void> resetWithRecoveryCode(String username, String code, String newPassword) async {
+    final email = await supa.rpc('reset_password_with_code', params: {
+      'p_username': username.trim().toLowerCase().replaceAll('@', ''),
+      'p_code': code.trim(),
+      'p_new_password': newPassword,
+    });
+    await signIn(email as String, newPassword);
+  }
+
+  Future<String> createRecoveryCode() async => (await supa.rpc('create_recovery_code')) as String;
+
+  Future<bool> hasRecoveryCode() async => (await supa.rpc('has_recovery_code')) == true;
 
   Future<void> signIn(String email, String password) =>
       supa.auth.signInWithPassword(email: email.trim(), password: password);

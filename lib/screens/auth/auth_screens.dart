@@ -264,10 +264,15 @@ class ForgotPasswordScreen extends StatefulWidget {
 }
 
 class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
+  final _repo = AuthRepository();
+  // رمز الاسترداد
+  final _username = TextEditingController();
+  final _recovery = TextEditingController();
+  final _newPass1 = TextEditingController();
+  // البريد
   late final _email = TextEditingController(text: widget.email);
   final _code = TextEditingController();
-  final _password = TextEditingController();
-  final _repo = AuthRepository();
+  final _newPass2 = TextEditingController();
   bool _sent = false;
   bool _busy = false;
 
@@ -282,70 +287,117 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     }
   }
 
+  void _done() {
+    showSnack(context, 'تم تغيير كلمة المرور وتسجيل دخولك ✅');
+    Navigator.of(context).popUntil((r) => r.isFirst);
+  }
+
+  Widget _button(String label, VoidCallback onTap) => FilledButton(
+        onPressed: _busy ? null : onTap,
+        child: _busy
+            ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2))
+            : Text(label),
+      );
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('استعادة كلمة المرور')),
-      body: ListView(
-        padding: const EdgeInsets.all(24),
-        children: [
-          Text(
-            _sent
-                ? 'أدخل الرمز المرسل إلى بريدك وكلمة المرور الجديدة.'
-                : 'أدخل بريدك وسنرسل لك رمز استعادة.',
-          ),
-          const SizedBox(height: 20),
-          TextField(
-            controller: _email,
-            enabled: !_sent,
-            textDirection: TextDirection.ltr,
-            keyboardType: TextInputType.emailAddress,
-            decoration: const InputDecoration(labelText: 'البريد الإلكتروني'),
-          ),
-          if (_sent) ...[
-            const SizedBox(height: 14),
-            TextField(
-              controller: _code,
-              keyboardType: TextInputType.number,
-              textDirection: TextDirection.ltr,
-              maxLength: 8,
-              decoration: const InputDecoration(labelText: 'رمز التحقق (6 إلى 8 أرقام)', counterText: ''),
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('استعادة كلمة المرور'),
+          bottom: const TabBar(tabs: [Tab(text: 'رمز الاسترداد'), Tab(text: 'عبر البريد')]),
+        ),
+        body: TabBarView(
+          children: [
+            ListView(
+              padding: const EdgeInsets.all(24),
+              children: [
+                const Text('أدخل اسم المستخدم ورمز الاسترداد الذي حفظته من الإعدادات. لا يحتاج إيميل.'),
+                const SizedBox(height: 20),
+                TextField(
+                  controller: _username,
+                  textDirection: TextDirection.ltr,
+                  decoration: const InputDecoration(labelText: 'اسم المستخدم', prefixText: '@'),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _recovery,
+                  textDirection: TextDirection.ltr,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: const InputDecoration(labelText: 'رمز الاسترداد', hintText: 'XXXX-XXXX-XXXX'),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _newPass1,
+                  obscureText: true,
+                  textDirection: TextDirection.ltr,
+                  decoration: const InputDecoration(labelText: 'كلمة المرور الجديدة'),
+                ),
+                const SizedBox(height: 24),
+                _button('تغيير كلمة المرور', () => _run(() async {
+                      final err = Validators.password(_newPass1.text);
+                      if (err != null) throw Exception(err);
+                      await _repo.resetWithRecoveryCode(_username.text, _recovery.text, _newPass1.text);
+                      if (mounted) _done();
+                    })),
+                const SizedBox(height: 16),
+                Text(
+                  'ليس لديك رمز استرداد؟ راسل الإدارة من حساب آخر أو من أي وسيلة، ويمكن للمدير تعيين كلمة مرور جديدة لك.',
+                  style: TextStyle(fontSize: 12.5, color: Theme.of(context).hintColor),
+                ),
+              ],
             ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _password,
-              obscureText: true,
-              textDirection: TextDirection.ltr,
-              decoration: const InputDecoration(labelText: 'كلمة المرور الجديدة'),
-            ),
-          ],
-          const SizedBox(height: 24),
-          FilledButton(
-            onPressed: _busy
-                ? null
-                : () => _run(() async {
+            ListView(
+              padding: const EdgeInsets.all(24),
+              children: [
+                Text(_sent ? 'أدخل الرمز المرسل إلى بريدك وكلمة المرور الجديدة.' : 'أدخل بريدك وسنرسل لك رمز استعادة.'),
+                const SizedBox(height: 20),
+                TextField(
+                  controller: _email,
+                  enabled: !_sent,
+                  textDirection: TextDirection.ltr,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(labelText: 'البريد الإلكتروني'),
+                ),
+                if (_sent) ...[
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: _code,
+                    keyboardType: TextInputType.number,
+                    textDirection: TextDirection.ltr,
+                    maxLength: 8,
+                    decoration: const InputDecoration(labelText: 'رمز التحقق (6 إلى 8 أرقام)', counterText: ''),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: _newPass2,
+                    obscureText: true,
+                    textDirection: TextDirection.ltr,
+                    decoration: const InputDecoration(labelText: 'كلمة المرور الجديدة'),
+                  ),
+                ],
+                const SizedBox(height: 24),
+                _button(_sent ? 'تغيير كلمة المرور' : 'إرسال الرمز', () => _run(() async {
                       if (Validators.email(_email.text) != null) throw Exception('البريد غير صالح');
                       if (!_sent) {
                         await _repo.sendRecovery(_email.text);
                         setState(() => _sent = true);
                       } else {
-                        final pErr = Validators.password(_password.text);
-                        if (pErr != null) throw Exception(pErr);
-                        await _repo.resetWithCode(_email.text, _code.text, _password.text);
-                        if (mounted) {
-                          showSnack(context, 'تم تغيير كلمة المرور');
-                          Navigator.of(context).popUntil((r) => r.isFirst);
-                        }
+                        final err = Validators.password(_newPass2.text);
+                        if (err != null) throw Exception(err);
+                        await _repo.resetWithCode(_email.text, _code.text, _newPass2.text);
+                        if (mounted) _done();
                       }
-                    }),
-            child: Text(_sent ? 'تغيير كلمة المرور' : 'إرسال الرمز'),
-          ),
-        ],
+                    })),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
 }
-
 
 /// إدخال رمز التأكيد المرسل للبريد (6 إلى 8 أرقام).
 class VerifyCodeScreen extends StatefulWidget {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/config.dart';
@@ -68,6 +69,12 @@ class _SettingsTabState extends State<SettingsTab> {
             leading: const Icon(Icons.password_rounded),
             title: const Text('تغيير كلمة المرور'),
             onTap: _changePassword,
+          ),
+          ListTile(
+            leading: const Icon(Icons.key_rounded, color: Colors.amber),
+            title: const Text('رمز الاسترداد'),
+            subtitle: const Text('يُرجع حسابك إذا نسيت كلمة المرور — بدون إيميل'),
+            onTap: _recoveryCode,
           ),
           ListTile(
             leading: const Icon(Icons.block),
@@ -162,6 +169,62 @@ class _SettingsTabState extends State<SettingsTab> {
         padding: const EdgeInsets.fromLTRB(16, 20, 16, 6),
         child: Text(t, style: TextStyle(fontWeight: FontWeight.w800, color: Theme.of(context).colorScheme.primary)),
       );
+
+  Future<void> _recoveryCode() async {
+    final repo = AuthRepository();
+    bool has = false;
+    try {
+      has = await repo.hasRecoveryCode();
+    } catch (_) {}
+    if (!mounted) return;
+    final ok = await confirmDialog(
+      context,
+      'رمز الاسترداد',
+      has
+          ? 'لديك رمز محفوظ مسبقًا. إنشاء رمز جديد يُلغي القديم. هل تريد المتابعة؟'
+          : 'سننشئ لك رمزًا سريًا. احفظه في مكان آمن (صورة أو ورقة). إذا نسيت كلمة المرور تستطيع استعادة حسابك به بدون إيميل.',
+      ok: 'إنشاء رمز',
+    );
+    if (!ok) return;
+    try {
+      final code = await repo.createRecoveryCode();
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (c) => AlertDialog(
+          title: const Text('احفظ هذا الرمز 🔑'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SelectableText(code,
+                  textDirection: TextDirection.ltr,
+                  style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900, letterSpacing: 2)),
+              const SizedBox(height: 12),
+              const Text('لن يظهر مرة أخرى. يُستخدم مرة واحدة فقط، وبعدها أنشئ رمزًا جديدًا.',
+                  textAlign: TextAlign.center),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: code));
+                showSnack(c, 'تم النسخ');
+              },
+              child: const Text('نسخ'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(minimumSize: const Size(90, 40)),
+              onPressed: () => Navigator.pop(c),
+              child: const Text('حفظته'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    }
+  }
 
   Future<void> _changePassword() async {
     final pw = await promptText(context, 'كلمة المرور الجديدة', hint: '8 أحرف على الأقل');

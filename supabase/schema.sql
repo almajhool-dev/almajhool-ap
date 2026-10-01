@@ -1492,5 +1492,130 @@ begin
   if not found then raise exception 'المستخدم غير موجود'; end if;
 end $$;
 
+
+-- =====================================================================
+--  الإصدار 6: إنشاء حساب واستعادة كلمة المرور بدون الاعتماد على الإيميل
+-- =====================================================================
+
+create table if not exists public.signup_attempts (ip text not null, at timestamptz not null default now());
+create table if not exists public.recovery_codes (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  code_hash text not null,
+  created_at timestamptz not null default now()
+);
+create table if not exists public.recovery_attempts (username text not null, at timestamptz not null default now());
+alter table public.signup_attempts enable row level security;
+alter table public.recovery_codes enable row level security;
+alter table public.recovery_attempts enable row level security;
+
+create or replace function public.request_ip() returns text
+language plpgsql stable as $$
+declare h json;
+begin
+  begin h := current_setting('request.headers', true)::json; exception when others then return 'unknown'; end;
+  return coalesce(split_part(coalesce(h->>'cf-connecting-ip', h->>'x-forwarded-for', h->>'x-real-ip'), ',', 1), 'unknown');
+end $$;
+
+-- تسجيل مباشر (حساب مؤكد) — يُستخدم عندما يتعذر إرسال إيميل التأكيد
+create or replace function public.register_user(p_email text, p_password text, p_username text, p_display text)
+returns uuid language plpgsql security definer set search_path = public, extensions, auth as $$
+declare
+  em text := lower(trim(coalesce(p_email, '')));
+  un text := lower(trim(coalesce(p_username, '')));
+  dn text := trim(coalesce(p_display, ''));
+  v_ip text := request_ip();
+  uid uuid;
+  confirmed timestamptz;
+begin
+  if em !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' then raise exception 'البريد الإلكتروني غير صالح'; end if;
+  if char_length(coalesce(p_password, '')) < 8 then raise exception 'كلمة المرور 8 أحرف على الأقل'; end if;
+  if un !~ '^[a-z0-9_.]{3,24}$' then raise exception 'اسم المستخدم غير صالح'; end if;
+  if dn = '' then dn := un; end if;
+
+  -- حماية من الإغراق
+  delete from signup_attempts where at < now() - interval '1 day';
+  if (select count(*) from signup_attempts where ip = v_ip and at > now() - interval '1 hour') >= 5
+     or (select count(*) from signup_attempts where at > now() - interval '1 hour') >= 200 then
+    raise exception 'rate_limited: محاولات كثيرة، حاول لاحقًا';
+  end if;
+  insert into signup_attempts(ip) values (v_ip);
+
+  select id, email_confirmed_at into uid, confirmed from auth.users where lower(email) = em limit 1;
+  if uid is not null and confirmed is not null then raise exception 'هذا البريد مسجّل مسبقًا'; end if;
+  if exists(select 1 from profiles where username = un and id is distinct from uid) then
+    raise exception 'اسم المستخدم محجوز، اختر اسمًا آخر';
+  end if;
+
+  if uid is not null then
+    -- حساب سابق لم يُؤكَّد (فشل إيميل التأكيد): نؤكده ونحدّث بياناته
+    update auth.users set encrypted_password = crypt(p_password, gen_salt('bf')),
+           email_confirmed_at = now(), updated_at = now(),
+           raw_user_meta_data = jsonb_build_object('username', un, 'display_name', dn)
+    where id = uid;
+    perform trusted_begin();
+    update profiles set username = un, display_name = dn where id = uid;
+    perform set_config('app.trusted', '', true);
+  else
+    uid := gen_random_uuid();
+    insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+                            raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+                            confirmation_token, recovery_token, email_change_token_new, email_change)
+    values ('00000000-0000-0000-0000-000000000000', uid, 'authenticated', 'authenticated', em,
+            crypt(p_password, gen_salt('bf')), now(),
+            '{"provider":"email","providers":["email"]}'::jsonb,
+            jsonb_build_object('username', un, 'display_name', dn), now(), now(), '', '', '', '');
+  end if;
+
+  if not exists(select 1 from auth.identities where user_id = uid and provider = 'email') then
+    insert into auth.identities (id, user_id, provider_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
+    values (gen_random_uuid(), uid, uid::text,
+            jsonb_build_object('sub', uid::text, 'email', em, 'email_verified', true),
+            'email', now(), now(), now());
+  end if;
+  return uid;
+end $$;
+grant execute on function public.register_user(text, text, text, text) to anon, authenticated;
+
+-- رمز الاسترداد: يُنشئه المستخدم من الإعدادات ويحتفظ به، ويستعمله إذا نسي كلمة المرور
+create or replace function public.create_recovery_code() returns text
+language plpgsql security definer set search_path = public, extensions as $$
+declare raw text; pretty text;
+begin
+  if auth.uid() is null then raise exception 'سجّل الدخول أولًا'; end if;
+  raw := upper(substr(encode(gen_random_bytes(10), 'hex'), 1, 12));
+  pretty := substr(raw, 1, 4) || '-' || substr(raw, 5, 4) || '-' || substr(raw, 9, 4);
+  insert into recovery_codes(user_id, code_hash) values (auth.uid(), crypt(raw, gen_salt('bf')))
+    on conflict (user_id) do update set code_hash = excluded.code_hash, created_at = now();
+  return pretty;
+end $$;
+
+create or replace function public.has_recovery_code() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists(select 1 from recovery_codes where user_id = auth.uid());
+$$;
+
+create or replace function public.reset_password_with_code(p_username text, p_code text, p_new_password text)
+returns text language plpgsql security definer set search_path = public, extensions, auth as $$
+declare un text := lower(trim(coalesce(p_username, ''))); uid uuid; h text; em text;
+  code text := upper(regexp_replace(coalesce(p_code, ''), '[^A-Za-z0-9]', '', 'g'));
+begin
+  if char_length(coalesce(p_new_password, '')) < 8 then raise exception 'كلمة المرور 8 أحرف على الأقل'; end if;
+  delete from recovery_attempts where at < now() - interval '1 day';
+  if (select count(*) from recovery_attempts where username = un and at > now() - interval '1 hour') >= 5 then
+    raise exception 'rate_limited: محاولات كثيرة، حاول بعد ساعة';
+  end if;
+  insert into recovery_attempts(username) values (un);
+  select p.id into uid from profiles p where p.username = un and not p.is_banned;
+  select code_hash into h from recovery_codes where user_id = uid;
+  if uid is null or h is null or crypt(code, h) <> h then
+    raise exception 'اسم المستخدم أو رمز الاسترداد غير صحيح';
+  end if;
+  update auth.users set encrypted_password = crypt(p_new_password, gen_salt('bf')), updated_at = now()
+    where id = uid returning email into em;
+  delete from recovery_codes where user_id = uid; -- الرمز يُستخدم مرة واحدة
+  return em;
+end $$;
+grant execute on function public.reset_password_with_code(text, text, text) to anon, authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

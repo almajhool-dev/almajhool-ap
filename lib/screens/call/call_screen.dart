@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -187,12 +188,34 @@ class _CallScreenState extends State<CallScreen> {
     try {
       final r = await supa.rpc('get_ice_servers').timeout(const Duration(seconds: 5));
       final list = (r as List).cast<Map>().map((e) => e.cast<String, dynamic>()).toList();
-      _iceCache = list;
-      _iceCacheAt = DateTime.now();
-      return list;
-    } catch (_) {
-      return _iceCache ?? const [];
+      if (list.isNotEmpty) {
+        _iceCache = list;
+        _iceCacheAt = DateTime.now();
+        return list;
+      }
+    } catch (_) {}
+    // احتياطي: إذا لم يُضبط الخادم من لوحة التحكم نستخدم نسخة مدمجة مشفّرة
+    return _iceCache ?? _fallbackRelay();
+  }
+
+  static List<Map<String, dynamic>> _fallbackRelay() {
+    String d(String b64) {
+      const k = 'almajhool-2026-relay';
+      final bytes = base64.decode(b64);
+      return String.fromCharCodes([for (var i = 0; i < bytes.length; i++) bytes[i] ^ k.codeUnitAt(i % k.length)]);
     }
+    return [
+      {
+        'urls': [
+          'turn:global.relay.metered.ca:80',
+          'turn:global.relay.metered.ca:80?transport=tcp',
+          'turn:global.relay.metered.ca:443',
+          'turns:global.relay.metered.ca:443?transport=tcp',
+        ],
+        'username': d('A1oPAF9bDl4PSAQFVg4aEQRbWBwCXlkD'),
+        'credential': d('DQkIUB4jLjk5aGoDAXl6NQ=='),
+      },
+    ];
   }
 
   String _status = '';
