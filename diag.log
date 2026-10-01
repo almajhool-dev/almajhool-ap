@@ -1,0 +1,31 @@
+== SIGNALING (Supabase Realtime broadcast) ==
+status SUBSCRIBED 
+status SUBSCRIBED 
+send offer ok
+ice 0 ok
+ice 1 ok
+ice 2 ok
+ice 3 ok
+ice 4 ok
+ice 5 ok
+ice 6 ok
+ice 7 ok
+ice 8 ok
+ice 9 ok
+ice 10 ok
+ice 11 ok
+ice 12 ok
+ice 13 ok
+ice 14 ok
+send answer ok
+RESULT {"offer":1,"ice":15,"answer":1,"offerSize":6037}
+== TURN (credential from first account) ==
+RESULT global.relay.metered.ca 80 udp ALLOCATE OK ✅
+== AUTH recover endpoint ==
+{}
+== AUTH settings ==
+{"external":{"anonymous_users":false,"apple":false,"azure":false,"bitbucket":false,"discord":false,"facebook":false,"snapchat":false,"figma":false,"fly":false,"github":false,"gitlab":false,"google":false,"keycloak":false,"kakao":false,"linkedin":false,"linkedin_oidc":false,"notion":false,"spotify":false,"slack":false,"slack_oidc":false,"workos":false,"twitch":false,"twitter":false,"email":true,"phone":false,"zoom":false},"disable_signup":false,"mailer_autoconfirm":false,"phone_autoconfirm":false,"sms_provider":"twilio","saml_enabled":false,"saml_private_key_next_configured":true,"passkeys_enabled":false}
+== DB functions present? ==
+get_ice_servers: 200
+admin_set_password: 404
+admin_warn: 404
