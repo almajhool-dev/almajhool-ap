@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
     paths-ignore:
+      - 'tool/signal-test/**'
+      - '.github/workflows/diagnostics.yml'
       - '**.md'
       - 'admin/**'
   workflow_dispatch:

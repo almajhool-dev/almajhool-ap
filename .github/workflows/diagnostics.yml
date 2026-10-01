@@ -1,0 +1,42 @@
+name: Diagnostics
+
+on:
+  push:
+    paths: ['tool/signal-test/**', 'tool/turn_test.py', '.github/workflows/diagnostics.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run tests
+        env:
+          TURN_U: ${{ secrets.TURN_U }}
+        run: |
+          {
+            echo "== SIGNALING (Supabase Realtime broadcast) =="
+            cd tool/signal-test && npm init -y >/dev/null && npm i @supabase/supabase-js@2 >/dev/null 2>&1 && timeout 60 node test.mjs; cd ../..
+            echo "== TURN (credential from first account) =="
+            python3 tool/turn_test.py global.relay.metered.ca 80 udp "$(echo YjZiYTUzYTFjZTY1ZDg3Y2E3OWVjMjRi | base64 -d)" "$(echo bGVlMXRLQVZVRVgzM09XRw== | base64 -d)"
+            echo "== AUTH recover endpoint =="
+            curl -s -X POST "https://smjkxsqvdpywumghvnfv.supabase.co/auth/v1/recover" -H "apikey: sb_publishable_xqWRKqnOIKKqKgPJrdP5TA_GA7PCSiV" -H "Content-Type: application/json" -d '{"email":"diagnostic-test-nonexistent@example.com"}'; echo
+            echo "== AUTH settings =="
+            curl -s "https://smjkxsqvdpywumghvnfv.supabase.co/auth/v1/settings" -H "apikey: sb_publishable_xqWRKqnOIKKqKgPJrdP5TA_GA7PCSiV"; echo
+            echo "== DB functions present? =="
+            for f in get_ice_servers admin_set_password admin_warn; do
+              printf "%s: " $f; curl -s -o /dev/null -w "%{http_code}\n" -X POST "https://smjkxsqvdpywumghvnfv.supabase.co/rest/v1/rpc/$f" -H "apikey: sb_publishable_xqWRKqnOIKKqKgPJrdP5TA_GA7PCSiV" -H "Content-Type: application/json" -d '{}'
+            done
+          } 2>&1 | tee diag.log
+      - name: Save
+        if: always()
+        run: |
+          mkdir -p /tmp/d && cp diag.log /tmp/d/ 2>/dev/null || echo none > /tmp/d/diag.log
+          cd /tmp/d && git init -q -b diag-logs && git config user.name ci && git config user.email ci@users.noreply.github.com
+          git add -A && git commit -qm "diag ${{ github.run_number }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" diag-logs
