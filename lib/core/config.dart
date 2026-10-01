@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -37,14 +36,6 @@ class AppConfig {
   /// خوادم الاتصال (STUN/TURN) للمكالمات — قابلة للاستبدال من config.json
   static List<Map<String, dynamic>>? _remoteIce;
 
-  /// بيانات دخول مؤقتة لخادم الوسيط (طريقة TURN REST القياسية: HMAC-SHA1 بسر مشترك)
-  static Map<String, String> _turnCreds(String secret) {
-    final expiry = DateTime.now().add(const Duration(hours: 12)).millisecondsSinceEpoch ~/ 1000;
-    final user = '$expiry:almajhool';
-    final pass = base64.encode(Hmac(sha1, utf8.encode(secret)).convert(utf8.encode(user)).bytes);
-    return {'username': user, 'credential': pass};
-  }
-
   static List<Map<String, dynamic>> get iceServers {
     final list = <Map<String, dynamic>>[
       {
@@ -58,23 +49,17 @@ class AppConfig {
     if (_remoteIce != null && _remoteIce!.isNotEmpty) {
       list.addAll(_remoteIce!);
     }
-    final c = _turnCreds('openrelayprojectsecret');
-    list.add({
+    // خادم الوسيط الخاص بالتطبيق (Metered) — تم اختباره ويعمل عبر UDP و TCP
+    // (إذا وُجد خادم في config.json فهو يحل محله)
+    if (_remoteIce == null || _remoteIce!.isEmpty) list.add({
       'urls': [
-        'turn:staticauth.openrelay.metered.ca:80',
-        'turn:staticauth.openrelay.metered.ca:80?transport=tcp',
-        'turn:staticauth.openrelay.metered.ca:443',
-        'turns:staticauth.openrelay.metered.ca:443?transport=tcp',
+        'turn:global.relay.metered.ca:80',
+        'turn:global.relay.metered.ca:80?transport=tcp',
+        'turn:global.relay.metered.ca:443',
+        'turns:global.relay.metered.ca:443?transport=tcp',
       ],
-      ...c,
-    });
-    list.add({
-      'urls': [
-        'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:443?transport=tcp',
-      ],
-      'username': 'openrelayproject',
-      'credential': 'openrelayproject',
+      'username': 'b6ba53a1ce65d87ca79ec24b',
+      'credential': 'lee1tKAVUEX33OWG',
     });
     return list;
   }
