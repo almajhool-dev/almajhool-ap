@@ -13,7 +13,7 @@ class AppConfig {
   static const maxUploadBytes = 50 * 1024 * 1024;
 
   // القيم المدمجة (مفتاح Publishable عام ومصمم ليكون داخل التطبيق)
-  static const _defaultUrl = String.fromEnvironment('SUPABASE_URL', defaultValue: 'https://wuptldtquupuptrwigkxy.supabase.co');
+  static const _defaultUrl = String.fromEnvironment('SUPABASE_URL', defaultValue: 'https://smjkxsqvdpywumghvnfv.supabase.co');
   static const _defaultKey = String.fromEnvironment(
     'SUPABASE_ANON_KEY',
     defaultValue: 'sb_publishable_xqWRKqnOIKKqKgPJrdP5TA_GA7PCSiV',
