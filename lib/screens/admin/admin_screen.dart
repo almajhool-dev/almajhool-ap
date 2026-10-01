@@ -245,6 +245,27 @@ class _UsersState extends State<_Users> {
                 Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: p.id)));
               },
             ),
+            if (!p.isOwner && !p.isBanned)
+              ListTile(
+                leading: const Icon(Icons.warning_amber_rounded, color: Colors.orange),
+                title: Text('إرسال إنذار (${p.warnings + 1} من 3)'),
+                subtitle: const Text('الإنذار الرابع = حظر نهائي'),
+                onTap: () async {
+                  Navigator.pop(c);
+                  final reason = await promptText(context, 'سبب الإنذار');
+                  if (reason == null) return;
+                  await _run(() => _admin.warn(p.id, reason));
+                },
+              ),
+            if (p.warnings > 0)
+              ListTile(
+                leading: const Icon(Icons.restart_alt_rounded),
+                title: const Text('مسح الإنذارات'),
+                onTap: () async {
+                  Navigator.pop(c);
+                  await _run(() => _admin.clearWarnings(p.id));
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.verified_rounded, color: Color(0xFF1D9BF0)),
               title: Text(p.isVerified ? 'إلغاء التوثيق' : 'توثيق الحساب ✔️'),
@@ -323,7 +344,7 @@ class _UsersState extends State<_Users> {
                           if (p.isOwner) const Padding(padding: EdgeInsets.only(right: 6), child: Text('👑')),
                           if (p.isAdmin && !p.isOwner) const Padding(padding: EdgeInsets.only(right: 6), child: Icon(Icons.shield, size: 14, color: AppColors.cyan)),
                         ]),
-                        subtitle: Text('@${p.username} · ${p.xp} نقطة · ${Fmt.lastSeen(p.lastSeen)}'),
+                        subtitle: Text('@${p.username} · ${p.xp} نقطة${p.warnings > 0 ? ' · ⚠️ ${p.warnings}' : ''} · ${Fmt.lastSeen(p.lastSeen)}'),
                         trailing: p.isBanned
                             ? const Chip(label: Text('محظور'), visualDensity: VisualDensity.compact)
                             : null,
@@ -387,7 +408,10 @@ class _ReportsState extends State<_Reports> {
           final r = _items[i];
           final open = r['status'] == 'open';
           final msgId = r['message_id'] as String?;
+          final postId = r['post_id'] as String?;
           final reportedId = r['reported_user_id'] as String?;
+          final warnings = ((r['reported_warnings'] ?? 0) as num).toInt();
+          final banned = (r['reported_banned'] ?? false) as bool;
           return Card(
             child: Padding(
               padding: const EdgeInsets.all(12),
@@ -407,6 +431,36 @@ class _ReportsState extends State<_Reports> {
                   ),
                   const SizedBox(height: 6),
                   Text('السبب: ${r['reason']}'),
+                  if (reportedId != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(banned ? '⛔ الحساب محظور' : '⚠️ إنذارات الحساب: $warnings من 3',
+                          style: TextStyle(color: banned ? AppColors.danger : Colors.orange, fontWeight: FontWeight.w700)),
+                    ),
+                  if (postId != null)
+                    Container(
+                      margin: const EdgeInsets.only(top: 8),
+                      padding: const EdgeInsets.all(10),
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.06),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('المنشور: ${(r['post_content'] ?? '').toString().isEmpty ? '(صورة)' : r['post_content']}'),
+                          if (r['post_image'] != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.network(r['post_image'] as String, height: 140, fit: BoxFit.cover),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
                   if (msgId != null)
                     Container(
                       margin: const EdgeInsets.only(top: 8),
@@ -422,20 +476,34 @@ class _ReportsState extends State<_Reports> {
                     Wrap(
                       spacing: 8,
                       children: [
-                        if (msgId != null)
+                        if (msgId != null || postId != null)
                           TextButton.icon(
                             onPressed: () => _run(() => _admin.resolveReport(r['id'] as String, deleteMessage: true), 'تم حذف المحتوى'),
                             icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
                             label: const Text('حذف المحتوى'),
                           ),
-                        if (reportedId != null)
+                        if (reportedId != null && !banned)
+                          TextButton.icon(
+                            onPressed: () async {
+                              final reason = await promptText(context, 'سبب الإنذار', initial: r['reason'] as String? ?? '');
+                              if (reason == null) return;
+                              await _run(() async {
+                                final n = await _admin.warn(reportedId, reason);
+                                await _admin.resolveReport(r['id'] as String, deleteMessage: true);
+                                if (n >= 4 && mounted) showSnack(context, 'وصل الإنذار الرابع: تم حظر الحساب نهائيًا');
+                              }, 'تم إرسال الإنذار وحذف المحتوى');
+                            },
+                            icon: const Icon(Icons.warning_amber_rounded, color: Colors.orange),
+                            label: Text('إنذار (${warnings + 1})'),
+                          ),
+                        if (reportedId != null && !banned)
                           TextButton.icon(
                             onPressed: () => _run(() async {
                               await _admin.setBan(reportedId, true);
                               await _admin.resolveReport(r['id'] as String);
                             }, 'تم حظر المستخدم'),
                             icon: const Icon(Icons.gpp_bad, color: Colors.redAccent),
-                            label: const Text('حظر المستخدم'),
+                            label: const Text('حظر نهائي'),
                           ),
                         TextButton.icon(
                           onPressed: () => _run(() => _admin.resolveReport(r['id'] as String), 'تم إغلاق البلاغ'),

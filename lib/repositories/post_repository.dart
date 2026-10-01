@@ -30,8 +30,21 @@ class PostRepository {
     if (authorId != null) q = q.eq('author_id', authorId);
     if (before != null) q = q.lt('created_at', before.toUtc().toIso8601String());
     final rows = await q.order('created_at', ascending: false).limit(pageSize);
-    return _withLikes(rows);
+    final posts = await _withLikes(rows);
+    if (before == null && authorId == null) {
+      // تخزين الصفحة الأولى لعرض فوري عند فتح التطبيق حتى مع إنترنت ضعيف
+      final liked = posts.where((p) => p.likedByMe).map((p) => p.id).toSet();
+      await CacheService.writeList('feed', rows.map((r) => {...r, '_liked': liked.contains(r['id'])}).toList());
+    }
+    return posts;
   }
+
+  List<Post> cachedFeed() => CacheService.readList('feed')
+      .map((r) => Post.fromMap(r, liked: (r['_liked'] ?? false) as bool))
+      .toList();
+
+  Future<void> edit(String postId, String content) =>
+      supa.rpc('edit_post', params: {'pid': postId, 'new_content': content.trim()});
 
   Future<Post?> one(String id) async {
     final r = await supa.from('posts').select('*, $_author').eq('id', id).maybeSingle();

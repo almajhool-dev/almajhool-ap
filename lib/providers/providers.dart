@@ -252,6 +252,30 @@ class ChatHub extends ChangeNotifier with WidgetsBindingObserver {
     _debounce = Timer(const Duration(milliseconds: 500), refresh);
   }
 
+  /// تحديث خفيف للمحادثات فقط (عند وصول رسالة) — طلب واحد بدل ثلاثة
+  Timer? _convDebounce;
+  void refreshConversationsSoon() {
+    _convDebounce?.cancel();
+    _convDebounce = Timer(const Duration(milliseconds: 400), () async {
+      try {
+        conversations = await chats.myConversations();
+        notifyListeners();
+      } catch (_) {}
+    });
+  }
+
+  Timer? _contactsDebounce;
+  void refreshContactsSoon() {
+    _contactsDebounce?.cancel();
+    _contactsDebounce = Timer(const Duration(milliseconds: 500), () async {
+      try {
+        final c = await contacts.load();
+        pendingRequests = c.incoming.length;
+        notifyListeners();
+      } catch (_) {}
+    });
+  }
+
   void _touch() {
     supa.rpc('touch_last_seen').catchError((_) {});
   }
@@ -270,7 +294,7 @@ class ChatHub extends ChangeNotifier with WidgetsBindingObserver {
           schema: 'public',
           table: 'conversation_members',
           filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'user_id', value: uid),
-          callback: (_) => refreshSoon(),
+          callback: (_) => refreshConversationsSoon(),
         )
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
@@ -288,7 +312,7 @@ class ChatHub extends ChangeNotifier with WidgetsBindingObserver {
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'contact_requests',
-          callback: (_) => refreshSoon(),
+          callback: (_) => refreshContactsSoon(),
         )
         .subscribe();
 
@@ -309,7 +333,7 @@ class ChatHub extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _onMessage(Message m) {
-    refreshSoon();
+    refreshConversationsSoon();
     if (m.senderId == myId || m.isSystem) return;
     chats.markAllDelivered().catchError((_) {});
     if (m.conversationId == openConversationId) return;

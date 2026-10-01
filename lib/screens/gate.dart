@@ -62,6 +62,7 @@ class Gate extends StatefulWidget {
 class _GateState extends State<Gate> {
   bool _minSplashDone = false;
   bool _adminLogin = false;
+  bool _banLogoutScheduled = false;
   SessionStatus? _lastStatus;
 
   @override
@@ -99,10 +100,18 @@ class _GateState extends State<Gate> {
     if (!_minSplashDone || session.status == SessionStatus.loading || !status.loaded) {
       child = const SplashView();
     } else if (session.status == SessionStatus.signedIn && (session.profile?.isBanned ?? false)) {
+      // الحساب محظور: نعرض السبب ثم نسجّل خروجه تلقائيًا
+      if (!_banLogoutScheduled) {
+        _banLogoutScheduled = true;
+        Future.delayed(const Duration(seconds: 6), () async {
+          await AuthRepository().signOut();
+          _banLogoutScheduled = false;
+        });
+      }
       child = const _BlockedScreen(
         icon: Icons.gpp_bad_rounded,
-        title: 'تم حظر حسابك',
-        message: 'تم إيقاف حسابك من قبل الإدارة بسبب مخالفة القواعد.',
+        title: 'تم حظر حسابك نهائيًا',
+        message: 'تم إيقاف حسابك من قبل الإدارة بسبب مخالفة القواعد. سيتم تسجيل خروجك الآن.',
       );
     } else if (!status.enabled && !session.isAdmin) {
       if (session.status == SessionStatus.signedOut && _adminLogin) {

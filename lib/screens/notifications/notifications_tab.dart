@@ -53,6 +53,7 @@ class _NotificationsTabState extends State<NotificationsTab> {
         'mention' => Icons.alternate_email_rounded,
         'broadcast' => Icons.campaign_rounded,
         'post_like' => Icons.favorite_rounded,
+        'warning' => Icons.warning_amber_rounded,
         'post_comment' => Icons.mode_comment_rounded,
         _ => Icons.notifications_rounded,
       };

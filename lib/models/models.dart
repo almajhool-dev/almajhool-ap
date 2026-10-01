@@ -14,6 +14,7 @@ class Profile {
   final int xp;
   final bool isVerified;
   final bool isOwner;
+  final int warnings;
 
   const Profile({
     required this.id,
@@ -29,6 +30,7 @@ class Profile {
     this.xp = 0,
     this.isVerified = false,
     this.isOwner = false,
+    this.warnings = 0,
   });
 
   /// المستوى: كل 100 نقطة = مستوى، والتوثيق عند المستوى 50
@@ -50,6 +52,7 @@ class Profile {
         xp: ((m['xp'] ?? 0) as num).toInt(),
         isVerified: (m['is_verified'] ?? false) as bool,
         isOwner: (m['is_owner'] ?? false) as bool,
+        warnings: ((m['warnings'] ?? 0) as num).toInt(),
       );
 }
 
@@ -374,6 +377,7 @@ class Post {
   final DateTime createdAt;
   final Profile? author;
   final bool likedByMe;
+  final DateTime? editedAt;
 
   const Post({
     required this.id,
@@ -385,6 +389,7 @@ class Post {
     required this.createdAt,
     this.author,
     this.likedByMe = false,
+    this.editedAt,
   });
 
   factory Post.fromMap(Map<String, dynamic> m, {bool liked = false}) => Post(
@@ -397,12 +402,14 @@ class Post {
         createdAt: _dt(m['created_at']) ?? DateTime.now(),
         author: m['author'] is Map<String, dynamic> ? Profile.fromMap(m['author'] as Map<String, dynamic>) : null,
         likedByMe: liked,
+        editedAt: _dt(m['edited_at']),
       );
 
-  Post copyWith({int? likeCount, int? commentCount, bool? likedByMe}) => Post(
+  Post copyWith({int? likeCount, int? commentCount, bool? likedByMe, String? content, DateTime? editedAt}) => Post(
         id: id,
         authorId: authorId,
-        content: content,
+        content: content ?? this.content,
+        editedAt: editedAt ?? this.editedAt,
         imageUrl: imageUrl,
         likeCount: likeCount ?? this.likeCount,
         commentCount: commentCount ?? this.commentCount,

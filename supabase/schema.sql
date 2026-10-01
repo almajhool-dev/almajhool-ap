@@ -703,7 +703,8 @@ begin
     from conversations c where c.type = 'group' order by c.created_at desc limit 200;
 end $$;
 
-create or replace function public.admin_list_reports()
+drop function if exists public.admin_list_reports();
+create function public.admin_list_reports()
 returns table(id uuid, reason text, status text, created_at timestamptz,
               reporter_username text, reported_username text, reported_user_id uuid,
               message_id uuid, message_content text, message_type text)
@@ -1253,6 +1254,173 @@ begin
     exception when duplicate_object then null;
     end;
   end loop;
+end $$;
+
+
+-- =====================================================================
+--  الإصدار 3: الإنذارات، الإبلاغ عن المنشورات، تعديل المنشورات، الإشارات
+-- =====================================================================
+
+alter table public.profiles add column if not exists warnings int not null default 0;
+alter table public.reports add column if not exists post_id uuid references public.posts(id) on delete set null;
+alter table public.posts add column if not exists edited_at timestamptz;
+
+-- حماية عمود الإنذارات من تعديل المستخدم
+create or replace function public.protect_profile_columns() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is not null
+     and coalesce(current_setting('app.trusted', true), '') <> '1'
+     and not is_admin() then
+    new.is_admin := old.is_admin;
+    new.is_banned := old.is_banned;
+    new.is_verified := old.is_verified;
+    new.xp := old.xp;
+    new.warnings := old.warnings;
+  end if;
+  if auth.uid() is not null and coalesce(current_setting('app.trusted', true), '') <> '1' then
+    new.is_owner := old.is_owner;
+  end if;
+  if old.is_owner and auth.uid() is not null
+     and coalesce(current_setting('app.trusted', true), '') <> '1' then
+    new.is_admin := true;
+    new.is_banned := false;
+    new.warnings := 0;
+  end if;
+  new.id := old.id;
+  new.created_at := old.created_at;
+  new.username := lower(new.username);
+  return new;
+end $$;
+
+-- إنذار: 1 و 2 و 3 تحذير، الرابع = حظر نهائي
+create or replace function public.admin_warn(target uuid, reason text) returns int
+language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  if exists(select 1 from profiles where id = target and is_owner) then raise exception 'لا يمكن إنذار المالك'; end if;
+  if target = auth.uid() then raise exception 'لا يمكنك إنذار نفسك'; end if;
+  update profiles set warnings = warnings + 1,
+         is_banned = is_banned or warnings + 1 >= 4
+  where id = target returning warnings into n;
+  if n is null then raise exception 'المستخدم غير موجود'; end if;
+  if n >= 4 then
+    insert into notifications(user_id, type, title, body)
+      values (target, 'warning', '⛔ تم حظر حسابك', 'تم إيقاف حسابك نهائيًا بعد 4 إنذارات. السبب: ' || coalesce(reason, ''));
+  else
+    insert into notifications(user_id, type, title, body)
+      values (target, 'warning', '⚠️ إنذار رقم ' || n || ' من 3',
+              'السبب: ' || coalesce(reason, '') || '. عند الإنذار الرابع سيتم حظر حسابك نهائيًا.');
+  end if;
+  return n;
+end $$;
+
+create or replace function public.admin_clear_warnings(target uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  update profiles set warnings = 0 where id = target;
+end $$;
+
+create or replace function public.admin_set_ban(target uuid, banned boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  if target = auth.uid() then raise exception 'لا يمكنك حظر نفسك'; end if;
+  if exists(select 1 from profiles where id = target and is_owner) then raise exception 'لا يمكن حظر مالك التطبيق'; end if;
+  update profiles set is_banned = banned,
+         warnings = case when banned then warnings else 0 end
+  where id = target;
+end $$;
+
+-- تعديل المنشور (صاحبه فقط)
+create or replace function public.edit_post(pid uuid, new_content text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if char_length(coalesce(new_content, '')) > 3000 then raise exception 'النص طويل جدًا'; end if;
+  update posts set content = coalesce(new_content, ''), edited_at = now()
+  where id = pid and author_id = auth.uid() and not deleted
+    and (char_length(coalesce(new_content, '')) > 0 or image_url is not null);
+  if not found then raise exception 'لا يمكن تعديل هذا المنشور'; end if;
+end $$;
+
+-- الإشارة إلى الأشخاص (@username) في المنشورات والتعليقات
+create or replace function public.notify_mentions(txt text, actor uuid, ptitle text, pdata jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+declare mention text; target uuid; actor_name text;
+begin
+  if txt is null or position('@' in txt) = 0 then return; end if;
+  select display_name into actor_name from profiles where id = actor;
+  for mention in
+    select distinct lower(m[1]) from regexp_matches(txt, '@([A-Za-z0-9_.]{3,24})', 'g') as m
+  loop
+    select id into target from profiles where username = mention and id <> actor;
+    if target is not null and not is_blocked_between(actor, target) then
+      perform notify_user(target, 'mention', coalesce(actor_name, '') || ' ' || ptitle, left(txt, 120), pdata);
+    end if;
+    target := null;
+  end loop;
+end $$;
+revoke execute on function public.notify_mentions(text, uuid, text, jsonb) from public, anon, authenticated;
+
+create or replace function public.after_post_insert() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform add_capped_xp(new.author_id, 'post_xp', 10, 50);
+  perform notify_mentions(new.content, new.author_id, 'أشار إليك في منشور', jsonb_build_object('post_id', new.id));
+  return new;
+end $$;
+
+create or replace function public.mention_on_comment() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform notify_mentions(new.content, new.author_id, 'أشار إليك في تعليق', jsonb_build_object('post_id', new.post_id));
+  return new;
+end $$;
+drop trigger if exists trg_comment_mention on public.post_comments;
+create trigger trg_comment_mention after insert on public.post_comments
+  for each row execute function public.mention_on_comment();
+
+drop function if exists public.admin_list_reports();
+create function public.admin_list_reports()
+returns table(id uuid, reason text, status text, created_at timestamptz,
+              reporter_username text, reported_username text, reported_user_id uuid,
+              reported_warnings int, reported_banned boolean,
+              message_id uuid, message_content text, message_type text,
+              post_id uuid, post_content text, post_image text)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  return query
+    select r.id, r.reason, r.status, r.created_at,
+      a.username, b.username, r.reported_user_id,
+      coalesce(b.warnings, 0), coalesce(b.is_banned, false),
+      r.message_id, m.content, m.type,
+      r.post_id, p.content, p.image_url
+    from reports r
+    left join profiles a on a.id = r.reporter_id
+    left join profiles b on b.id = r.reported_user_id
+    left join messages m on m.id = r.message_id
+    left join posts p on p.id = r.post_id
+    order by (r.status = 'open') desc, r.created_at desc limit 200;
+end $$;
+
+create or replace function public.admin_resolve_report(rid uuid, delete_msg boolean)
+returns void language plpgsql security definer set search_path = public as $$
+declare mid uuid; pid uuid;
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  select message_id, post_id into mid, pid from reports where id = rid;
+  if delete_msg then
+    if mid is not null then
+      update messages set deleted = true, content = null, media_path = null, file_name = null where id = mid;
+    end if;
+    if pid is not null then
+      update posts set deleted = true where id = pid;
+    end if;
+  end if;
+  update reports set status = 'resolved' where id = rid;
 end $$;
 
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا

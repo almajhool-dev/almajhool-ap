@@ -45,6 +45,9 @@ class AuthRepository {
     await supa.auth.updateUser(UserAttributes(password: newPassword));
   }
 
+  Future<void> verifySignup(String email, String code) =>
+      supa.auth.verifyOTP(email: email.trim(), token: code.trim(), type: OtpType.signup);
+
   Future<void> resendConfirmation(String email) =>
       supa.auth.resend(type: OtpType.signup, email: email.trim());
 
@@ -111,8 +114,10 @@ class ProfileRepository {
   Future<void> unblock(String userId) =>
       supa.from('blocks').delete().eq('blocker_id', myId!).eq('blocked_id', userId);
 
-  Future<void> report({required String reason, String? userId, String? messageId, String? conversationId}) =>
+  Future<void> report(
+          {required String reason, String? userId, String? messageId, String? conversationId, String? postId}) =>
       supa.from('reports').insert({
+        'post_id': postId,
         'reporter_id': myId!,
         'reported_user_id': userId,
         'message_id': messageId,

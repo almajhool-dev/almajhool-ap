@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/config.dart';
+import '../../services/core_services.dart';
 import '../../repositories/user_repositories.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
@@ -27,6 +28,11 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _busy = true);
     try {
       await _repo.signIn(_email.text, _password.text);
+      final p = await ProfileRepository().get(supa.auth.currentUser!.id);
+      if (p?.isBanned ?? false) {
+        await _repo.signOut();
+        throw Exception('هذا الحساب محظور نهائيًا من قبل الإدارة');
+      }
     } catch (e) {
       if (mounted) showSnack(context, friendlyError(e), error: true);
     } finally {
@@ -174,32 +180,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (signedIn) {
         Navigator.of(context).popUntil((r) => r.isFirst);
       } else {
-        await showDialog(
-          context: context,
-          builder: (c) => AlertDialog(
-            title: const Text('تحقق من بريدك'),
-            content: Text('أرسلنا رابط تأكيد إلى ${_email.text.trim()}.\nافتح الرابط ثم سجّل الدخول.'),
-            actions: [
-              TextButton(
-                onPressed: () async {
-                  try {
-                    await _repo.resendConfirmation(_email.text);
-                    if (c.mounted) showSnack(c, 'تمت إعادة الإرسال');
-                  } catch (e) {
-                    if (c.mounted) showSnack(c, friendlyError(e), error: true);
-                  }
-                },
-                child: const Text('إعادة الإرسال'),
-              ),
-              FilledButton(
-                style: FilledButton.styleFrom(minimumSize: const Size(80, 40)),
-                onPressed: () => Navigator.pop(c),
-                child: const Text('حسنًا'),
-              ),
-            ],
-          ),
+        await Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => VerifyCodeScreen(email: _email.text.trim())),
         );
-        if (mounted) Navigator.pop(context);
       }
     } catch (e) {
       if (mounted) showSnack(context, friendlyError(e), error: true);
@@ -324,7 +308,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
               controller: _code,
               keyboardType: TextInputType.number,
               textDirection: TextDirection.ltr,
-              decoration: const InputDecoration(labelText: 'رمز التحقق'),
+              maxLength: 8,
+              decoration: const InputDecoration(labelText: 'رمز التحقق (6 إلى 8 أرقام)', counterText: ''),
             ),
             const SizedBox(height: 14),
             TextField(
@@ -354,6 +339,85 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                       }
                     }),
             child: Text(_sent ? 'تغيير كلمة المرور' : 'إرسال الرمز'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+/// إدخال رمز التأكيد المرسل للبريد (6 إلى 8 أرقام).
+class VerifyCodeScreen extends StatefulWidget {
+  final String email;
+  const VerifyCodeScreen({super.key, required this.email});
+  @override
+  State<VerifyCodeScreen> createState() => _VerifyCodeScreenState();
+}
+
+class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
+  final _code = TextEditingController();
+  final _repo = AuthRepository();
+  bool _busy = false;
+
+  Future<void> _verify() async {
+    final c = _code.text.trim();
+    if (!RegExp(r'^\d{6,8}$').hasMatch(c)) {
+      showSnack(context, 'الرمز من 6 إلى 8 أرقام', error: true);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await _repo.verifySignup(widget.email, c);
+      if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('تأكيد الحساب')),
+      body: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          const Icon(Icons.mark_email_read_rounded, size: 64),
+          const SizedBox(height: 16),
+          Text('أرسلنا رمز تأكيد إلى\n${widget.email}',
+              textAlign: TextAlign.center, style: const TextStyle(fontSize: 16, height: 1.6)),
+          const SizedBox(height: 8),
+          const Text('افحص البريد الوارد ومجلد الرسائل غير المرغوب فيها (Spam).',
+              textAlign: TextAlign.center),
+          const SizedBox(height: 24),
+          TextField(
+            controller: _code,
+            keyboardType: TextInputType.number,
+            textAlign: TextAlign.center,
+            maxLength: 8,
+            style: const TextStyle(fontSize: 26, letterSpacing: 8, fontWeight: FontWeight.w800),
+            decoration: const InputDecoration(hintText: '••••••', counterText: ''),
+            onSubmitted: (_) => _verify(),
+          ),
+          const SizedBox(height: 20),
+          FilledButton(
+            onPressed: _busy ? null : _verify,
+            child: _busy
+                ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Text('تأكيد'),
+          ),
+          TextButton(
+            onPressed: () async {
+              try {
+                await _repo.resendConfirmation(widget.email);
+                if (context.mounted) showSnack(context, 'تمت إعادة إرسال الرمز');
+              } catch (e) {
+                if (context.mounted) showSnack(context, friendlyError(e), error: true);
+              }
+            },
+            child: const Text('إعادة إرسال الرمز'),
           ),
         ],
       ),

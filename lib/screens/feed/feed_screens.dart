@@ -9,6 +9,7 @@ import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../providers/providers.dart';
 import '../../repositories/post_repository.dart';
+import '../../repositories/user_repositories.dart';
 import '../../services/core_services.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
@@ -26,6 +27,10 @@ class PostsController extends ChangeNotifier {
   String? error;
 
   PostsController({this.authorId}) {
+    if (authorId == null) {
+      posts = repo.cachedFeed();
+      if (posts.isNotEmpty) loading = false;
+    }
     refresh();
   }
 
@@ -241,28 +246,22 @@ class PostCard extends StatelessWidget {
                 ],
               ),
             ),
-            subtitle: Text(Fmt.chatListTime(post.createdAt), style: const TextStyle(fontSize: 12)),
-            trailing: (mine || isAdmin)
-                ? IconButton(
-                    icon: const Icon(Icons.more_horiz),
-                    onPressed: () async {
-                      if (!await confirmDialog(context, 'حذف المنشور', 'هل تريد حذف هذا المنشور؟', ok: 'حذف', danger: true)) {
-                        return;
-                      }
-                      try {
-                        await controller.repo.delete(post.id);
-                        controller.remove(post.id);
-                      } catch (e) {
-                        if (context.mounted) showSnack(context, friendlyError(e), error: true);
-                      }
-                    },
-                  )
-                : null,
+            subtitle: Text('${Fmt.chatListTime(post.createdAt)}${post.editedAt != null ? ' · معدّل' : ''}',
+                style: const TextStyle(fontSize: 12)),
+            trailing: PopupMenuButton<String>(
+              icon: const Icon(Icons.more_horiz),
+              onSelected: (v) => _menu(context, v),
+              itemBuilder: (_) => [
+                if (mine) const PopupMenuItem(value: 'edit', child: Text('تعديل المنشور')),
+                if (mine || isAdmin) const PopupMenuItem(value: 'delete', child: Text('حذف المنشور')),
+                if (!mine) const PopupMenuItem(value: 'report', child: Text('الإبلاغ عن المنشور')),
+              ],
+            ),
           ),
           if (post.content.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 4, 14, 10),
-              child: Text(post.content, style: const TextStyle(fontSize: 15.5, height: 1.5)),
+              child: Text.rich(_mentions(post.content), style: const TextStyle(fontSize: 15.5, height: 1.5)),
             ),
           if (post.imageUrl != null)
             GestureDetector(
@@ -305,6 +304,42 @@ class PostCard extends StatelessWidget {
     );
   }
 
+  static TextSpan _mentions(String text) {
+    final spans = <TextSpan>[];
+    final re = RegExp(r'@[A-Za-z0-9_.]{3,24}');
+    var last = 0;
+    for (final m in re.allMatches(text)) {
+      if (m.start > last) spans.add(TextSpan(text: text.substring(last, m.start)));
+      spans.add(TextSpan(text: m.group(0), style: const TextStyle(color: Color(0xFF1D9BF0), fontWeight: FontWeight.w700)));
+      last = m.end;
+    }
+    if (last < text.length) spans.add(TextSpan(text: text.substring(last)));
+    return TextSpan(children: spans);
+  }
+
+  Future<void> _menu(BuildContext context, String v) async {
+    try {
+      switch (v) {
+        case 'edit':
+          final t = await promptText(context, 'تعديل المنشور', initial: post.content, maxLines: 6);
+          if (t == null) return;
+          await controller.repo.edit(post.id, t);
+          controller.replace(post.copyWith(content: t, editedAt: DateTime.now()));
+        case 'delete':
+          if (!await confirmDialog(context, 'حذف المنشور', 'هل تريد حذف هذا المنشور؟', ok: 'حذف', danger: true)) return;
+          await controller.repo.delete(post.id);
+          controller.remove(post.id);
+        case 'report':
+          final reason = await promptText(context, 'سبب الإبلاغ', hint: 'مثلاً: محتوى مسيء، احتيال...', maxLines: 3, ok: 'إرسال');
+          if (reason == null) return;
+          await ProfileRepository().report(reason: reason, userId: post.authorId, postId: post.id);
+          if (context.mounted) showSnack(context, 'تم إرسال البلاغ للإدارة، شكرًا لك');
+      }
+    } catch (e) {
+      if (context.mounted) showSnack(context, friendlyError(e), error: true);
+    }
+  }
+
   void _openProfile(BuildContext context) =>
       Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: post.authorId)));
 }
@@ -339,7 +374,7 @@ class _ComposePostScreenState extends State<ComposePostScreen> {
   bool _busy = false;
 
   Future<void> _pick() async {
-    final x = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 75, maxWidth: 1600, maxHeight: 1600);
+    final x = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 70, maxWidth: 1280, maxHeight: 1280);
     if (x != null) setState(() => _image = File(x.path));
   }
 
@@ -394,7 +429,8 @@ class _ComposePostScreenState extends State<ComposePostScreen> {
             maxLines: null,
             minLines: 5,
             maxLength: 3000,
-            decoration: const InputDecoration(hintText: 'اكتب شيئًا...', border: InputBorder.none, filled: false),
+            decoration: const InputDecoration(
+                hintText: 'اكتب شيئًا... ولإشارة شخص اكتب @ ثم اسم المستخدم', border: InputBorder.none, filled: false),
           ),
           if (_image != null)
             Stack(

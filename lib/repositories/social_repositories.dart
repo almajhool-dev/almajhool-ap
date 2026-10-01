@@ -93,6 +93,14 @@ class AdminRepository {
   Future<void> setBan(String userId, bool banned) =>
       supa.rpc('admin_set_ban', params: {'target': userId, 'banned': banned});
 
+  Future<int> warn(String userId, String reason) async {
+    final r = await supa.rpc('admin_warn', params: {'target': userId, 'reason': reason});
+    return (r as num?)?.toInt() ?? 0;
+  }
+
+  Future<void> clearWarnings(String userId) =>
+      supa.rpc('admin_clear_warnings', params: {'target': userId});
+
   Future<void> setVerified(String userId, bool verified) =>
       supa.rpc('admin_set_verified', params: {'target': userId, 'verified': verified});
 
