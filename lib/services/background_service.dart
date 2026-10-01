@@ -1,0 +1,396 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
+import 'dart:ui';
+
+import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../core/config.dart';
+import 'call_service.dart';
+import 'core_services.dart';
+
+/// خدمة تعمل في الخلفية حتى لو أُغلق التطبيق:
+/// تستقبل المكالمات (رنين + إشعار ملء الشاشة) والرسائل (إشعار مع صوت).
+/// لا تحتاج أي حساب خارجي (Firebase): تتصل بالخادم مباشرة بمفتاح جهاز سري.
+class BackgroundBridge {
+  BackgroundBridge._();
+
+  static const _kToken = 'bg_token';
+  static const _kUrl = 'bg_url';
+  static const _kKey = 'bg_key';
+  static const _kSince = 'bg_since';
+  static const _kBatteryAsked = 'bg_battery_asked';
+  static const serviceChannel = 'almajhool_bg';
+  static const callsChannel = 'almajhool_calls';
+  static const msgsChannel = 'almajhool_msgs';
+
+  static bool _configured = false;
+
+  /// الخدمة تعمل: الإشعارات والرنين أثناء غياب التطبيق تتكفل بها هي.
+  static bool active = false;
+
+  static bool get appVisible => WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+  static Timer? _heartbeat;
+  static _Lifecycle? _observer;
+
+  /// تهيئة (مرة واحدة عند فتح التطبيق).
+  static Future<void> configure() async {
+    if (_configured || kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      final plugin = FlutterLocalNotificationsPlugin();
+      final android = plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      await android?.createNotificationChannel(const AndroidNotificationChannel(
+        serviceChannel,
+        'التشغيل في الخلفية',
+        description: 'يبقي التطبيق جاهزًا لاستقبال المكالمات والرسائل',
+        importance: Importance.min,
+        showBadge: false,
+        playSound: false,
+        enableVibration: false,
+      ));
+      await FlutterBackgroundService().configure(
+        androidConfiguration: AndroidConfiguration(
+          onStart: bgMain,
+          autoStart: false,
+          autoStartOnBoot: true,
+          isForegroundMode: true,
+          notificationChannelId: serviceChannel,
+          initialNotificationTitle: AppConfig.appName,
+          initialNotificationContent: 'جاهز لاستقبال المكالمات والرسائل',
+          foregroundServiceNotificationId: 7311,
+          foregroundServiceTypes: [AndroidForegroundType.remoteMessaging],
+        ),
+        iosConfiguration: IosConfiguration(autoStart: false),
+      );
+      _configured = true;
+    } catch (e) {
+      debugPrint('bg configure failed: $e');
+    }
+  }
+
+  /// تشغيل بعد تسجيل الدخول.
+  static Future<void> start() async {
+    if (!_configured) await configure();
+    if (!_configured) return;
+    try {
+      var token = CacheService.getString(_kToken);
+      if (token == null || token.length < 32) {
+        final r = Random.secure();
+        token = List.generate(24, (_) => r.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+        await CacheService.setString(_kToken, token);
+      }
+      await supa.rpc('register_device', params: {'p_token': token});
+      await CacheService.setString(_kUrl, AppConfig.url);
+      await CacheService.setString(_kKey, AppConfig.anonKey);
+      if (CacheService.getString(_kSince) == null) {
+        await CacheService.setString(_kSince, DateTime.now().toUtc().toIso8601String());
+      }
+      final service = FlutterBackgroundService();
+      if (!await service.isRunning()) await service.startService();
+      active = true;
+      _startHeartbeat();
+      unawaited(_askPermissions());
+    } catch (e) {
+      debugPrint('bg start failed: $e');
+    }
+  }
+
+  /// إيقاف عند تسجيل الخروج.
+  static Future<void> stop() async {
+    active = false;
+    _heartbeat?.cancel();
+    _heartbeat = null;
+    if (_observer != null) WidgetsBinding.instance.removeObserver(_observer!);
+    _observer = null;
+    try {
+      final token = CacheService.getString(_kToken);
+      if (token != null) {
+        unawaited(supa.rpc('unregister_device', params: {'p_token': token}).catchError((_) => null));
+      }
+      await CacheService.setString(_kToken, '');
+      FlutterBackgroundService().invoke('stop');
+    } catch (_) {}
+  }
+
+  /// نبض كل 4 ثوانٍ ما دام التطبيق ظاهرًا: الخدمة لا تُظهر إشعارات وقتها (التطبيق يتكفل بها).
+  static void _startHeartbeat() {
+    if (_observer == null) {
+      _observer = _Lifecycle();
+      WidgetsBinding.instance.addObserver(_observer!);
+    }
+    _beat();
+    _heartbeat?.cancel();
+    _heartbeat = Timer.periodic(const Duration(seconds: 4), (_) => _beat());
+  }
+
+  static void _beat() {
+    if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+      FlutterBackgroundService().invoke('fg');
+    }
+  }
+
+  static Future<void> _askPermissions() async {
+    try {
+      final plugin = FlutterLocalNotificationsPlugin();
+      final android = plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      await android?.requestNotificationsPermission();
+      await android?.requestFullScreenIntentPermission();
+      if (CacheService.getBool(_kBatteryAsked) != true) {
+        await CacheService.setBool(_kBatteryAsked, true);
+        await Permission.ignoreBatteryOptimizations.request();
+      }
+    } catch (_) {}
+  }
+}
+
+class _Lifecycle extends WidgetsBindingObserver {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      BackgroundBridge._beat();
+      CallService.instance.checkPending();
+    }
+  }
+}
+
+// =====================================================================
+//  ما يلي يعمل داخل خدمة الخلفية (Isolate منفصل)
+// =====================================================================
+
+@pragma('vm:entry-point')
+Future<void> bgMain(ServiceInstance service) async {
+  DartPluginRegistrant.ensureInitialized();
+  final w = _BgWorker(service);
+  await w.run();
+}
+
+class _BgWorker {
+  final ServiceInstance service;
+  _BgWorker(this.service);
+
+  late SharedPreferences prefs;
+  SupabaseClient? client;
+  RealtimeChannel? channel;
+  final notif = FlutterLocalNotificationsPlugin();
+  final ring = AudioPlayer();
+  String token = '';
+  DateTime lastFg = DateTime(2000);
+  bool polling = false;
+  bool pollAgain = false;
+  String? ringingCall;
+  Timer? ringWatch;
+  DateTime? ringStarted;
+  final notifiedCalls = <String>{};
+
+  bool get appVisible => DateTime.now().difference(lastFg).inSeconds < 9;
+
+  Future<void> run() async {
+    prefs = await SharedPreferences.getInstance();
+    token = prefs.getString(BackgroundBridge._kToken) ?? '';
+    final url = prefs.getString(BackgroundBridge._kUrl) ?? '';
+    final key = prefs.getString(BackgroundBridge._kKey) ?? '';
+    if (token.length < 32 || url.isEmpty || key.isEmpty) {
+      await service.stopSelf();
+      return;
+    }
+
+    service.on('stop').listen((_) async {
+      await _stopRinging();
+      await channel?.unsubscribe();
+      await service.stopSelf();
+    });
+    service.on('fg').listen((_) {
+      lastFg = DateTime.now();
+      if (ringingCall != null) _stopRinging(); // التطبيق ظاهر: هو يعرض المكالمة
+    });
+
+    await notif.initialize(const InitializationSettings(
+      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+    ));
+    final android = notif.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    await android?.createNotificationChannel(const AndroidNotificationChannel(
+      BackgroundBridge.callsChannel,
+      'المكالمات الواردة',
+      description: 'إشعار ملء الشاشة عند ورود مكالمة',
+      importance: Importance.max,
+      playSound: false, // النغمة تُشغّل من التطبيق حسب اختيار المستخدم
+      enableVibration: true,
+    ));
+    await android?.createNotificationChannel(const AndroidNotificationChannel(
+      BackgroundBridge.msgsChannel,
+      'الرسائل',
+      description: 'إشعار عند وصول رسالة',
+      importance: Importance.high,
+    ));
+    try {
+      await ring.setAudioContext(AudioContext(
+        android: const AudioContextAndroid(
+          contentType: AndroidContentType.sonification,
+          usageType: AndroidUsageType.notificationRingtone,
+          audioFocus: AndroidAudioFocus.gainTransient,
+          stayAwake: true,
+        ),
+      ));
+      await ring.setReleaseMode(ReleaseMode.loop);
+    } catch (_) {}
+
+    client = SupabaseClient(url, key, authOptions: const AuthClientOptions(autoRefreshToken: false));
+    _subscribe();
+    // احتياط: فحص دوري حتى لو انقطع الاتصال الفوري
+    Timer.periodic(const Duration(seconds: 40), (_) => poll());
+    await poll();
+  }
+
+  void _subscribe() {
+    channel = client!
+        .channel('bg-$token')
+        .onBroadcast(event: 'ping', callback: (_) => poll())
+        .subscribe((status, _) {
+      if (status == RealtimeSubscribeStatus.subscribed) {
+        poll(); // بعد كل إعادة اتصال نتأكد ما فاتنا شيء
+      } else if (status == RealtimeSubscribeStatus.channelError || status == RealtimeSubscribeStatus.timedOut) {
+        Future.delayed(const Duration(seconds: 5), () {
+          channel?.unsubscribe();
+          _subscribe();
+        });
+      }
+    });
+  }
+
+  Future<void> poll() async {
+    if (polling) {
+      pollAgain = true;
+      return;
+    }
+    polling = true;
+    try {
+      do {
+        pollAgain = false;
+        await _pollOnce();
+      } while (pollAgain);
+    } catch (e) {
+      debugPrint('bg poll failed: $e');
+    } finally {
+      polling = false;
+    }
+  }
+
+  Future<void> _pollOnce() async {
+    await prefs.reload();
+    final since = prefs.getString(BackgroundBridge._kSince) ?? DateTime.now().toUtc().toIso8601String();
+    final r = await client!
+        .rpc('bg_poll', params: {'p_token': token, 'p_since': since})
+        .timeout(const Duration(seconds: 15));
+    final data = (r is String ? jsonDecode(r) : r) as Map;
+    if (data['invalid'] == true) {
+      await service.stopSelf();
+      return;
+    }
+
+    // ---- المكالمات ----
+    final calls = (data['calls'] as List? ?? const []).cast<Map>();
+    final ids = calls.map((c) => c['id'] as String).toSet();
+    if (ringingCall != null && !ids.contains(ringingCall)) await _stopRinging();
+    if (calls.isNotEmpty && ringingCall == null && !appVisible) {
+      final c = calls.first;
+      final id = c['id'] as String;
+      if (!notifiedCalls.contains(id)) {
+        notifiedCalls.add(id);
+        await _ring(id, (c['name'] ?? 'مستخدم') as String, c['video'] == true);
+      }
+    }
+
+    // ---- الرسائل ----
+    final msgs = (data['messages'] as List? ?? const []).cast<Map>();
+    final notifyOn = prefs.getBool('notifications_on') ?? true;
+    if (msgs.isNotEmpty) {
+      await prefs.setString(BackgroundBridge._kSince, msgs.last['created_at'] as String);
+      if (!appVisible && notifyOn) {
+        for (final m in msgs.length > 5 ? msgs.sublist(msgs.length - 5) : msgs) {
+          await _showMessage(m);
+        }
+      }
+    }
+  }
+
+  Future<void> _ring(String callId, String name, bool video) async {
+    ringingCall = callId;
+    ringStarted = DateTime.now();
+    await notif.show(
+      9100,
+      video ? '📹 مكالمة فيديو واردة' : '📞 مكالمة واردة',
+      '$name يتصل بك — اضغط للرد',
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          BackgroundBridge.callsChannel,
+          'المكالمات الواردة',
+          importance: Importance.max,
+          priority: Priority.max,
+          category: AndroidNotificationCategory.call,
+          fullScreenIntent: true,
+          ongoing: true,
+          autoCancel: true,
+          playSound: false,
+          timeoutAfter: 45000,
+          visibility: NotificationVisibility.public,
+        ),
+      ),
+    );
+    final soundsOn = prefs.getBool('sound_calls_on') ?? true;
+    if (soundsOn) {
+      final id = prefs.getString('sound_ringtone') ?? 'ring_naseem';
+      try {
+        await ring.play(AssetSource('sounds/$id.wav'), volume: 1.0);
+      } catch (_) {}
+    }
+    // نراقب المكالمة كل ثانيتين: إذا أُلغيت أو رُد عليها نوقف الرنين
+    ringWatch?.cancel();
+    ringWatch = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (DateTime.now().difference(ringStarted!).inSeconds > 45) {
+        _stopRinging();
+      } else {
+        poll();
+      }
+    });
+  }
+
+  Future<void> _stopRinging() async {
+    ringWatch?.cancel();
+    ringWatch = null;
+    ringingCall = null;
+    try {
+      await ring.stop();
+    } catch (_) {}
+    try {
+      await notif.cancel(9100);
+    } catch (_) {}
+  }
+
+  Future<void> _showMessage(Map m) async {
+    final title = (m['title'] ?? 'رسالة جديدة') as String;
+    final body = (m['body'] ?? '') as String;
+    final conv = (m['conversation_id'] ?? '') as String;
+    await notif.show(
+      conv.hashCode & 0x7fffffff,
+      title,
+      body,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          BackgroundBridge.msgsChannel,
+          'الرسائل',
+          importance: Importance.high,
+          priority: Priority.high,
+          category: AndroidNotificationCategory.message,
+          styleInformation: BigTextStyleInformation(body),
+        ),
+      ),
+    );
+  }
+}

@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 import '../screens/call/call_screen.dart';
+import 'background_service.dart';
 import 'core_services.dart';
 import 'local_notifications.dart';
 
@@ -121,7 +122,9 @@ class CallService {
     }
     final name = (p['from_name'] ?? 'مستخدم') as String;
     final video = (p['video'] ?? false) as bool;
-    LocalNotifications.show(video ? '📹 مكالمة فيديو واردة' : '📞 مكالمة واردة', name);
+    if (!BackgroundBridge.active || BackgroundBridge.appVisible) {
+      LocalNotifications.show(video ? '📹 مكالمة فيديو واردة' : '📞 مكالمة واردة', name);
+    }
     navigatorKey.currentState?.push(MaterialPageRoute(
       builder: (_) => IncomingCallScreen(
         callId: callId,

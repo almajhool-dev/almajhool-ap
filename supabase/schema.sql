@@ -1727,5 +1727,122 @@ begin
 exception when others then raise notice 'auto update not scheduled: %', sqlerrm;
 end $$;
 
+-- =====================================================================
+--  الإصدار 8: استقبال المكالمات والرسائل والتطبيق مغلق (خدمة الخلفية)
+--  كل جهاز له مفتاح سري عشوائي؛ الخادم يرسل «تنبيه» فارغ والجهاز يسأل عن التفاصيل.
+-- =====================================================================
+
+create table if not exists public.device_tokens (
+  token text primary key check (char_length(token) between 32 and 100),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  last_poll timestamptz not null default now()
+);
+create index if not exists device_tokens_user_idx on public.device_tokens(user_id);
+alter table public.device_tokens enable row level security;
+-- لا سياسات: الوصول فقط عبر الدوال
+
+create or replace function public.register_device(p_token text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then raise exception 'غير مسموح'; end if;
+  insert into device_tokens(token, user_id) values (p_token, auth.uid())
+    on conflict (token) do update set user_id = excluded.user_id, last_poll = now();
+  -- حد أقصى 5 أجهزة لكل مستخدم
+  delete from device_tokens where user_id = auth.uid() and token not in (
+    select token from device_tokens where user_id = auth.uid() order by last_poll desc limit 5);
+end $$;
+
+create or replace function public.unregister_device(p_token text) returns void
+language sql security definer set search_path = public as $$
+  delete from device_tokens where token = p_token;
+$$;
+
+create or replace function public.bg_poll(p_token text, p_since timestamptz) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare uid uuid; calls jsonb; msgs jsonb;
+begin
+  select d.user_id into uid from device_tokens d where d.token = p_token;
+  if uid is null or exists(select 1 from profiles where id = uid and is_banned) then
+    return jsonb_build_object('invalid', true);
+  end if;
+  update device_tokens set last_poll = now() where token = p_token;
+
+  select coalesce(jsonb_agg(jsonb_build_object('id', c.id, 'name', p.display_name, 'video', c.video)), '[]'::jsonb)
+    into calls
+  from call_sessions c join profiles p on p.id = c.caller
+  where c.callee = uid and c.status = 'ringing' and c.created_at > now() - interval '45 seconds';
+
+  select coalesce(jsonb_agg(x order by x->>'created_at'), '[]'::jsonb) into msgs from (
+    select jsonb_build_object(
+      'conversation_id', m.conversation_id,
+      'created_at', to_char(m.created_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+      'title', case when cv.type = 'group' then coalesce(cv.name, 'مجموعة') else coalesce(sp.display_name, 'رسالة جديدة') end,
+      'body', case when cv.type = 'group' then coalesce(sp.display_name, '') || ': ' else '' end ||
+        case when m.deleted then 'رسالة محذوفة'
+             when m.type = 'image' then '📷 صورة'
+             when m.type = 'video' then '🎬 فيديو'
+             when m.type = 'audio' then '🎤 رسالة صوتية'
+             when m.type = 'file' then '📎 ' || coalesce(m.file_name, 'ملف')
+             else left(coalesce(m.content, ''), 200) end
+    ) as x
+    from messages m
+    join conversation_members cm on cm.conversation_id = m.conversation_id and cm.user_id = uid
+    join conversations cv on cv.id = m.conversation_id
+    left join profiles sp on sp.id = m.sender_id
+    where m.created_at > greatest(coalesce(p_since, now()), now() - interval '1 day')
+      and m.sender_id is distinct from uid and m.type <> 'system' and not cm.muted
+      and not exists(select 1 from blocks b where b.blocker_id = uid and b.blocked_id = m.sender_id)
+    order by m.created_at desc limit 20
+  ) t;
+
+  return jsonb_build_object('calls', calls, 'messages', msgs);
+end $$;
+
+grant execute on function public.register_device(text) to authenticated;
+grant execute on function public.unregister_device(text) to anon, authenticated;
+grant execute on function public.bg_poll(text, timestamptz) to anon, authenticated;
+
+-- تنبيه فوري لأجهزة المستخدمين (لا يحمل أي محتوى)
+create or replace function public._bg_ping(uids uuid[]) returns void
+language plpgsql security definer set search_path = public as $$
+declare t text;
+begin
+  for t in select token from device_tokens where user_id = any(uids) loop
+    begin
+      perform realtime.send('{}'::jsonb, 'ping', 'bg-' || t, false);
+    exception when others then null;
+    end;
+  end loop;
+exception when others then null;
+end $$;
+revoke execute on function public._bg_ping(uuid[]) from public, anon, authenticated;
+
+create or replace function public._bg_on_message() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.type <> 'system' then
+    perform _bg_ping(array(select user_id from conversation_members
+      where conversation_id = new.conversation_id and user_id is distinct from new.sender_id));
+  end if;
+  return null;
+exception when others then return null;
+end $$;
+drop trigger if exists bg_on_message on public.messages;
+create trigger bg_on_message after insert on public.messages for each row execute function public._bg_on_message();
+
+create or replace function public._bg_on_call() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'INSERT' or new.status is distinct from old.status then
+    perform _bg_ping(array[new.callee]);
+  end if;
+  return null;
+exception when others then return null;
+end $$;
+drop trigger if exists bg_on_call on public.call_sessions;
+create trigger bg_on_call after insert or update of status on public.call_sessions
+  for each row execute function public._bg_on_call();
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

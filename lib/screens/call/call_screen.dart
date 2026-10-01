@@ -44,7 +44,10 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
   void initState() {
     super.initState();
     CallService.instance.inCall = true;
-    _vibe = Timer.periodic(const Duration(milliseconds: 1500), (_) => HapticFeedback.vibrate());
+    _vibe = Timer.periodic(const Duration(milliseconds: 1500), (_) {
+      HapticFeedback.vibrate();
+      SoundService.startRingtone(); // لا يتكرر إذا كان يرن
+    });
     SoundService.startRingtone();
     _timeout = Timer(const Duration(seconds: 45), _close);
     // إذا ألغى المتصل قبل الرد

@@ -1,6 +1,7 @@
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 
+import 'background_service.dart';
 import 'call_service.dart';
 import 'core_services.dart';
 
@@ -69,8 +70,13 @@ class SoundService {
     ));
 
   /// نغمة الرنين للمكالمة الواردة (تتكرر حتى الإيقاف).
+  static bool _ringOn = false;
+
   static Future<void> startRingtone() async {
-    if (!callSounds) return;
+    if (!callSounds || _ringOn) return;
+    // التطبيق بالخلفية: خدمة الخلفية هي التي ترن (حتى لا يتكرر الصوت)
+    if (BackgroundBridge.active && !BackgroundBridge.appVisible) return;
+    _ringOn = true;
     try {
       final p = _ringPlayer();
       await p.setReleaseMode(ReleaseMode.loop);
@@ -81,6 +87,7 @@ class SoundService {
   }
 
   static Future<void> stopRingtone() async {
+    _ringOn = false;
     try {
       await _ring?.stop();
     } catch (_) {}
@@ -115,6 +122,7 @@ class SoundService {
 
   static Future<void> _playMsg(String file) async {
     if (!messageSounds || CallService.instance.inCall) return;
+    if (!BackgroundBridge.appVisible) return;
     final now = DateTime.now();
     if (now.difference(_lastMsg).inMilliseconds < 700) return; // لا تكرار مزعج عند وصول عدة رسائل
     _lastMsg = now;

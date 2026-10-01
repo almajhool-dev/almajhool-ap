@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../services/background_service.dart';
 import '../services/sound_service.dart';
 import '../models/models.dart';
 import '../repositories/chat_repository.dart';
@@ -344,6 +345,8 @@ class ChatHub extends ChangeNotifier with WidgetsBindingObserver {
     if (conv?.muted ?? false) return;
     SoundService.messageReceived();
     if (m.conversationId == openConversationId) return;
+    // التطبيق بالخلفية: خدمة الخلفية تُظهر الإشعار (حتى لا يتكرر)
+    if (BackgroundBridge.active && !BackgroundBridge.appVisible) return;
     LocalNotifications.show(conv?.title ?? 'رسالة جديدة', m.previewText);
   }
 

@@ -36,6 +36,12 @@ def patch_manifest():
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.BLUETOOTH_CONNECT",
         "android.permission.WAKE_LOCK",
+        "android.permission.VIBRATE",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.USE_FULL_SCREEN_INTENT",
+        "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
     ]
     block = ""
     for p in perms:
@@ -45,6 +51,24 @@ def patch_manifest():
         block += '    <uses-feature android:name="android.hardware.camera" android:required="false"/>\n'
     if block:
         s = s.replace("<application", block + "    <application", 1)
+    # خدمة الخلفية لاستقبال المكالمات والرسائل والتطبيق مغلق
+    if 'xmlns:tools=' not in s:
+        s = s.replace('<manifest ', '<manifest xmlns:tools="http://schemas.android.com/tools" ', 1)
+    if "flutter_background_service.BackgroundService" not in s:
+        s = s.replace(
+            "</application>",
+            '    <service\n'
+            '            android:name="id.flutter.flutter_background_service.BackgroundService"\n'
+            '            android:foregroundServiceType="remoteMessaging"\n'
+            '            android:exported="false"\n'
+            '            tools:replace="android:exported,android:foregroundServiceType"/>\n'
+            '    </application>',
+            1,
+        )
+    # عرض شاشة المكالمة فوق قفل الشاشة
+    if "showWhenLocked" not in s:
+        s = s.replace('android:name=".MainActivity"',
+                      'android:name=".MainActivity"\n            android:showWhenLocked="true"\n            android:turnScreenOn="true"', 1)
     # السماح بفتح الروابط (url_launcher) على Android 11+
     if "<queries>" in s and "android.intent.action.VIEW" not in s:
         s = s.replace(
