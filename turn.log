@@ -1,0 +1,3 @@
+RESULT global.relay.metered.ca 80 udp ALLOCATE OK ✅
+RESULT global.relay.metered.ca 80 tcp ALLOCATE OK ✅
+RESULT global.relay.metered.ca 443 tcp EXCEPTION unpack requires a buffer of 2 bytes
