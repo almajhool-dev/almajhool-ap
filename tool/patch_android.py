@@ -89,6 +89,8 @@ def patch_kts(path):
             '                storeFile = file(keystoreProperties["storeFile"] as String)\n'
             '                storePassword = keystoreProperties["storePassword"] as String\n'
             "            }\n"
+            "            enableV1Signing = true\n"
+            "            enableV2Signing = true\n"
             "        }\n"
             "    }\n\n"
             "    buildTypes {"
@@ -130,6 +132,8 @@ def patch_groovy(path):
             "                storeFile file(keystoreProperties['storeFile'])\n"
             "                storePassword keystoreProperties['storePassword']\n"
             "            }\n"
+            "            v1SigningEnabled true\n"
+            "            v2SigningEnabled true\n"
             "        }\n"
             "    }\n\n"
             "    buildTypes {"
