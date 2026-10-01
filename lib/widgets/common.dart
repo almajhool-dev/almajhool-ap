@@ -280,7 +280,7 @@ class LevelChip extends StatelessWidget {
         gradient: AppColors.brandGradient,
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Text('Lv $level',
+      child: Text('مستوى $level',
           style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)),
     );
   }

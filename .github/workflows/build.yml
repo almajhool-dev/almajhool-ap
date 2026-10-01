@@ -62,8 +62,7 @@ jobs:
           make_latest: true
           body: |
             ## تحميل التطبيق
-            - **almajhool-app.apk** ← للتثبيت على الهاتف (أغلب الهواتف)
-            - almajhool-app-old-phones.apk ← فقط إذا رفض هاتفك القديم تثبيت الأول
+            - **almajhool-app.apk** ← للتثبيت على أي هاتف أندرويد (6 فما فوق، 32 و 64 بت)
             - almajhool-app.aab ← للنشر على Google Play
           files: dist/*
 

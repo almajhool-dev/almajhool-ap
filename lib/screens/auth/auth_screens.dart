@@ -230,7 +230,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 controller: _username,
                 textDirection: TextDirection.ltr,
                 decoration: const InputDecoration(
-                    labelText: 'اسم المستخدم (Username)', prefixIcon: Icon(Icons.alternate_email), hintText: 'anonymous_dev'),
+                    labelText: 'اسم المستخدم (أحرف إنجليزية)', prefixIcon: Icon(Icons.alternate_email), hintText: 'anonymous_dev'),
                 validator: Validators.username,
               ),
               const SizedBox(height: 14),

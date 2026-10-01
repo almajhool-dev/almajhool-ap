@@ -38,21 +38,25 @@ keyAlias=${KEY_ALIAS:-upload}
 storeFile=upload-keystore.jks
 EOF
   echo "   using your release keystore"
+elif [[ -f signing/almajhool.jks ]]; then
+  cp signing/almajhool.jks android/app/upload-keystore.jks
+  { cat signing/signing.properties; echo "storeFile=upload-keystore.jks"; } > android/key.properties
+  echo "   using the project's permanent signing key"
 else
-  echo "   no keystore secret: release is signed with the debug key (installable, not for Play Store)"
+  echo "   no keystore: release is signed with the debug key"
 fi
 
 echo ">> [6/7] Static analysis"
 flutter analyze --no-fatal-infos --no-fatal-warnings
 
 echo ">> [7/7] Building"
-# نسخة لكل معالج = حجم أصغر بكثير وتثبيت وتشغيل أسرع
-flutter build apk --release --split-per-abi --build-number="$BUILD_NUMBER" "${DEFINES[@]}"
-flutter build appbundle --release --build-number="$BUILD_NUMBER" "${DEFINES[@]}"
+# نسخة عالمية تعمل على كل الهواتف (32 و 64 بت)، مع تشويش الكود (Obfuscation) لحمايته
+PROTECT=(--obfuscate --split-debug-info=build/symbols)
+flutter build apk --release "${PROTECT[@]}" --build-number="$BUILD_NUMBER" "${DEFINES[@]}"
+flutter build appbundle --release "${PROTECT[@]}" --build-number="$BUILD_NUMBER" "${DEFINES[@]}"
 
 mkdir -p dist
-cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/almajhool-app.apk
-cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist/almajhool-app-old-phones.apk
+cp build/app/outputs/flutter-apk/app-release.apk dist/almajhool-app.apk
 cp build/app/outputs/bundle/release/app-release.aab dist/almajhool-app.aab
 ls -la dist
 echo ">> BUILD OK"

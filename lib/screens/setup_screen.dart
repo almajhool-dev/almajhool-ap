@@ -54,7 +54,7 @@ class _SetupScreenState extends State<SetupScreen> {
                 controller: _url,
                 textDirection: TextDirection.ltr,
                 keyboardType: TextInputType.url,
-                decoration: const InputDecoration(labelText: 'Supabase URL', hintText: 'https://xxxx.supabase.co'),
+                decoration: const InputDecoration(labelText: 'رابط الخادم', hintText: 'https://xxxx.supabase.co'),
                 validator: (v) {
                   final u = (v ?? '').trim();
                   return RegExp(r'^https://[A-Za-z0-9.-]+(/)?$').hasMatch(u)
@@ -67,7 +67,7 @@ class _SetupScreenState extends State<SetupScreen> {
                 controller: _key,
                 textDirection: TextDirection.ltr,
                 maxLines: 3,
-                decoration: const InputDecoration(labelText: 'Anon public key'),
+                decoration: const InputDecoration(labelText: 'مفتاح الخادم العام'),
                 validator: (v) {
                   final k = (v ?? '').trim();
                   final ok = (k.startsWith('eyJ') || k.startsWith('sb_publishable_')) &&

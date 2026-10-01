@@ -27,3 +27,6 @@ key.properties
 
 dist/
 ci.log
+
+# مفتاح التوقيع الثابت للتطبيق (ضروري لتحديث التطبيق فوق النسخة السابقة)
+!signing/almajhool.jks

@@ -88,8 +88,21 @@ class SessionProvider extends ChangeNotifier {
           table: 'profiles',
           filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'id', value: uid),
           callback: (p) {
-            profile = Profile.fromMap(p.newRecord);
-            notifyListeners();
+            final next = Profile.fromMap(p.newRecord);
+            final prev = profile;
+            profile = next;
+            // لا نعيد بناء الواجهة لتغيّرات صغيرة (آخر ظهور، نقاط داخل نفس المستوى) — أسلس وأخف
+            final significant = prev == null ||
+                prev.displayName != next.displayName ||
+                prev.username != next.username ||
+                prev.avatarUrl != next.avatarUrl ||
+                prev.bio != next.bio ||
+                prev.isAdmin != next.isAdmin ||
+                prev.isBanned != next.isBanned ||
+                prev.verified != next.verified ||
+                prev.notificationsEnabled != next.notificationsEnabled ||
+                prev.level != next.level;
+            if (significant) notifyListeners();
           },
         )
         .subscribe();
