@@ -49,18 +49,6 @@ class AppConfig {
     if (_remoteIce != null && _remoteIce!.isNotEmpty) {
       list.addAll(_remoteIce!);
     }
-    // خادم الوسيط الخاص بالتطبيق (Metered) — تم اختباره ويعمل عبر UDP و TCP
-    // (إذا وُجد خادم في config.json فهو يحل محله)
-    if (_remoteIce == null || _remoteIce!.isEmpty) list.add({
-      'urls': [
-        'turn:global.relay.metered.ca:80',
-        'turn:global.relay.metered.ca:80?transport=tcp',
-        'turn:global.relay.metered.ca:443',
-        'turns:global.relay.metered.ca:443?transport=tcp',
-      ],
-      'username': 'b6ba53a1ce65d87ca79ec24b',
-      'credential': 'lee1tKAVUEX33OWG',
-    });
     return list;
   }
 

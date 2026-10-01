@@ -1,16 +1,4 @@
 {
   "supabase_url": "https://smjkxsqvdpywumghvnfv.supabase.co",
-  "supabase_key": "sb_publishable_xqWRKqnOIKKqKgPJrdP5TA_GA7PCSiV",
-  "ice_servers": [
-    {
-      "urls": [
-        "turn:global.relay.metered.ca:80",
-        "turn:global.relay.metered.ca:80?transport=tcp",
-        "turn:global.relay.metered.ca:443",
-        "turns:global.relay.metered.ca:443?transport=tcp"
-      ],
-      "username": "b6ba53a1ce65d87ca79ec24b",
-      "credential": "lee1tKAVUEX33OWG"
-    }
-  ]
+  "supabase_key": "sb_publishable_xqWRKqnOIKKqKgPJrdP5TA_GA7PCSiV"
 }

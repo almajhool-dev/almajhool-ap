@@ -101,6 +101,11 @@ class AdminRepository {
   Future<void> clearWarnings(String userId) =>
       supa.rpc('admin_clear_warnings', params: {'target': userId});
 
+  Future<bool> turnConfigured() async => (await supa.rpc('admin_turn_status')) == true;
+
+  Future<void> setTurn(String user, String pass) =>
+      supa.rpc('admin_set_turn', params: {'turn_user': user, 'turn_pass': pass});
+
   Future<void> setVerified(String userId, bool verified) =>
       supa.rpc('admin_set_verified', params: {'target': userId, 'verified': verified});
 

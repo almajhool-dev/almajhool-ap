@@ -155,6 +155,8 @@ class _OverviewState extends State<_Overview> {
             ),
           ),
           const SizedBox(height: 12),
+          const _TurnSettingsCard(),
+          const SizedBox(height: 12),
           if (s == null)
             const Padding(padding: EdgeInsets.all(40), child: Center(child: CircularProgressIndicator()))
           else
@@ -696,6 +698,102 @@ class _PostsState extends State<_Posts> {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+
+/// إعداد خادم المكالمات الوسيط — يُحفظ سرًا في قاعدة البيانات.
+class _TurnSettingsCard extends StatefulWidget {
+  const _TurnSettingsCard();
+  @override
+  State<_TurnSettingsCard> createState() => _TurnSettingsCardState();
+}
+
+class _TurnSettingsCardState extends State<_TurnSettingsCard> {
+  final _user = TextEditingController();
+  final _pass = TextEditingController();
+  bool? _configured;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _admin.turnConfigured().then((v) {
+      if (mounted) setState(() => _configured = v);
+    }).catchError((_) {
+      if (mounted) setState(() => _configured = false);
+    });
+  }
+
+  Future<void> _save() async {
+    setState(() => _busy = true);
+    try {
+      await _admin.setTurn(_user.text.trim(), _pass.text.trim());
+      _user.clear();
+      _pass.clear();
+      if (mounted) {
+        setState(() => _configured = true);
+        showSnack(context, 'تم حفظ خادم المكالمات بشكل سري ✅');
+      }
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.call_rounded),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text('خادم المكالمات (الوسيط)', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                ),
+                if (_configured != null)
+                  Chip(
+                    label: Text(_configured! ? 'مفعّل ✅' : 'غير مضبوط'),
+                    visualDensity: VisualDensity.compact,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'الصق بيانات Metered هنا. تُحفظ سرًا في قاعدة البيانات ولا تظهر لأي مستخدم، '
+              'ولا يحصل عليها إلا المستخدم المسجّل لحظة المكالمة.',
+              style: TextStyle(fontSize: 12.5),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _user,
+              textDirection: TextDirection.ltr,
+              decoration: const InputDecoration(labelText: 'Username', isDense: true),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _pass,
+              textDirection: TextDirection.ltr,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Password', isDense: true),
+            ),
+            const SizedBox(height: 10),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(44)),
+              onPressed: _busy ? null : _save,
+              icon: const Icon(Icons.lock_rounded),
+              label: const Text('حفظ بشكل سري'),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -1423,5 +1423,57 @@ begin
   update reports set status = 'resolved' where id = rid;
 end $$;
 
+
+-- =====================================================================
+--  الإصدار 4: إعدادات سرية (بيانات الخادم الوسيط للمكالمات)
+--  محفوظة داخل قاعدة البيانات فقط — لا تظهر في التطبيق ولا في GitHub
+-- =====================================================================
+
+create table if not exists public.private_settings (
+  key text primary key,
+  value text not null,
+  updated_at timestamptz not null default now()
+);
+alter table public.private_settings enable row level security;
+-- لا توجد أي سياسة قراءة: الجدول مغلق تمامًا إلا عبر الدوال أدناه
+
+create or replace function public.admin_set_turn(turn_user text, turn_pass text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is not null and not is_admin() then raise exception 'للمدير فقط'; end if;
+  if char_length(coalesce(turn_user, '')) < 5 or char_length(coalesce(turn_pass, '')) < 5 then
+    raise exception 'بيانات غير صالحة';
+  end if;
+  insert into private_settings(key, value) values ('turn_user', trim(turn_user))
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  insert into private_settings(key, value) values ('turn_pass', trim(turn_pass))
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+end $$;
+
+create or replace function public.admin_turn_status() returns boolean
+language sql stable security definer set search_path = public as $$
+  select is_admin() and exists(select 1 from private_settings where key = 'turn_user');
+$$;
+
+-- يُعطى فقط لمستخدم مسجّل وغير محظور، ولحظة المكالمة فقط
+create or replace function public.get_ice_servers() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare u text; p text;
+begin
+  if auth.uid() is null or is_banned() then return '[]'::jsonb; end if;
+  select value into u from private_settings where key = 'turn_user';
+  select value into p from private_settings where key = 'turn_pass';
+  if u is null or p is null then return '[]'::jsonb; end if;
+  return jsonb_build_array(jsonb_build_object(
+    'urls', jsonb_build_array(
+      'turn:global.relay.metered.ca:80',
+      'turn:global.relay.metered.ca:80?transport=tcp',
+      'turn:global.relay.metered.ca:443',
+      'turns:global.relay.metered.ca:443?transport=tcp'),
+    'username', u,
+    'credential', p));
+end $$;
+revoke execute on function public.get_ice_servers() from anon;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

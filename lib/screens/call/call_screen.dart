@@ -177,6 +177,23 @@ class _CallScreenState extends State<CallScreen> {
   bool _relayTried = false;
   Timer? _connectWatch;
   String _diag = ''; // تشخيص: أنواع العناوين المتاحة
+  List<Map<String, dynamic>> _iceAll = const [];
+
+  static List<Map<String, dynamic>>? _iceCache;
+  static DateTime? _iceCacheAt;
+
+  Future<List<Map<String, dynamic>>> _privateIce() async {
+    if (_iceCache != null && DateTime.now().difference(_iceCacheAt!).inMinutes < 30) return _iceCache!;
+    try {
+      final r = await supa.rpc('get_ice_servers').timeout(const Duration(seconds: 5));
+      final list = (r as List).cast<Map>().map((e) => e.cast<String, dynamic>()).toList();
+      _iceCache = list;
+      _iceCacheAt = DateTime.now();
+      return list;
+    } catch (_) {
+      return _iceCache ?? const [];
+    }
+  }
 
   String _status = '';
   bool _connected = false;
@@ -217,8 +234,11 @@ class _CallScreenState extends State<CallScreen> {
       _local.srcObject = _stream;
       await Helper.setSpeakerphoneOn(_speaker);
 
+      // بيانات الخادم الوسيط تُجلب من قاعدة البيانات للمستخدم المسجّل فقط (غير مخزنة في التطبيق)
+      final ice = [...AppConfig.iceServers, ...await _privateIce()];
+      _iceAll = ice;
       _pc = await createPeerConnection({
-        'iceServers': AppConfig.iceServers,
+        'iceServers': ice,
         'sdpSemantics': 'unified-plan',
       });
       for (final t in _stream!.getTracks()) {
@@ -318,7 +338,7 @@ class _CallScreenState extends State<CallScreen> {
   Future<void> _sendOffer({bool relayOnly = false}) async {
     if (relayOnly) {
       await _pc!.setConfiguration({
-        'iceServers': AppConfig.iceServers,
+        'iceServers': _iceAll,
         'iceTransportPolicy': 'relay',
         'sdpSemantics': 'unified-plan',
       });
@@ -369,7 +389,7 @@ class _CallScreenState extends State<CallScreen> {
     if (sdp != null && sdp.contains('typ relay') && !sdp.contains('typ host')) {
       // المتصل انتقل للمسار الوسيط: نفعل مثله
       await _pc!.setConfiguration({
-        'iceServers': AppConfig.iceServers,
+        'iceServers': _iceAll,
         'iceTransportPolicy': 'relay',
         'sdpSemantics': 'unified-plan',
       });
