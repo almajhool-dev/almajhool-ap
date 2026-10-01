@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../services/sound_service.dart';
 import '../models/models.dart';
 import '../repositories/chat_repository.dart';
 import '../repositories/social_repositories.dart';
@@ -336,12 +337,13 @@ class ChatHub extends ChangeNotifier with WidgetsBindingObserver {
     refreshConversationsSoon();
     if (m.senderId == myId || m.isSystem) return;
     chats.markAllDelivered().catchError((_) {});
-    if (m.conversationId == openConversationId) return;
     ConversationSummary? conv;
     for (final c in conversations) {
       if (c.id == m.conversationId) conv = c;
     }
     if (conv?.muted ?? false) return;
+    SoundService.messageReceived();
+    if (m.conversationId == openConversationId) return;
     LocalNotifications.show(conv?.title ?? 'رسالة جديدة', m.previewText);
   }
 

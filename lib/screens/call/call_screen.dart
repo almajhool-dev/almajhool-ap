@@ -10,6 +10,7 @@ import '../../core/theme.dart';
 import '../../repositories/chat_repository.dart';
 import '../../services/call_service.dart';
 import '../../services/core_services.dart';
+import '../../services/sound_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 
@@ -44,6 +45,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
     super.initState();
     CallService.instance.inCall = true;
     _vibe = Timer.periodic(const Duration(milliseconds: 1500), (_) => HapticFeedback.vibrate());
+    SoundService.startRingtone();
     _timeout = Timer(const Duration(seconds: 45), _close);
     // إذا ألغى المتصل قبل الرد
     _poll = Timer.periodic(const Duration(milliseconds: 1500), (_) async {
@@ -60,6 +62,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
     _vibe?.cancel();
     _timeout?.cancel();
     _poll?.cancel();
+    SoundService.stopRingtone();
     super.dispose();
   }
 
@@ -67,6 +70,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
     if (_closed) return;
     _closed = true;
     _poll?.cancel();
+    SoundService.stopRingtone();
     CallService.instance.inCall = false;
     if (mounted) Navigator.of(context).pop();
   }
@@ -79,6 +83,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
 
   Future<void> _accept() async {
     _vibe?.cancel();
+    await SoundService.stopRingtone();
     _timeout?.cancel();
     _poll?.cancel();
     _closed = true;
@@ -293,6 +298,7 @@ class _CallScreenState extends State<CallScreen> {
         unawaited(CallService.sendOnce(CallService.inboxTopic(widget.peerId), 'invite', widget.inviteePayload!)
             .catchError((_) {}));
         _setStatus('يرن...');
+        unawaited(SoundService.startRingback(speaker: _speaker));
         _ringTimeout = Timer(const Duration(seconds: 45), () {
           if (!_connected) _end(_accepted ? 'تعذّر الاتصال، حاول مجددًا' : 'لا يوجد رد');
         });
@@ -379,6 +385,7 @@ class _CallScreenState extends State<CallScreen> {
       if (widget.outgoing) {
         if (st == 'accepted' && !_accepted) {
           _accepted = true;
+          await _stopRingback();
           _ringTimeout?.cancel();
           _ringTimeout = Timer(const Duration(seconds: 45), () {
             if (!_connected) _end('تعذّر الاتصال، حاول مجددًا');
@@ -515,8 +522,17 @@ class _CallScreenState extends State<CallScreen> {
     return 'محلي ${mark('host')} · إنترنت ${mark('srflx')} · وسيط ${mark('relay')}';
   }
 
+  Future<void> _stopRingback() async {
+    if (!widget.outgoing) return;
+    await SoundService.stopRingback();
+    try {
+      await Helper.setSpeakerphoneOn(_speaker);
+    } catch (_) {}
+  }
+
   void _onConnected() {
     if (_connected) return;
+    unawaited(_stopRingback());
     _connectWatch?.cancel();
     _connected = true;
     _ringTimeout?.cancel();
@@ -538,6 +554,7 @@ class _CallScreenState extends State<CallScreen> {
   Future<void> _end(String reason) async {
     if (_ended) return;
     _ended = true;
+    SoundService.stopRingback();
     _poll?.cancel();
     _ticker?.cancel();
     _ringTimeout?.cancel();
@@ -581,6 +598,7 @@ class _CallScreenState extends State<CallScreen> {
     _ticker?.cancel();
     _ringTimeout?.cancel();
     _poll?.cancel();
+    SoundService.stopRingback();
     if (!_ended) {
       _ended = true;
       unawaited(CallSignal.update(widget.callId, status: 'ended').catchError((_) {}));

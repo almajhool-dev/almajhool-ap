@@ -7,6 +7,7 @@ import '../../models/models.dart';
 import '../../providers/providers.dart';
 import '../../repositories/user_repositories.dart';
 import '../../services/local_notifications.dart';
+import '../../services/sound_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../admin/admin_screen.dart';
@@ -94,6 +95,35 @@ class _SettingsTabState extends State<SettingsTab> {
               onSelectionChanged: (s) => theme.set(s.first),
             ),
           ),
+          _section('الأصوات'),
+          ListTile(
+            leading: const Icon(Icons.music_note_rounded),
+            title: const Text('نغمة الرنين'),
+            subtitle: Text(SoundService.ringtoneName),
+            trailing: const Icon(Icons.chevron_left),
+            onTap: _pickRingtone,
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.ring_volume_rounded),
+            title: const Text('أصوات المكالمات'),
+            subtitle: const Text('نغمة الرنين ونغمة الانتظار عند الاتصال'),
+            value: SoundService.callSounds,
+            onChanged: (v) async {
+              await SoundService.setCallSounds(v);
+              setState(() {});
+            },
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.volume_up_rounded),
+            title: const Text('أصوات الرسائل'),
+            subtitle: const Text('صوت عند إرسال واستلام الرسائل والبصمات والصور'),
+            value: SoundService.messageSounds,
+            onChanged: (v) async {
+              await SoundService.setMessageSounds(v);
+              setState(() {});
+              if (v) SoundService.messageReceived();
+            },
+          ),
           _section('الإشعارات'),
           SwitchListTile(
             secondary: const Icon(Icons.notifications_active_outlined),
@@ -169,6 +199,49 @@ class _SettingsTabState extends State<SettingsTab> {
         padding: const EdgeInsets.fromLTRB(16, 20, 16, 6),
         child: Text(t, style: TextStyle(fontWeight: FontWeight.w800, color: Theme.of(context).colorScheme.primary)),
       );
+
+  Future<void> _pickRingtone() async {
+    var selected = SoundService.ringtoneId;
+    final r = await showDialog<String>(
+      context: context,
+      builder: (c) => StatefulBuilder(
+        builder: (c, set) => AlertDialog(
+          title: const Text('اختر نغمة الرنين'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final t in SoundService.ringtones)
+                RadioListTile<String>(
+                  value: t.id,
+                  groupValue: selected,
+                  title: Text(t.name),
+                  secondary: const Icon(Icons.play_circle_outline_rounded),
+                  onChanged: (v) {
+                    set(() => selected = v!);
+                    SoundService.preview(v!);
+                  },
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c), child: const Text('إلغاء')),
+            FilledButton(
+              style: FilledButton.styleFrom(minimumSize: const Size(80, 40)),
+              onPressed: () => Navigator.pop(c, selected),
+              child: const Text('حفظ'),
+            ),
+          ],
+        ),
+      ),
+    );
+    await SoundService.stopPreview();
+    if (r == null) return;
+    await SoundService.setRingtone(r);
+    if (mounted) {
+      setState(() {});
+      showSnack(context, 'تم اختيار نغمة «${SoundService.ringtoneName}»');
+    }
+  }
 
   Future<void> _recoveryCode() async {
     final repo = AuthRepository();

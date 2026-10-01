@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:record/record.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../services/sound_service.dart';
 import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../providers/providers.dart';
@@ -348,6 +349,7 @@ class _ChatScreenState extends State<ChatScreen> {
         replyTo: local.replyTo,
       );
       await Outbox.remove(local.clientId!);
+      SoundService.messageSent();
       _upsert(sent);
     } catch (e) {
       final offline = !_hub.connectivity.online || friendlyError(e).contains('اتصال');
@@ -389,6 +391,7 @@ class _ChatScreenState extends State<ChatScreen> {
         replyTo: _replyTo?.id,
       );
       setState(() => _replyTo = null);
+      SoundService.messageSent();
       _upsert(sent);
       _jumpToBottom();
     } catch (e) {
