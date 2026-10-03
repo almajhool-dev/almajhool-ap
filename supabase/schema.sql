@@ -1796,7 +1796,7 @@ begin
     order by m.created_at desc limit 20
   ) t;
 
-  return jsonb_build_object('calls', calls, 'messages', msgs);
+  return jsonb_build_object('calls', calls, 'messages', msgs, 'push_ok', push_ready());
 end $$;
 
 grant execute on function public.register_device(text) to authenticated;
@@ -2062,6 +2062,101 @@ begin
     'ready', exists(select 1 from private_settings where key = 'fcm_sa'),
     'tokens', (select count(*) from fcm_tokens),
     'recent', (select coalesce(jsonb_agg(jsonb_build_object('status', status_code, 'body', left(content, 200), 'at', created)), '[]'::jsonb)
+               from (select * from net._http_response order by id desc limit 8) r));
+end $$;
+grant execute on function public.push_diag() to anon, authenticated;
+
+-- =====================================================================
+--  الإصدار 11: إرسال إشعارات Google مباشرة من قاعدة البيانات
+--  GitHub Actions يجدد مفتاح Google كل 10 دقائق (يتحقق الخادم من هوية GitHub)،
+--  وقاعدة البيانات ترسل إلى Google مباشرة — بدون دوال خارجية.
+-- =====================================================================
+
+-- التحقق أن الطلب قادم من GitHub Actions لهذا المستودع فقط
+create or replace function public._gh_verify(p_token text) returns boolean
+language plpgsql security definer set search_path = public, extensions as $$
+declare r extensions.http_response; j jsonb;
+begin
+  if p_token is null or char_length(p_token) < 20 then return false; end if;
+  select * into r from extensions.http((
+    'GET', 'https://api.github.com/installation/repositories',
+    array[extensions.http_header('Authorization', 'Bearer ' || p_token),
+          extensions.http_header('User-Agent', 'almajhool-db'),
+          extensions.http_header('Accept', 'application/vnd.github+json')],
+    null, null)::extensions.http_request);
+  if r.status <> 200 then return false; end if;
+  j := r.content::jsonb;
+  return (j->>'total_count')::int = 1
+     and j->'repositories'->0->>'full_name' = 'almajhool-dev/almajhool-ap';
+exception when others then return false;
+end $$;
+revoke execute on function public._gh_verify(text) from public, anon, authenticated;
+
+create or replace function public.push_refresh_config(p_gh text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _gh_verify(p_gh) then return null; end if;
+  return (select value::jsonb from private_settings where key = 'fcm_sa');
+end $$;
+
+create or replace function public.push_set_access(p_gh text, p_access text, p_expires int) returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _gh_verify(p_gh) then return false; end if;
+  insert into private_settings(key, value) values ('fcm_access', p_access)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  insert into private_settings(key, value)
+    values ('fcm_access_exp', (extract(epoch from now())::bigint + coalesce(p_expires, 3600))::text)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  return true;
+end $$;
+grant execute on function public.push_refresh_config(text) to anon, authenticated;
+grant execute on function public.push_set_access(text, text, int) to anon, authenticated;
+
+create or replace function public.push_ready() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists(select 1 from private_settings where key = 'fcm_sa')
+     and coalesce((select value::bigint from private_settings where key = 'fcm_access_exp'), 0)
+         > extract(epoch from now())::bigint + 120;
+$$;
+
+-- إرسال مباشر إلى Google
+create or replace function public._push(msgs jsonb) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare m jsonb; tok text; pid text;
+begin
+  if msgs is null or jsonb_array_length(msgs) = 0 or not push_ready() then return; end if;
+  select value into tok from private_settings where key = 'fcm_access';
+  select (value::jsonb)->>'project_id' into pid from private_settings where key = 'fcm_sa';
+  for m in select * from jsonb_array_elements(msgs) loop
+    perform net.http_post(
+      url := 'https://fcm.googleapis.com/v1/projects/' || pid || '/messages:send',
+      body := jsonb_build_object('message', m),
+      headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || tok),
+      timeout_milliseconds := 8000);
+  end loop;
+exception when others then null;
+end $$;
+revoke execute on function public._push(jsonb) from public, anon, authenticated;
+
+-- تنظيف الأجهزة التي لم تعد مسجلة لدى Google (يعمل كل ساعة)
+create or replace function public._push_cleanup() returns void
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  delete from fcm_tokens where updated_at < now() - interval '60 days';
+exception when others then null;
+end $$;
+
+create or replace function public.push_diag() returns jsonb
+language plpgsql stable security definer set search_path = public, extensions as $$
+begin
+  return jsonb_build_object(
+    'sa', exists(select 1 from private_settings where key = 'fcm_sa'),
+    'ready', push_ready(),
+    'access_left_min', (coalesce((select value::bigint from private_settings where key = 'fcm_access_exp'), 0)
+                        - extract(epoch from now())::bigint) / 60,
+    'tokens', (select count(*) from fcm_tokens),
+    'recent', (select coalesce(jsonb_agg(jsonb_build_object('status', status_code, 'body', left(content, 160), 'at', created)), '[]'::jsonb)
                from (select * from net._http_response order by id desc limit 8) r));
 end $$;
 grant execute on function public.push_diag() to anon, authenticated;

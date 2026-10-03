@@ -316,7 +316,7 @@ class _BgWorker {
       client!
           .rpc('bg_report', params: {
             'p_token': token,
-            'p_info': 'b${UpdateService.currentBuild} vis=$appVisible poll=$nPoll ping=$nPing msg=$nMsg shown=$nShown call=$nCall $lastShowErr',
+            'p_info': 'b${UpdateService.currentBuild} g=${prefs.getBool(fcmOkKey)} vis=$appVisible poll=$nPoll ping=$nPing msg=$nMsg shown=$nShown call=$nCall $lastShowErr',
             'p_error': error,
           })
           .catchError((_) => null);
@@ -467,12 +467,15 @@ class _BgWorker {
     }
     nPoll++;
 
+    // إذا كانت إشعارات Google شغالة لهذا الجهاز، نتركها هي تعرض (حتى لا يتكرر الإشعار)
+    final viaGoogle = data['push_ok'] == true && (prefs.getBool(fcmOkKey) ?? false);
+
     // ---- المكالمات ----
     final calls = (data['calls'] as List? ?? const []).cast<Map>();
     nCall += calls.isEmpty ? 0 : 1;
     final ids = calls.map((c) => c['id'] as String).toSet();
     if (ringingCall != null && !ids.contains(ringingCall)) await _stopRinging();
-    if (calls.isNotEmpty && ringingCall == null && !appVisible) {
+    if (calls.isNotEmpty && ringingCall == null && !appVisible && !viaGoogle) {
       final c = calls.first;
       final id = c['id'] as String;
       if (!notifiedCalls.contains(id)) {
@@ -487,7 +490,7 @@ class _BgWorker {
     final notifyOn = prefs.getBool('notifications_on') ?? true;
     if (msgs.isNotEmpty) {
       await prefs.setString(BackgroundBridge._kSince, msgs.last['created_at'] as String);
-      if (!appVisible && notifyOn) {
+      if (!appVisible && notifyOn && !viaGoogle) {
         for (final m in msgs.length > 5 ? msgs.sublist(msgs.length - 5) : msgs) {
           await _showMessage(m);
         }

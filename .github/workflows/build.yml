@@ -8,8 +8,8 @@ on:
       - '.github/workflows/diagnostics.yml'
       - '**.md'
       - 'admin/**'
-      - 'supabase/functions/**'
-      - '.github/workflows/functions.yml'
+      - '.github/workflows/push-refresh.yml'
+      - 'tool/push_refresh.py'
   workflow_dispatch:
 
 permissions:

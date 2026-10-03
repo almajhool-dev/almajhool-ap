@@ -20,6 +20,9 @@ const firebaseOptions = FirebaseOptions(
 );
 
 const msgsChannel = 'almajhool_msgs';
+
+/// يُقرأ من خدمة الخلفية: هذا الجهاز مسجّل لدى Google.
+const fcmOkKey = 'fcm_ok';
 const _callNotifId = 9100;
 
 /// إشعارات Google: تصل حتى لو التطبيق مغلق تمامًا (مثل واتساب).
@@ -67,6 +70,7 @@ class PushService {
       if (t == null) throw Exception('no token');
       _token = t;
       await supa.rpc('register_fcm', params: {'p_token': t});
+      await CacheService.setBool(fcmOkKey, true);
       _refreshSub ??= m.onTokenRefresh.listen((nt) {
         _token = nt;
         supa.rpc('register_fcm', params: {'p_token': nt}).catchError((_) => null);
@@ -90,6 +94,9 @@ class PushService {
 
   static Future<void> stop() async {
     active = false;
+    try {
+      await CacheService.setBool(fcmOkKey, false);
+    } catch (_) {}
     final t = _token;
     if (t != null) {
       try {

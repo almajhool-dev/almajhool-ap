@@ -90,14 +90,9 @@ class _GateState extends State<Gate> {
           final uid = myId;
           if (uid != null) {
             CallService.instance.start(uid, name: session.profile?.displayName, avatar: session.profile?.avatarUrl);
-            PushService.start().then((ok) {
-              // إشعارات Google تعمل: لا حاجة لخدمة الخلفية الدائمة؛ وإلا نستخدمها كبديل
-              if (ok) {
-                BackgroundBridge.stop();
-              } else {
-                BackgroundBridge.start();
-              }
-            });
+            // إشعارات Google (الأساس) + خدمة الخلفية (احتياط تلقائي إذا تعطلت Google)
+            PushService.start();
+            BackgroundBridge.start();
           }
         } else if (session.status == SessionStatus.signedOut) {
           hub.stop();
