@@ -298,19 +298,21 @@ class _BgWorker {
   bool get appVisible => DateTime.now().difference(lastFg).inSeconds < 9;
 
   DateTime _lastReport = DateTime(2000);
+  int nPoll = 0, nMsg = 0, nShown = 0, nCall = 0, nPing = 0;
+  String lastShowErr = '';
 
-  void _alive({bool poll = false, String? error}) {
+  void _alive({bool poll = false, String? error, bool force = false}) {
     try {
       service.invoke('alive', {'poll': poll, if (error != null) 'error': error});
     } catch (_) {}
     // تقرير للخادم: عند الخطأ فورًا، وإلا كل 10 دقائق
     final now = DateTime.now();
-    if (client != null && token.isNotEmpty && (error != null || now.difference(_lastReport).inMinutes >= 10)) {
+    if (client != null && token.isNotEmpty && (error != null || force || now.difference(_lastReport).inMinutes >= 10)) {
       _lastReport = now;
       client!
           .rpc('bg_report', params: {
             'p_token': token,
-            'p_info': 'b${UpdateService.currentBuild} bg ok vis=$appVisible',
+            'p_info': 'b${UpdateService.currentBuild} vis=$appVisible poll=$nPoll ping=$nPing msg=$nMsg shown=$nShown call=$nCall $lastShowErr',
             'p_error': error,
           })
           .catchError((_) => null);
@@ -412,7 +414,10 @@ class _BgWorker {
   void _subscribe() {
     channel = client!
         .channel('bg-$token')
-        .onBroadcast(event: 'ping', callback: (_) => poll())
+        .onBroadcast(event: 'ping', callback: (_) {
+          nPing++;
+          poll();
+        })
         .subscribe((status, _) {
       if (status == RealtimeSubscribeStatus.subscribed) {
         poll(); // بعد كل إعادة اتصال نتأكد ما فاتنا شيء
@@ -456,10 +461,11 @@ class _BgWorker {
       await service.stopSelf();
       return;
     }
-    _alive(poll: true);
+    nPoll++;
 
     // ---- المكالمات ----
     final calls = (data['calls'] as List? ?? const []).cast<Map>();
+    nCall += calls.isEmpty ? 0 : 1;
     final ids = calls.map((c) => c['id'] as String).toSet();
     if (ringingCall != null && !ids.contains(ringingCall)) await _stopRinging();
     if (calls.isNotEmpty && ringingCall == null && !appVisible) {
@@ -473,6 +479,7 @@ class _BgWorker {
 
     // ---- الرسائل ----
     final msgs = (data['messages'] as List? ?? const []).cast<Map>();
+    nMsg += msgs.length;
     final notifyOn = prefs.getBool('notifications_on') ?? true;
     if (msgs.isNotEmpty) {
       await prefs.setString(BackgroundBridge._kSince, msgs.last['created_at'] as String);
@@ -482,6 +489,7 @@ class _BgWorker {
         }
       }
     }
+    _alive(poll: true, force: msgs.isNotEmpty || calls.isNotEmpty);
   }
 
   Future<void> _ring(String callId, String name, bool video) async {
@@ -538,6 +546,15 @@ class _BgWorker {
   }
 
   Future<void> _showMessage(Map m) async {
+    try {
+      await _showMessage0(m);
+      nShown++;
+    } catch (e) {
+      lastShowErr = 'show: $e';
+    }
+  }
+
+  Future<void> _showMessage0(Map m) async {
     final title = (m['title'] ?? 'رسالة جديدة') as String;
     final body = (m['body'] ?? '') as String;
     final conv = (m['conversation_id'] ?? '') as String;
