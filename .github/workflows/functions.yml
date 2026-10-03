@@ -8,6 +8,9 @@ on:
       - 'supabase/functions/**'
       - '.github/workflows/functions.yml'
 
+permissions:
+  contents: write
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -20,9 +23,21 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
-          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
-            echo "::warning::SUPABASE_ACCESS_TOKEN secret is not set yet"
-            exit 0
-          fi
-          supabase functions deploy push --project-ref smjkxsqvdpywumghvnfv --no-verify-jwt --use-api
-          curl -s https://smjkxsqvdpywumghvnfv.supabase.co/functions/v1/push
+          set -o pipefail
+          {
+            if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then echo "missing SUPABASE_ACCESS_TOKEN"; exit 1; fi
+            echo "== projects visible to token"
+            supabase projects list || true
+            echo "== deploy"
+            supabase functions deploy push --project-ref smjkxsqvdpywumghvnfv --no-verify-jwt --use-api
+            echo "== check"
+            curl -s https://smjkxsqvdpywumghvnfv.supabase.co/functions/v1/push
+          } 2>&1 | tee /tmp/deploy.log
+      - name: Save log
+        if: always()
+        run: |
+          mkdir -p /tmp/out && cp /tmp/deploy.log /tmp/out/ 2>/dev/null || echo "no log" > /tmp/out/deploy.log
+          cd /tmp/out && git init -q && git checkout -q -b fn-logs
+          git config user.name almajhool-dev && git config user.email almajhool-dev@users.noreply.github.com
+          git add -A && git commit -qm "deploy log ${{ github.run_number }}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" fn-logs
