@@ -1844,5 +1844,49 @@ drop trigger if exists bg_on_call on public.call_sessions;
 create trigger bg_on_call after insert or update of status on public.call_sessions
   for each row execute function public._bg_on_call();
 
+-- =====================================================================
+--  الإصدار 9: تشخيص خدمة الخلفية (بدون أي بيانات شخصية)
+-- =====================================================================
+alter table public.device_tokens add column if not exists info text;
+alter table public.device_tokens add column if not exists last_error text;
+
+create table if not exists public.client_logs (
+  id bigint generated always as identity primary key,
+  at timestamptz not null default now(),
+  info text not null check (char_length(info) <= 600)
+);
+alter table public.client_logs enable row level security;
+
+create or replace function public.bg_report(p_token text, p_info text, p_error text) returns void
+language sql security definer set search_path = public as $$
+  update device_tokens set info = left(p_info, 300), last_error = left(p_error, 300), last_poll = now()
+  where token = p_token;
+$$;
+
+create or replace function public.client_log(p_info text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if (select count(*) from client_logs where at > now() - interval '1 minute') > 30 then return; end if;
+  insert into client_logs(info) values (left(coalesce(p_info, ''), 600));
+  delete from client_logs where id < (select max(id) - 300 from client_logs);
+end $$;
+
+-- ملخص للمطوّر: حالة الأجهزة بدون هوية أصحابها
+create or replace function public.bg_diag() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'devices', (select coalesce(jsonb_agg(jsonb_build_object(
+        'dev', left(md5(token), 6), 'created', created_at, 'last_poll', last_poll,
+        'info', info, 'error', last_error) order by last_poll desc), '[]'::jsonb)
+      from (select * from device_tokens order by last_poll desc limit 30) d),
+    'logs', (select coalesce(jsonb_agg(jsonb_build_object('at', at, 'info', info) order by id desc), '[]'::jsonb)
+      from (select * from client_logs order by id desc limit 40) l),
+    'now', now());
+$$;
+
+grant execute on function public.bg_report(text, text, text) to anon, authenticated;
+grant execute on function public.client_log(text) to anon, authenticated;
+grant execute on function public.bg_diag() to anon, authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
