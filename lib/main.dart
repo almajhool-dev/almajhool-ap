@@ -13,6 +13,7 @@ import 'services/background_service.dart';
 import 'services/call_service.dart';
 import 'services/core_services.dart';
 import 'services/local_notifications.dart';
+import 'services/update_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -44,6 +45,8 @@ class _RootAppState extends State<RootApp> {
       await Supabase.initialize(url: AppConfig.url, anonKey: AppConfig.anonKey);
       await LocalNotifications.init();
       await BackgroundBridge.configure();
+      Future.delayed(const Duration(seconds: 4),
+          () => UpdateService.autoCheck(() => CallService.instance.navigatorKey.currentContext));
       setState(() {
         _ready = true;
         _error = null;

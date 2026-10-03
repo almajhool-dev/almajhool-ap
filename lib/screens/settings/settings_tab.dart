@@ -9,6 +9,7 @@ import '../../repositories/user_repositories.dart';
 import '../../services/background_service.dart';
 import '../../services/local_notifications.dart';
 import '../../services/sound_service.dart';
+import '../../services/update_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../admin/admin_screen.dart';
@@ -174,12 +175,18 @@ class _SettingsTabState extends State<SettingsTab> {
             ),
           _section('حول'),
           ListTile(
+            leading: const Icon(Icons.system_update_rounded, color: Colors.blue),
+            title: const Text('التحقق من التحديثات'),
+            subtitle: Text('الإصدار الحالي ${UpdateService.currentVersion}'),
+            onTap: () => UpdateService.manualCheck(context),
+          ),
+          ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('عن التطبيق'),
             onTap: () => showAboutDialog(
               context: context,
               applicationName: AppConfig.appName,
-              applicationVersion: '1.0.0',
+              applicationVersion: UpdateService.currentVersion,
               applicationIcon: const BrandLogo(size: 48, showName: false),
               children: const [Text('تطبيق تواصل ومراسلة آمن وسريع.\n\nصُنع بواسطة المبرمج المجهول')],
             ),

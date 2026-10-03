@@ -42,6 +42,7 @@ def patch_manifest():
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.USE_FULL_SCREEN_INTENT",
         "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+        "android.permission.REQUEST_INSTALL_PACKAGES",
     ]
     block = ""
     for p in perms:
@@ -65,6 +66,30 @@ def patch_manifest():
             '    </application>',
             1,
         )
+    # التحديث من داخل التطبيق (ota_update)
+    if "OtaUpdateFileProvider" not in s:
+        s = s.replace(
+            "</application>",
+            '    <provider\n'
+            '            android:name="sk.fourq.otaupdate.OtaUpdateFileProvider"\n'
+            '            android:authorities="${applicationId}.ota_update_provider"\n'
+            '            android:exported="false"\n'
+            '            android:grantUriPermissions="true">\n'
+            '            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/filepaths"/>\n'
+            '        </provider>\n'
+            '        <receiver android:name="sk.fourq.otaupdate.InstallResultReceiver" android:exported="false">\n'
+            '            <intent-filter><action android:name="${applicationId}.ACTION_INSTALL_COMPLETE"/></intent-filter>\n'
+            '        </receiver>\n'
+            '    </application>',
+            1,
+        )
+    xml_dir = os.path.join(APP, "src", "main", "res", "xml")
+    os.makedirs(xml_dir, exist_ok=True)
+    write(os.path.join(xml_dir, "filepaths.xml"),
+          '<?xml version="1.0" encoding="utf-8"?>\n'
+          '<paths xmlns:android="http://schemas.android.com/apk/res/android">\n'
+          '    <files-path name="internal_apk_storage" path="ota_update/"/>\n'
+          '</paths>\n')
     # عرض شاشة المكالمة فوق قفل الشاشة
     if "showWhenLocked" not in s:
         s = s.replace('android:name=".MainActivity"',

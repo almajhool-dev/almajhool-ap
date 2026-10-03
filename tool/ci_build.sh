@@ -52,8 +52,9 @@ flutter analyze --no-fatal-infos --no-fatal-warnings
 echo ">> [7/7] Building"
 # نسخة عالمية تعمل على كل الهواتف (32 و 64 بت)، مع تشويش الكود (Obfuscation) لحمايته
 PROTECT=(--obfuscate --split-debug-info=build/symbols --target-platform android-arm,android-arm64)
-flutter build apk --release "${PROTECT[@]}" --build-number="$BUILD_NUMBER" "${DEFINES[@]}"
-flutter build appbundle --release "${PROTECT[@]}" --build-number="$BUILD_NUMBER" "${DEFINES[@]}"
+VER=(--build-number="$BUILD_NUMBER" --build-name="1.0.$BUILD_NUMBER" --dart-define=APP_BUILD="$BUILD_NUMBER")
+flutter build apk --release "${PROTECT[@]}" "${VER[@]}" "${DEFINES[@]}"
+flutter build appbundle --release "${PROTECT[@]}" "${VER[@]}" "${DEFINES[@]}"
 
 mkdir -p dist
 cp build/app/outputs/flutter-apk/app-release.apk dist/almajhool-app.apk
