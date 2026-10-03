@@ -16,6 +16,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/config.dart';
 import 'call_service.dart';
 import 'core_services.dart';
+import 'update_service.dart';
 
 /// خدمة تعمل في الخلفية حتى لو أُغلق التطبيق:
 /// تستقبل المكالمات (رنين + إشعار ملء الشاشة) والرسائل (إشعار مع صوت).
@@ -92,6 +93,7 @@ class BackgroundBridge {
       _configured = true;
     } catch (e) {
       lastError = 'configure: $e';
+      log('configure: $e');
       debugPrint('bg configure failed: $e');
     }
   }
@@ -118,8 +120,14 @@ class BackgroundBridge {
       active = true;
       _startHeartbeat();
       unawaited(_askPermissions());
+      // تقرير حالة بعد 25 ثانية (للتشخيص، بدون بيانات شخصية)
+      Future.delayed(const Duration(seconds: 25), () async {
+        final st = await status();
+        log('status $st err=$lastError');
+      });
     } catch (e) {
       lastError = 'start: $e';
+      log('start: $e');
       debugPrint('bg start failed: $e');
     }
   }
@@ -150,6 +158,13 @@ class BackgroundBridge {
     _beat();
     _heartbeat?.cancel();
     _heartbeat = Timer.periodic(const Duration(seconds: 4), (_) => _beat());
+  }
+
+  /// سجل تشخيص مختصر إلى الخادم.
+  static void log(String info) {
+    try {
+      supa.rpc('client_log', params: {'p_info': 'b${UpdateService.currentBuild} $info'}).catchError((_) => null);
+    } catch (_) {}
   }
 
   static int _beats = 0;
@@ -282,10 +297,24 @@ class _BgWorker {
 
   bool get appVisible => DateTime.now().difference(lastFg).inSeconds < 9;
 
+  DateTime _lastReport = DateTime(2000);
+
   void _alive({bool poll = false, String? error}) {
     try {
       service.invoke('alive', {'poll': poll, if (error != null) 'error': error});
     } catch (_) {}
+    // تقرير للخادم: عند الخطأ فورًا، وإلا كل 10 دقائق
+    final now = DateTime.now();
+    if (client != null && token.isNotEmpty && (error != null || now.difference(_lastReport).inMinutes >= 10)) {
+      _lastReport = now;
+      client!
+          .rpc('bg_report', params: {
+            'p_token': token,
+            'p_info': 'b${UpdateService.currentBuild} bg ok vis=$appVisible',
+            'p_error': error,
+          })
+          .catchError((_) => null);
+    }
   }
 
   Future<void> run() async {
@@ -293,10 +322,18 @@ class _BgWorker {
       await _run();
     } catch (e) {
       _alive(error: 'run: $e');
+      try {
+        if (url0.isNotEmpty) {
+          SupabaseClient(url0, key0).rpc('client_log', params: {'p_info': 'bg run: $e'}).catchError((_) => null);
+        }
+      } catch (_) {}
       // نحاول مجددًا بعد قليل بدل أن تموت الخدمة
       Future.delayed(const Duration(seconds: 20), run);
     }
   }
+
+  String url0 = '';
+  String key0 = '';
 
   Future<void> _run() async {
     prefs = await SharedPreferences.getInstance();
@@ -304,6 +341,8 @@ class _BgWorker {
     token = prefs.getString(BackgroundBridge._kToken) ?? '';
     final url = prefs.getString(BackgroundBridge._kUrl) ?? '';
     final key = prefs.getString(BackgroundBridge._kKey) ?? '';
+    url0 = url;
+    key0 = key;
     if (token.length < 32 || url.isEmpty || key.isEmpty) {
       _alive(error: 'no token');
       await service.stopSelf();
