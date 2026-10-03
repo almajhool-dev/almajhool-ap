@@ -2161,5 +2161,49 @@ begin
 end $$;
 grant execute on function public.push_diag() to anon, authenticated;
 
+-- =====================================================================
+--  الإصدار 12: تقديم ملف حساب الخدمة بأمان بدون لوحة التحكم
+--  الملف يُحفظ «معلّقًا»، ولا يُفعّل إلا بعد أن يثبت GitHub Actions أن Google تقبله فعلًا
+--  (أي لا يمكن تفعيله إلا بملف حقيقي صادر من مشروع almajhool-aefc9).
+-- =====================================================================
+create or replace function public.push_submit_sa(p_json text) returns text
+language plpgsql security definer set search_path = public as $$
+declare j jsonb;
+begin
+  if char_length(coalesce(p_json, '')) > 6000 then return 'too large'; end if;
+  begin j := p_json::jsonb; exception when others then return 'invalid json'; end;
+  if j->>'type' <> 'service_account' or j->>'project_id' <> 'almajhool-aefc9'
+     or j->>'private_key' is null or j->>'client_email' not like '%@almajhool-aefc9.iam.gserviceaccount.com' then
+    return 'rejected';
+  end if;
+  insert into private_settings(key, value) values ('fcm_sa_pending', j::text)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  return 'pending';
+end $$;
+grant execute on function public.push_submit_sa(text) to anon, authenticated;
+
+create or replace function public.push_refresh_config(p_gh text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _gh_verify(p_gh) then return null; end if;
+  return jsonb_build_object('verified', true,
+    'sa', (select value::jsonb from private_settings where key = 'fcm_sa'),
+    'pending', (select value::jsonb from private_settings where key = 'fcm_sa_pending'));
+end $$;
+
+create or replace function public.push_promote(p_gh text) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v text;
+begin
+  if not _gh_verify(p_gh) then return false; end if;
+  select value into v from private_settings where key = 'fcm_sa_pending';
+  if v is null then return false; end if;
+  insert into private_settings(key, value) values ('fcm_sa', v)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  delete from private_settings where key = 'fcm_sa_pending';
+  return true;
+end $$;
+grant execute on function public.push_promote(text) to anon, authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
