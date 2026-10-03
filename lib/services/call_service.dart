@@ -122,7 +122,7 @@ class CallService {
     }
     final name = (p['from_name'] ?? 'مستخدم') as String;
     final video = (p['video'] ?? false) as bool;
-    if (!BackgroundBridge.active || BackgroundBridge.appVisible) {
+    if (!BackgroundBridge.healthy || BackgroundBridge.appVisible) {
       LocalNotifications.show(video ? '📹 مكالمة فيديو واردة' : '📞 مكالمة واردة', name);
     }
     navigatorKey.currentState?.push(MaterialPageRoute(

@@ -346,7 +346,7 @@ class ChatHub extends ChangeNotifier with WidgetsBindingObserver {
     SoundService.messageReceived();
     if (m.conversationId == openConversationId) return;
     // التطبيق بالخلفية: خدمة الخلفية تُظهر الإشعار (حتى لا يتكرر)
-    if (BackgroundBridge.active && !BackgroundBridge.appVisible) return;
+    if (BackgroundBridge.healthy && !BackgroundBridge.appVisible) return;
     LocalNotifications.show(conv?.title ?? 'رسالة جديدة', m.previewText);
   }
 

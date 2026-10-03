@@ -75,7 +75,7 @@ class SoundService {
   static Future<void> startRingtone() async {
     if (!callSounds || _ringOn) return;
     // التطبيق بالخلفية: خدمة الخلفية هي التي ترن (حتى لا يتكرر الصوت)
-    if (BackgroundBridge.active && !BackgroundBridge.appVisible) return;
+    if (BackgroundBridge.healthy && !BackgroundBridge.appVisible) return;
     _ringOn = true;
     try {
       final p = _ringPlayer();

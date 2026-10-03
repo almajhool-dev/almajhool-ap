@@ -6,6 +6,7 @@ import '../../core/config.dart';
 import '../../models/models.dart';
 import '../../providers/providers.dart';
 import '../../repositories/user_repositories.dart';
+import '../../services/background_service.dart';
 import '../../services/local_notifications.dart';
 import '../../services/sound_service.dart';
 import '../../utils/helpers.dart';
@@ -125,6 +126,13 @@ class _SettingsTabState extends State<SettingsTab> {
             },
           ),
           _section('الإشعارات'),
+          ListTile(
+            leading: const Icon(Icons.health_and_safety_outlined, color: Colors.green),
+            title: const Text('فحص الإشعارات والمكالمات'),
+            subtitle: const Text('تأكد أن الرنين والإشعارات تصلك والتطبيق مغلق'),
+            trailing: const Icon(Icons.chevron_left),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationCheckScreen())),
+          ),
           SwitchListTile(
             secondary: const Icon(Icons.notifications_active_outlined),
             title: const Text('إشعارات الجهاز'),
@@ -366,6 +374,126 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                       ),
                   ],
                 ),
+    );
+  }
+}
+
+
+/// شاشة فحص: هل خدمة الخلفية شغالة؟ هل الصلاحيات مفعّلة؟ مع زر إشعار تجريبي.
+class NotificationCheckScreen extends StatefulWidget {
+  const NotificationCheckScreen({super.key});
+  @override
+  State<NotificationCheckScreen> createState() => _NotificationCheckScreenState();
+}
+
+class _NotificationCheckScreenState extends State<NotificationCheckScreen> {
+  Map<String, bool?> _s = const {};
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    final s = await BackgroundBridge.status();
+    if (mounted) {
+      setState(() {
+        _s = s;
+        _loading = false;
+      });
+    }
+  }
+
+  Widget _row(String title, bool? ok, {String? fix, VoidCallback? onFix}) {
+    return ListTile(
+      leading: Icon(
+        ok == true ? Icons.check_circle_rounded : ok == false ? Icons.cancel_rounded : Icons.help_outline_rounded,
+        color: ok == true ? Colors.green : ok == false ? Colors.redAccent : Colors.grey,
+      ),
+      title: Text(title),
+      trailing: ok == false && onFix != null
+          ? FilledButton(
+              style: FilledButton.styleFrom(minimumSize: const Size(70, 36)),
+              onPressed: () async {
+                onFix();
+                await Future<void>.delayed(const Duration(seconds: 2));
+                _load();
+              },
+              child: Text(fix ?? 'إصلاح'),
+            )
+          : null,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final err = BackgroundBridge.lastError;
+    final poll = BackgroundBridge.lastPoll;
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('فحص الإشعارات'),
+        actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
+              children: [
+                _row('السماح بالإشعارات', _s['notifications'],
+                    fix: 'سماح', onFix: BackgroundBridge.requestNotifications),
+                _row('استثناء من توفير البطارية', _s['battery'],
+                    fix: 'سماح', onFix: BackgroundBridge.requestBattery),
+                _row('تسجيل الجهاز في الخادم', _s['registered'],
+                    fix: 'إعادة', onFix: BackgroundBridge.restart),
+                _row('خدمة الخلفية تعمل', _s['running'],
+                    fix: 'تشغيل', onFix: BackgroundBridge.restart),
+                _row('الخدمة متصلة بالخادم', _s['alive'],
+                    fix: 'إعادة', onFix: BackgroundBridge.restart),
+                if (poll != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Text('آخر اتصال للخدمة: ${Fmt.time(poll)}', style: const TextStyle(fontSize: 12)),
+                  ),
+                if (err != null)
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: SelectableText('آخر خطأ: $err',
+                        textDirection: TextDirection.ltr,
+                        style: const TextStyle(fontSize: 12, color: Colors.redAccent)),
+                  ),
+                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: FilledButton.icon(
+                    icon: const Icon(Icons.notifications_active_rounded),
+                    label: const Text('إرسال إشعار تجريبي'),
+                    onPressed: () {
+                      BackgroundBridge.test();
+                      showSnack(context, 'اخرج من التطبيق الآن، سيصلك إشعار خلال 6 ثوانٍ');
+                    },
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text(
+                    'بهواتف شاومي/ريدمي/أوبو/فيفو/هواوي: من إعدادات الهاتف ← التطبيقات ← «المبرمج المجهول» '
+                    'فعّل «التشغيل التلقائي» واجعل البطارية «بلا قيود»، وإلا يطفئ النظام التطبيق بعد غلقه.',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.settings_applications_rounded),
+                    label: const Text('فتح إعدادات التطبيق في الهاتف'),
+                    onPressed: () => BackgroundBridge.openAppSettings(),
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
+            ),
     );
   }
 }

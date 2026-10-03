@@ -9,6 +9,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:permission_handler/permission_handler.dart' as ph show openAppSettings;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -35,6 +36,16 @@ class BackgroundBridge {
 
   /// الخدمة تعمل: الإشعارات والرنين أثناء غياب التطبيق تتكفل بها هي.
   static bool active = false;
+
+  /// آخر إشارة حياة من خدمة الخلفية + آخر خطأ (للتشخيص).
+  static DateTime? lastAlive;
+  static String? lastError;
+  static DateTime? lastPoll;
+  static StreamSubscription? _aliveSub;
+
+  /// الخدمة شغالة فعلًا (أرسلت إشارة خلال آخر دقيقتين).
+  static bool get healthy =>
+      active && lastAlive != null && DateTime.now().difference(lastAlive!).inSeconds < 120;
 
   static bool get appVisible => WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
   static Timer? _heartbeat;
@@ -69,8 +80,18 @@ class BackgroundBridge {
         ),
         iosConfiguration: IosConfiguration(autoStart: false),
       );
+      _aliveSub ??= FlutterBackgroundService().on('alive').listen((e) {
+        lastAlive = DateTime.now();
+        final err = e?['error'] as String?;
+        if (err != null) lastError = err;
+        if (e?['poll'] == true) {
+          lastPoll = DateTime.now();
+          lastError = null;
+        }
+      });
       _configured = true;
     } catch (e) {
+      lastError = 'configure: $e';
       debugPrint('bg configure failed: $e');
     }
   }
@@ -98,6 +119,7 @@ class BackgroundBridge {
       _startHeartbeat();
       unawaited(_askPermissions());
     } catch (e) {
+      lastError = 'start: $e';
       debugPrint('bg start failed: $e');
     }
   }
@@ -130,10 +152,78 @@ class BackgroundBridge {
     _heartbeat = Timer.periodic(const Duration(seconds: 4), (_) => _beat());
   }
 
+  static int _beats = 0;
+
   static void _beat() {
     if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
       FlutterBackgroundService().invoke('fg');
+      // إصلاح ذاتي: إذا توقفت الخدمة (أطفأها النظام) نعيد تشغيلها
+      if (active && _beats++ % 8 == 0) unawaited(_ensureRunning());
     }
+  }
+
+  static Future<void> _ensureRunning() async {
+    try {
+      final service = FlutterBackgroundService();
+      if (!await service.isRunning()) await service.startService();
+    } catch (e) {
+      lastError = 'restart: $e';
+    }
+  }
+
+  /// إعادة تشغيل الخدمة من شاشة الفحص.
+  static Future<void> restart() async {
+    try {
+      FlutterBackgroundService().invoke('stop');
+      await Future<void>.delayed(const Duration(seconds: 2));
+    } catch (_) {}
+    await start();
+  }
+
+  /// إشعار تجريبي من خدمة الخلفية بعد 6 ثوانٍ (اخرج من التطبيق لتراه).
+  static void test() => FlutterBackgroundService().invoke('test');
+
+  /// حالة كاملة لشاشة الفحص.
+  static Future<Map<String, bool?>> status() async {
+    bool? running;
+    try {
+      running = await FlutterBackgroundService().isRunning();
+    } catch (_) {}
+    bool? notifs;
+    bool? battery;
+    try {
+      notifs = await Permission.notification.isGranted;
+      battery = await Permission.ignoreBatteryOptimizations.isGranted;
+    } catch (_) {}
+    return {
+      'configured': _configured,
+      'registered': (CacheService.getString(_kToken) ?? '').length >= 32,
+      'running': running,
+      'alive': healthy,
+      'notifications': notifs,
+      'battery': battery,
+    };
+  }
+
+  static Future<void> openAppSettings() async {
+    try {
+      await ph.openAppSettings();
+    } catch (_) {}
+  }
+
+  static Future<void> requestBattery() async {
+    try {
+      await Permission.ignoreBatteryOptimizations.request();
+    } catch (_) {}
+  }
+
+  static Future<void> requestNotifications() async {
+    try {
+      final plugin = FlutterLocalNotificationsPlugin();
+      final android = plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      await android?.requestNotificationsPermission();
+      await android?.requestFullScreenIntentPermission();
+    } catch (_) {}
   }
 
   static Future<void> _askPermissions() async {
@@ -166,6 +256,7 @@ class _Lifecycle extends WidgetsBindingObserver {
 
 @pragma('vm:entry-point')
 Future<void> bgMain(ServiceInstance service) async {
+  WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
   final w = _BgWorker(service);
   await w.run();
@@ -191,15 +282,45 @@ class _BgWorker {
 
   bool get appVisible => DateTime.now().difference(lastFg).inSeconds < 9;
 
+  void _alive({bool poll = false, String? error}) {
+    try {
+      service.invoke('alive', {'poll': poll, if (error != null) 'error': error});
+    } catch (_) {}
+  }
+
   Future<void> run() async {
+    try {
+      await _run();
+    } catch (e) {
+      _alive(error: 'run: $e');
+      // نحاول مجددًا بعد قليل بدل أن تموت الخدمة
+      Future.delayed(const Duration(seconds: 20), run);
+    }
+  }
+
+  Future<void> _run() async {
     prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
     token = prefs.getString(BackgroundBridge._kToken) ?? '';
     final url = prefs.getString(BackgroundBridge._kUrl) ?? '';
     final key = prefs.getString(BackgroundBridge._kKey) ?? '';
     if (token.length < 32 || url.isEmpty || key.isEmpty) {
+      _alive(error: 'no token');
       await service.stopSelf();
       return;
     }
+    service.on('test').listen((_) async {
+      await Future<void>.delayed(const Duration(seconds: 6));
+      await notif.show(
+        9200,
+        'تجربة ✅',
+        'الإشعارات تعمل حتى والتطبيق مغلق',
+        const NotificationDetails(
+          android: AndroidNotificationDetails(BackgroundBridge.msgsChannel, 'الرسائل',
+              importance: Importance.high, priority: Priority.high),
+        ),
+      );
+    });
 
     service.on('stop').listen((_) async {
       await _stopRinging();
@@ -208,6 +329,7 @@ class _BgWorker {
     });
     service.on('fg').listen((_) {
       lastFg = DateTime.now();
+      _alive();
       if (ringingCall != null) _stopRinging(); // التطبيق ظاهر: هو يعرض المكالمة
     });
 
@@ -276,6 +398,7 @@ class _BgWorker {
         await _pollOnce();
       } while (pollAgain);
     } catch (e) {
+      _alive(error: 'poll: $e');
       debugPrint('bg poll failed: $e');
     } finally {
       polling = false;
@@ -290,9 +413,11 @@ class _BgWorker {
         .timeout(const Duration(seconds: 15));
     final data = (r is String ? jsonDecode(r) : r) as Map;
     if (data['invalid'] == true) {
+      _alive(error: 'invalid token');
       await service.stopSelf();
       return;
     }
+    _alive(poll: true);
 
     // ---- المكالمات ----
     final calls = (data['calls'] as List? ?? const []).cast<Map>();
