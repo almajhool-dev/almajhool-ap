@@ -16,6 +16,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/config.dart';
 import 'call_service.dart';
 import 'core_services.dart';
+import 'push_service.dart';
 import 'update_service.dart';
 
 /// خدمة تعمل في الخلفية حتى لو أُغلق التطبيق:
@@ -46,7 +47,8 @@ class BackgroundBridge {
 
   /// الخدمة شغالة فعلًا (أرسلت إشارة خلال آخر دقيقتين).
   static bool get healthy =>
-      active && lastAlive != null && DateTime.now().difference(lastAlive!).inSeconds < 120;
+      PushService.active ||
+      (active && lastAlive != null && DateTime.now().difference(lastAlive!).inSeconds < 120);
 
   static bool get appVisible => WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
   static Timer? _heartbeat;
@@ -211,6 +213,7 @@ class BackgroundBridge {
       battery = await Permission.ignoreBatteryOptimizations.isGranted;
     } catch (_) {}
     return {
+      'push': PushService.active,
       'configured': _configured,
       'registered': (CacheService.getString(_kToken) ?? '').length >= 32,
       'running': running,
@@ -259,6 +262,7 @@ class _Lifecycle extends WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      PushService.cancelCallNotification();
       BackgroundBridge._beat();
       CallService.instance.checkPending();
     }

@@ -448,6 +448,13 @@ class _NotificationCheckScreenState extends State<NotificationCheckScreen> {
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               children: [
+                _row('إشعارات Google (تعمل والتطبيق مغلق)', _s['push']),
+                if (_s['push'] == true)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16),
+                    child: Text('ممتاز: هذا الجهاز يستقبل عبر Google، ولا يحتاج خدمة الخلفية.',
+                        style: TextStyle(fontSize: 12, color: Colors.green)),
+                  ),
                 _row('السماح بالإشعارات', _s['notifications'],
                     fix: 'سماح', onFix: BackgroundBridge.requestNotifications),
                 _row('استثناء من توفير البطارية', _s['battery'],

@@ -90,6 +90,17 @@ def patch_manifest():
           '<paths xmlns:android="http://schemas.android.com/apk/res/android">\n'
           '    <files-path name="internal_apk_storage" path="ota_update/"/>\n'
           '</paths>\n')
+    # نغمات الرنين كموارد نظام (لإشعار المكالمة عبر Google)
+    raw_dir = os.path.join(APP, "src", "main", "res", "raw")
+    os.makedirs(raw_dir, exist_ok=True)
+    snd = os.path.join(ROOT, "assets", "sounds")
+    for f in os.listdir(snd):
+        if f.startswith("ring_") and f.endswith(".wav"):
+            with open(os.path.join(snd, f), "rb") as src, open(os.path.join(raw_dir, f), "wb") as dst:
+                dst.write(src.read())
+    write(os.path.join(raw_dir, "keep.xml"),
+          '<?xml version="1.0" encoding="utf-8"?>\n'
+          '<resources xmlns:tools="http://schemas.android.com/tools" tools:keep="@raw/*"/>\n')
     # عرض شاشة المكالمة فوق قفل الشاشة
     if "showWhenLocked" not in s:
         s = s.replace('android:name=".MainActivity"',

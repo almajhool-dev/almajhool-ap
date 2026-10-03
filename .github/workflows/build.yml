@@ -8,6 +8,8 @@ on:
       - '.github/workflows/diagnostics.yml'
       - '**.md'
       - 'admin/**'
+      - 'supabase/functions/**'
+      - '.github/workflows/functions.yml'
   workflow_dispatch:
 
 permissions:

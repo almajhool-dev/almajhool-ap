@@ -13,6 +13,7 @@ import 'services/background_service.dart';
 import 'services/call_service.dart';
 import 'services/core_services.dart';
 import 'services/local_notifications.dart';
+import 'services/push_service.dart';
 import 'services/update_service.dart';
 
 Future<void> main() async {
@@ -20,6 +21,7 @@ Future<void> main() async {
   await initializeDateFormatting('ar');
   await CacheService.init();
   await AppConfig.load();
+  await PushService.init();
   runApp(const RootApp());
 }
 

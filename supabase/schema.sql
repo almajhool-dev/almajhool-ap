@@ -1888,5 +1888,183 @@ grant execute on function public.bg_report(text, text, text) to anon, authentica
 grant execute on function public.client_log(text) to anon, authenticated;
 grant execute on function public.bg_diag() to anon, authenticated;
 
+-- =====================================================================
+--  الإصدار 10: إشعارات Google (Firebase Cloud Messaging)
+--  تصل حتى لو كان التطبيق مغلقًا والهاتف يقتل التطبيقات بالخلفية.
+--  قاعدة البيانات ترسل الطلب إلى دالة "push" التي توقّع وترسل إلى Google.
+-- =====================================================================
+do $$ begin
+  create extension if not exists pg_net with schema extensions;
+exception when others then raise notice 'pg_net: %', sqlerrm;
+end $$;
+
+create table if not exists public.fcm_tokens (
+  token text primary key check (char_length(token) between 20 and 4096),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  updated_at timestamptz not null default now()
+);
+create index if not exists fcm_tokens_user_idx on public.fcm_tokens(user_id);
+alter table public.fcm_tokens enable row level security;
+
+-- سر مشترك بين قاعدة البيانات ودالة الإرسال (يُنشأ تلقائيًا مرة واحدة)
+insert into public.private_settings(key, value)
+  values ('push_secret', encode(extensions.gen_random_bytes(24), 'hex'))
+  on conflict (key) do nothing;
+
+create or replace function public.register_fcm(p_token text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then raise exception 'غير مسموح'; end if;
+  insert into fcm_tokens(token, user_id) values (p_token, auth.uid())
+    on conflict (token) do update set user_id = excluded.user_id, updated_at = now();
+  delete from fcm_tokens where user_id = auth.uid() and token not in (
+    select token from fcm_tokens where user_id = auth.uid() order by updated_at desc limit 5);
+end $$;
+
+create or replace function public.unregister_fcm(p_token text) returns void
+language sql security definer set search_path = public as $$
+  delete from fcm_tokens where token = p_token;
+$$;
+
+-- هل خدمة إشعارات Google جاهزة على الخادم؟
+create or replace function public.push_ready() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists(select 1 from private_settings where key = 'fcm_sa');
+$$;
+
+-- المدير يرفع ملف «حساب الخدمة» من لوحة التحكم (يُحفظ سرًا ولا يُقرأ إلا بالسر المشترك)
+create or replace function public.admin_set_fcm(p_json text) returns void
+language plpgsql security definer set search_path = public as $$
+declare j jsonb;
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  begin j := p_json::jsonb; exception when others then raise exception 'الملف غير صالح'; end;
+  if j->>'type' <> 'service_account' or j->>'private_key' is null or j->>'client_email' is null then
+    raise exception 'هذا ليس ملف حساب خدمة (Service account)';
+  end if;
+  insert into private_settings(key, value) values ('fcm_sa', j::text)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+end $$;
+
+create or replace function public.admin_fcm_status() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select case when not is_admin() then null else jsonb_build_object(
+    'configured', exists(select 1 from private_settings where key = 'fcm_sa'),
+    'project', (select (value::jsonb)->>'project_id' from private_settings where key = 'fcm_sa'),
+    'devices', (select count(*) from fcm_tokens)) end;
+$$;
+
+-- تستدعيها دالة الإرسال للتحقق من السر وجلب حساب الخدمة
+create or replace function public.push_config(p_secret text) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select case when p_secret is not null and p_secret = (select value from private_settings where key = 'push_secret')
+    then (select value::jsonb from private_settings where key = 'fcm_sa') else null end;
+$$;
+
+create or replace function public.push_drop_tokens(p_secret text, p_tokens text[]) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if p_secret is distinct from (select value from private_settings where key = 'push_secret') then return; end if;
+  delete from fcm_tokens where token = any(p_tokens);
+end $$;
+
+grant execute on function public.register_fcm(text) to authenticated;
+grant execute on function public.unregister_fcm(text) to anon, authenticated;
+grant execute on function public.push_ready() to anon, authenticated;
+grant execute on function public.admin_set_fcm(text) to authenticated;
+grant execute on function public.admin_fcm_status() to authenticated;
+grant execute on function public.push_config(text) to anon, authenticated;
+grant execute on function public.push_drop_tokens(text, text[]) to anon, authenticated;
+
+-- إرسال مجموعة رسائل إلى دالة push (غير متزامن، لا يؤخر حفظ الرسالة)
+create or replace function public._push(msgs jsonb) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if msgs is null or jsonb_array_length(msgs) = 0 then return; end if;
+  if not exists(select 1 from private_settings where key = 'fcm_sa') then return; end if;
+  perform net.http_post(
+    url := 'https://smjkxsqvdpywumghvnfv.supabase.co/functions/v1/push',
+    body := jsonb_build_object('secret', (select value from private_settings where key = 'push_secret'), 'messages', msgs),
+    headers := '{"Content-Type": "application/json"}'::jsonb,
+    timeout_milliseconds := 8000);
+exception when others then null;
+end $$;
+revoke execute on function public._push(jsonb) from public, anon, authenticated;
+
+create or replace function public._push_on_message() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare cv conversations; sname text; title text; body text; msgs jsonb;
+begin
+  if new.type = 'system' then return null; end if;
+  select * into cv from conversations where id = new.conversation_id;
+  select display_name into sname from profiles where id = new.sender_id;
+  title := case when cv.type = 'group' then coalesce(cv.name, 'مجموعة') else coalesce(sname, 'رسالة جديدة') end;
+  body := case when cv.type = 'group' then coalesce(sname, '') || ': ' else '' end ||
+    case when new.type = 'image' then '📷 صورة'
+         when new.type = 'video' then '🎬 فيديو'
+         when new.type = 'audio' then '🎤 رسالة صوتية'
+         when new.type = 'file' then '📎 ' || coalesce(new.file_name, 'ملف')
+         else left(coalesce(new.content, ''), 200) end;
+  select coalesce(jsonb_agg(jsonb_build_object(
+      'token', t.token,
+      'notification', jsonb_build_object('title', title, 'body', body),
+      'data', jsonb_build_object('kind', 'msg', 'conv', new.conversation_id::text),
+      'android', jsonb_build_object('priority', 'high', 'ttl', '86400s',
+        'notification', jsonb_build_object('channel_id', 'almajhool_msgs', 'tag', new.conversation_id::text,
+          'sound', 'default', 'default_vibrate_timings', true)))), '[]'::jsonb)
+    into msgs
+  from conversation_members cm
+  join fcm_tokens t on t.user_id = cm.user_id
+  join profiles p on p.id = cm.user_id
+  where cm.conversation_id = new.conversation_id
+    and cm.user_id is distinct from new.sender_id
+    and not cm.muted and p.notifications_enabled
+    and not exists(select 1 from blocks b where b.blocker_id = cm.user_id and b.blocked_id = new.sender_id);
+  perform _push(msgs);
+  return null;
+exception when others then return null;
+end $$;
+drop trigger if exists push_on_message on public.messages;
+create trigger push_on_message after insert on public.messages for each row execute function public._push_on_message();
+
+create or replace function public._push_on_call() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare msgs jsonb; cname text;
+begin
+  if tg_op = 'INSERT' then
+    select display_name into cname from profiles where id = new.caller;
+    select coalesce(jsonb_agg(jsonb_build_object(
+        'token', t.token,
+        'data', jsonb_build_object('kind', 'call', 'call_id', new.id::text, 'name', coalesce(cname, 'مستخدم'),
+          'video', case when new.video then '1' else '0' end),
+        'android', jsonb_build_object('priority', 'high', 'ttl', '40s'))), '[]'::jsonb)
+      into msgs from fcm_tokens t where t.user_id = new.callee;
+  elsif new.status is distinct from old.status and new.status <> 'ringing' then
+    select coalesce(jsonb_agg(jsonb_build_object(
+        'token', t.token,
+        'data', jsonb_build_object('kind', 'call_end', 'call_id', new.id::text),
+        'android', jsonb_build_object('priority', 'high', 'ttl', '60s'))), '[]'::jsonb)
+      into msgs from fcm_tokens t where t.user_id = new.callee;
+  end if;
+  perform _push(msgs);
+  return null;
+exception when others then return null;
+end $$;
+drop trigger if exists push_on_call on public.call_sessions;
+create trigger push_on_call after insert or update of status on public.call_sessions
+  for each row execute function public._push_on_call();
+
+-- تشخيص للمطوّر (بدون أسرار)
+create or replace function public.push_diag() returns jsonb
+language plpgsql stable security definer set search_path = public, extensions as $$
+begin
+  return jsonb_build_object(
+    'ready', exists(select 1 from private_settings where key = 'fcm_sa'),
+    'tokens', (select count(*) from fcm_tokens),
+    'recent', (select coalesce(jsonb_agg(jsonb_build_object('status', status_code, 'body', left(content, 200), 'at', created)), '[]'::jsonb)
+               from (select * from net._http_response order by id desc limit 8) r));
+end $$;
+grant execute on function public.push_diag() to anon, authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

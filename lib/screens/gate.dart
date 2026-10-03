@@ -7,6 +7,7 @@ import '../core/theme.dart';
 import '../providers/providers.dart';
 import '../repositories/user_repositories.dart';
 import '../services/background_service.dart';
+import '../services/push_service.dart';
 import '../services/call_service.dart';
 import '../services/core_services.dart';
 import '../widgets/common.dart';
@@ -89,12 +90,20 @@ class _GateState extends State<Gate> {
           final uid = myId;
           if (uid != null) {
             CallService.instance.start(uid, name: session.profile?.displayName, avatar: session.profile?.avatarUrl);
-            BackgroundBridge.start();
+            PushService.start().then((ok) {
+              // إشعارات Google تعمل: لا حاجة لخدمة الخلفية الدائمة؛ وإلا نستخدمها كبديل
+              if (ok) {
+                BackgroundBridge.stop();
+              } else {
+                BackgroundBridge.start();
+              }
+            });
           }
         } else if (session.status == SessionStatus.signedOut) {
           hub.stop();
           CallService.instance.stop();
           BackgroundBridge.stop();
+          PushService.stop();
         }
       });
     }

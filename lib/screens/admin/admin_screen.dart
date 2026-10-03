@@ -1,4 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -154,6 +158,8 @@ class _OverviewState extends State<_Overview> {
               ),
             ),
           ),
+          const SizedBox(height: 12),
+          const _PushSettingsCard(),
           const SizedBox(height: 12),
           const _TurnSettingsCard(),
           const SizedBox(height: 12),
@@ -803,6 +809,99 @@ class _TurnSettingsCardState extends State<_TurnSettingsCard> {
               onPressed: _busy ? null : _save,
               icon: const Icon(Icons.lock_rounded),
               label: const Text('حفظ بشكل سري'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+/// رفع ملف «حساب الخدمة» من Firebase لتفعيل إشعارات Google.
+class _PushSettingsCard extends StatefulWidget {
+  const _PushSettingsCard();
+  @override
+  State<_PushSettingsCard> createState() => _PushSettingsCardState();
+}
+
+class _PushSettingsCardState extends State<_PushSettingsCard> {
+  Map<String, dynamic>? _st;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final r = await supa.rpc('admin_fcm_status');
+      if (mounted) setState(() => _st = r == null ? null : Map<String, dynamic>.from(r as Map));
+    } catch (_) {}
+  }
+
+  Future<void> _upload() async {
+    setState(() => _busy = true);
+    try {
+      final picked = await FilePicker.platform.pickFiles(type: FileType.any, withData: true);
+      final f = picked?.files.single;
+      if (f == null) return;
+      final bytes = f.bytes ?? (f.path != null ? await File(f.path!).readAsBytes() : null);
+      if (bytes == null) throw Exception('تعذّر قراءة الملف');
+      final text = utf8.decode(bytes);
+      final j = jsonDecode(text) as Map<String, dynamic>;
+      if (j['type'] != 'service_account' || j['private_key'] == null) {
+        throw Exception('هذا ليس ملف حساب الخدمة. اختر الملف الذي نزل من Firebase ← Service accounts');
+      }
+      if (j['project_id'] != 'almajhool-aefc9') {
+        throw Exception('الملف لمشروع آخر (${j['project_id']}). اختر ملف مشروع almajhool');
+      }
+      await supa.rpc('admin_set_fcm', params: {'p_json': text});
+      await _load();
+      if (mounted) showSnack(context, 'تم تفعيل إشعارات Google ✅ أعد فتح التطبيق');
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ok = _st?['configured'] == true;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.notifications_active_rounded),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text('إشعارات Google (Firebase)', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                ),
+                Chip(label: Text(ok ? 'مفعّل ✅' : 'غير مفعّل'), visualDensity: VisualDensity.compact),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              ok
+                  ? 'الإشعارات والمكالمات تصل للمستخدمين حتى والتطبيق مغلق. الأجهزة المسجّلة: ${_st?['devices'] ?? 0}'
+                  : 'اختر ملف «حساب الخدمة» (JSON) الذي نزّلته من Firebase ← Project settings ← Service accounts. '
+                      'يُحفظ سرًا في قاعدة البيانات ولا يظهر لأي أحد.',
+              style: const TextStyle(fontSize: 12.5),
+            ),
+            const SizedBox(height: 10),
+            FilledButton.icon(
+              onPressed: _busy ? null : _upload,
+              icon: _busy
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.upload_file_rounded),
+              label: Text(ok ? 'استبدال الملف' : 'اختيار ملف حساب الخدمة'),
             ),
           ],
         ),

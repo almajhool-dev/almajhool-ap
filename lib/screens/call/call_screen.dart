@@ -10,6 +10,7 @@ import '../../core/theme.dart';
 import '../../repositories/chat_repository.dart';
 import '../../services/call_service.dart';
 import '../../services/core_services.dart';
+import '../../services/push_service.dart';
 import '../../services/sound_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
@@ -44,6 +45,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
   void initState() {
     super.initState();
     CallService.instance.inCall = true;
+    PushService.cancelCallNotification();
     _vibe = Timer.periodic(const Duration(milliseconds: 1500), (_) {
       HapticFeedback.vibrate();
       SoundService.startRingtone(); // لا يتكرر إذا كان يرن
