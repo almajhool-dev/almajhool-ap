@@ -2096,7 +2096,7 @@ create or replace function public.push_refresh_config(p_gh text) returns jsonb
 language plpgsql security definer set search_path = public as $$
 begin
   if not _gh_verify(p_gh) then return null; end if;
-  return (select value::jsonb from private_settings where key = 'fcm_sa');
+  return coalesce((select value::jsonb from private_settings where key = 'fcm_sa'), '{"verified": true}'::jsonb);
 end $$;
 
 create or replace function public.push_set_access(p_gh text, p_access text, p_expires int) returns boolean

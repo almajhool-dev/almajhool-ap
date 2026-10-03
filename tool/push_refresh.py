@@ -24,7 +24,10 @@ def b64(b):
 
 sa = rpc("push_refresh_config", {"p_gh": GH})
 if not sa:
-    print("service account not uploaded yet (or verification failed) — nothing to do")
+    print("GitHub verification FAILED")
+    sys.exit(1)
+if "private_key" not in sa:
+    print("verified OK — service account not uploaded yet, nothing to do")
     sys.exit(0)
 
 now = int(time.time())
