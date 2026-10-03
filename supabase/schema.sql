@@ -2205,5 +2205,300 @@ begin
 end $$;
 grant execute on function public.push_promote(text) to anon, authenticated;
 
+-- =====================================================================
+--  الإصدار 13: الأصدقاء والمتابعة، خصوصية المنشورات وألوانها، القصص،
+--  إيقاف النسخ القديمة، والرد من الإشعارات
+-- =====================================================================
+
+-- ---------- الأصدقاء ----------
+create or replace function public.are_friends(a uuid, b uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists(select 1 from contact_requests
+    where status = 'accepted'
+      and least(sender_id, receiver_id) = least(a, b)
+      and greatest(sender_id, receiver_id) = greatest(a, b));
+$$;
+
+-- ---------- المتابعة ----------
+create table if not exists public.follows (
+  follower_id uuid not null references public.profiles(id) on delete cascade,
+  followee_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (follower_id, followee_id),
+  check (follower_id <> followee_id)
+);
+create index if not exists follows_followee_idx on public.follows(followee_id);
+alter table public.follows enable row level security;
+drop policy if exists follows_select on public.follows;
+create policy follows_select on public.follows for select to authenticated using (true);
+drop policy if exists follows_insert on public.follows;
+create policy follows_insert on public.follows for insert to authenticated
+  with check (follower_id = auth.uid() and not is_banned() and not is_blocked_between(follower_id, followee_id));
+drop policy if exists follows_delete on public.follows;
+create policy follows_delete on public.follows for delete to authenticated using (follower_id = auth.uid());
+
+create or replace function public.on_follow() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare n text;
+begin
+  select display_name into n from profiles where id = new.follower_id;
+  perform add_capped_xp(new.followee_id, 'follow_xp', 3, 30);
+  perform notify_user(new.followee_id, 'follow', 'متابع جديد',
+    coalesce(n, '') || ' بدأ بمتابعتك', jsonb_build_object('user_id', new.follower_id));
+  return new;
+exception when others then return new;
+end $$;
+drop trigger if exists trg_on_follow on public.follows;
+create trigger trg_on_follow after insert on public.follows for each row execute function public.on_follow();
+
+create or replace function public.profile_counts(uid uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'friends', (select count(*) from contact_requests where status = 'accepted' and (sender_id = uid or receiver_id = uid)),
+    'followers', (select count(*) from follows where followee_id = uid),
+    'following', (select count(*) from follows where follower_id = uid),
+    'posts', (select count(*) from posts where author_id = uid and not deleted),
+    'i_follow', exists(select 1 from follows where follower_id = auth.uid() and followee_id = uid));
+$$;
+
+-- ---------- المنشورات: ألوان وخصوصية ----------
+alter table public.posts add column if not exists text_color bigint;
+alter table public.posts add column if not exists bg_color bigint;
+alter table public.posts add column if not exists visibility text not null default 'public';
+do $$ begin
+  alter table public.posts add constraint posts_visibility_chk check (visibility in ('public','friends','private','custom'));
+exception when others then null; end $$;
+
+create table if not exists public.post_audience (
+  post_id uuid not null references public.posts(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  primary key (post_id, user_id)
+);
+alter table public.post_audience enable row level security;
+drop policy if exists post_audience_select on public.post_audience;
+create policy post_audience_select on public.post_audience for select to authenticated
+  using (user_id = auth.uid() or exists(select 1 from posts p where p.id = post_id and p.author_id = auth.uid()));
+
+create or replace function public.can_see_post(pid uuid, author uuid, vis text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select author = auth.uid()
+      or vis = 'public'
+      or (vis = 'friends' and are_friends(auth.uid(), author))
+      or (vis = 'custom' and exists(select 1 from post_audience a where a.post_id = pid and a.user_id = auth.uid()));
+$$;
+
+drop policy if exists posts_select on public.posts;
+create policy posts_select on public.posts for select to authenticated
+  using (is_admin() or (not deleted and not is_blocked_between(auth.uid(), author_id)
+                        and can_see_post(id, author_id, visibility)));
+
+create or replace function public.save_post(pid uuid, p_content text, p_image text, p_text_color bigint,
+  p_bg_color bigint, p_visibility text, p_audience uuid[]) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare rid uuid;
+begin
+  if not can_post() then raise exception 'لا يمكنك النشر الآن'; end if;
+  if char_length(coalesce(p_content, '')) > 3000 then raise exception 'النص طويل جدًا'; end if;
+  if char_length(coalesce(trim(p_content), '')) = 0 and p_image is null then raise exception 'المنشور فارغ'; end if;
+  if p_visibility not in ('public','friends','private','custom') then p_visibility := 'public'; end if;
+  if pid is null then
+    insert into posts(author_id, content, image_url, text_color, bg_color, visibility)
+      values (auth.uid(), coalesce(trim(p_content), ''), p_image, p_text_color, p_bg_color, p_visibility)
+      returning id into rid;
+  else
+    update posts set content = coalesce(trim(p_content), ''), image_url = p_image, text_color = p_text_color,
+      bg_color = p_bg_color, visibility = p_visibility, edited_at = now()
+    where id = pid and author_id = auth.uid() and not deleted returning id into rid;
+    if rid is null then raise exception 'لا يمكن تعديل هذا المنشور'; end if;
+    delete from post_audience where post_id = rid;
+  end if;
+  if p_visibility = 'custom' and p_audience is not null then
+    insert into post_audience(post_id, user_id)
+      select rid, u from unnest(p_audience) u where u <> auth.uid() on conflict do nothing;
+  end if;
+  return rid;
+end $$;
+grant execute on function public.save_post(uuid, text, text, bigint, bigint, text, uuid[]) to authenticated;
+
+-- ---------- القصص (24 ساعة) ----------
+create table if not exists public.stories (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null default 'image' check (kind in ('image','text')),
+  media_url text,
+  content text check (content is null or char_length(content) <= 500),
+  bg_color bigint,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default now() + interval '24 hours'
+);
+create index if not exists stories_active_idx on public.stories(expires_at desc, user_id);
+alter table public.stories enable row level security;
+drop policy if exists stories_select on public.stories;
+create policy stories_select on public.stories for select to authenticated
+  using (user_id = auth.uid() or is_admin()
+         or (expires_at > now() and not is_blocked_between(auth.uid(), user_id)));
+drop policy if exists stories_insert on public.stories;
+create policy stories_insert on public.stories for insert to authenticated
+  with check (user_id = auth.uid() and can_post());
+drop policy if exists stories_delete on public.stories;
+create policy stories_delete on public.stories for delete to authenticated using (user_id = auth.uid() or is_admin());
+
+create or replace function public.before_story_insert() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if (select count(*) from stories where user_id = new.user_id and created_at > now() - interval '1 hour') >= 20 then
+    raise exception 'rate_limited: قصص كثيرة، انتظر قليلًا';
+  end if;
+  new.created_at := now(); new.expires_at := now() + interval '24 hours';
+  return new;
+end $$;
+drop trigger if exists trg_before_story on public.stories;
+create trigger trg_before_story before insert on public.stories for each row execute function public.before_story_insert();
+
+create table if not exists public.story_views (
+  story_id uuid not null references public.stories(id) on delete cascade,
+  viewer_id uuid not null references public.profiles(id) on delete cascade,
+  viewed_at timestamptz not null default now(),
+  primary key (story_id, viewer_id)
+);
+alter table public.story_views enable row level security;
+drop policy if exists story_views_select on public.story_views;
+create policy story_views_select on public.story_views for select to authenticated
+  using (viewer_id = auth.uid() or exists(select 1 from stories s where s.id = story_id and s.user_id = auth.uid()));
+drop policy if exists story_views_insert on public.story_views;
+create policy story_views_insert on public.story_views for insert to authenticated with check (viewer_id = auth.uid());
+
+-- ---------- إيقاف النسخ القديمة ----------
+alter table public.app_settings add column if not exists service_enabled boolean not null default true;
+alter table public.app_settings add column if not exists old_blocked boolean not null default false;
+alter table public.app_settings add column if not exists min_build int not null default 0;
+alter table public.app_settings add column if not exists update_url text not null default 'https://t.me/ikd5n';
+alter table public.app_settings add column if not exists update_message text not null
+  default 'هذه النسخة قديمة ومتوقفة. نزّل النسخة الجديدة من قناتنا على تلكرام.';
+
+create or replace function public.can_post() returns boolean
+language sql stable security definer set search_path = public as $$
+  select auth.uid() is not null and not is_banned()
+     and ((select service_enabled from app_settings where id = 1) or is_admin());
+$$;
+
+create or replace function public.admin_set_app(enabled boolean, message text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  update app_settings set service_enabled = enabled,
+    app_enabled = enabled and not old_blocked,
+    maintenance_message = case when old_blocked then maintenance_message
+      else coalesce(nullif(trim(message), ''), maintenance_message) end,
+    updated_at = now()
+  where id = 1;
+end $$;
+
+-- block=true: كل نسخة أقدم من p_build تتوقف وتظهر لها رسالة التحديث مع رابط تلكرام
+create or replace function public.admin_block_old(p_build int, p_block boolean, p_message text, p_url text)
+returns void language plpgsql security definer set search_path = public as $$
+declare msg text;
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  msg := coalesce(nullif(trim(p_message), ''), (select update_message from app_settings where id = 1));
+  update app_settings set
+    old_blocked = p_block,
+    min_build = case when p_block then greatest(coalesce(p_build, 0), 0) else 0 end,
+    update_message = msg,
+    update_url = coalesce(nullif(trim(p_url), ''), update_url),
+    app_enabled = service_enabled and not p_block,
+    maintenance_message = case when p_block
+      then msg || E'\n' || coalesce(nullif(trim(p_url), ''), update_url) else maintenance_message end,
+    updated_at = now()
+  where id = 1;
+end $$;
+grant execute on function public.admin_block_old(int, boolean, text, text) to authenticated;
+
+-- ---------- الرد من الإشعار (التطبيق مغلق: نستخدم رمز الجهاز بدل تسجيل الدخول) ----------
+create or replace function public._device_user(p_token text) returns uuid
+language sql stable security definer set search_path = public as $$
+  select coalesce(
+    (select user_id from fcm_tokens where token = p_token),
+    (select user_id from device_tokens where token = p_token));
+$$;
+revoke execute on function public._device_user(text) from public, anon, authenticated;
+
+create or replace function public.device_reply(p_token text, p_conv uuid, p_text text) returns void
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := _device_user(p_token);
+begin
+  if uid is null or char_length(coalesce(trim(p_text), '')) = 0 then raise exception 'غير مسموح'; end if;
+  if not exists(select 1 from conversation_members where conversation_id = p_conv and user_id = uid) then
+    raise exception 'غير مسموح';
+  end if;
+  if exists(select 1 from profiles where id = uid and is_banned) then raise exception 'غير مسموح'; end if;
+  if (select type from conversations where id = p_conv) = 'direct' and exists(
+       select 1 from conversation_members m where m.conversation_id = p_conv and m.user_id <> uid
+         and is_blocked_between(uid, m.user_id)) then
+    raise exception 'غير مسموح';
+  end if;
+  insert into messages(conversation_id, sender_id, type, content, client_id)
+    values (p_conv, uid, 'text', left(trim(p_text), 4000), 'n-' || gen_random_uuid()::text);
+end $$;
+
+create or replace function public.device_call_action(p_token text, p_call uuid, p_status text) returns void
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := _device_user(p_token);
+begin
+  if uid is null or p_status not in ('rejected', 'busy') then raise exception 'غير مسموح'; end if;
+  update call_sessions set status = p_status, updated_at = now()
+    where id = p_call and callee = uid and status = 'ringing';
+end $$;
+grant execute on function public.device_reply(text, uuid, text) to anon, authenticated;
+grant execute on function public.device_call_action(text, uuid, text) to anon, authenticated;
+
+-- رقم نسخة التطبيق لكل جهاز (النسخ الجديدة تعرض الإشعار بنفسها مع زر «رد»)
+alter table public.fcm_tokens add column if not exists app_build int not null default 0;
+create or replace function public.register_fcm2(p_token text, p_build int) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform register_fcm(p_token);
+  update fcm_tokens set app_build = coalesce(p_build, 0) where token = p_token;
+end $$;
+grant execute on function public.register_fcm2(text, int) to authenticated;
+
+-- الرسائل: نرسلها كبيانات حتى يعرضها التطبيق بإشعار فيه زر «رد»
+create or replace function public._push_on_message() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare cv conversations; sname text; title text; body text; msgs jsonb;
+begin
+  if new.type = 'system' then return null; end if;
+  select * into cv from conversations where id = new.conversation_id;
+  select display_name into sname from profiles where id = new.sender_id;
+  title := case when cv.type = 'group' then coalesce(cv.name, 'مجموعة') else coalesce(sname, 'رسالة جديدة') end;
+  body := case when cv.type = 'group' then coalesce(sname, '') || ': ' else '' end ||
+    case when new.type = 'image' then '📷 صورة'
+         when new.type = 'video' then '🎬 فيديو'
+         when new.type = 'audio' then '🎤 رسالة صوتية'
+         when new.type = 'file' then '📎 ' || coalesce(new.file_name, 'ملف')
+         else left(coalesce(new.content, ''), 300) end;
+  select coalesce(jsonb_agg(jsonb_build_object(
+      'token', t.token,
+      'data', jsonb_build_object('kind', 'msg', 'conv', new.conversation_id::text, 'title', title, 'body', body),
+      'android', jsonb_build_object('priority', 'high', 'ttl', '86400s'))
+      -- النسخ القديمة (قبل 35) لا تعرض إشعار البيانات، فنرسل لها إشعارًا جاهزًا
+      || case when t.app_build >= 35 then '{}'::jsonb else jsonb_build_object(
+        'notification', jsonb_build_object('title', title, 'body', body),
+        'android', jsonb_build_object('priority', 'high', 'ttl', '86400s',
+          'notification', jsonb_build_object('channel_id', 'almajhool_msgs', 'tag', new.conversation_id::text,
+            'sound', 'default'))) end), '[]'::jsonb)
+    into msgs
+  from conversation_members cm
+  join fcm_tokens t on t.user_id = cm.user_id
+  join profiles p on p.id = cm.user_id
+  where cm.conversation_id = new.conversation_id
+    and cm.user_id is distinct from new.sender_id
+    and not cm.muted and p.notifications_enabled
+    and not exists(select 1 from blocks b where b.blocker_id = cm.user_id and b.blocked_id = new.sender_id);
+  perform _push(msgs);
+  return null;
+exception when others then return null;
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

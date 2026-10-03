@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -9,6 +8,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core_services.dart';
+import 'notif_actions.dart';
+import 'update_service.dart';
 
 /// إعدادات مشروع Firebase (ليست سرية).
 const firebaseOptions = FirebaseOptions(
@@ -23,7 +24,6 @@ const msgsChannel = 'almajhool_msgs';
 
 /// يُقرأ من خدمة الخلفية: هذا الجهاز مسجّل لدى Google.
 const fcmOkKey = 'fcm_ok';
-const _callNotifId = 9100;
 
 /// إشعارات Google: تصل حتى لو التطبيق مغلق تمامًا (مثل واتساب).
 class PushService {
@@ -69,11 +69,13 @@ class PushService {
       final t = await m.getToken().timeout(const Duration(seconds: 20));
       if (t == null) throw Exception('no token');
       _token = t;
-      await supa.rpc('register_fcm', params: {'p_token': t});
+      await supa.rpc('register_fcm2', params: {'p_token': t, 'p_build': UpdateService.currentBuild});
+      await CacheService.setString(kFcmTokenPref, t);
       await CacheService.setBool(fcmOkKey, true);
       _refreshSub ??= m.onTokenRefresh.listen((nt) {
         _token = nt;
-        supa.rpc('register_fcm', params: {'p_token': nt}).catchError((_) => null);
+        supa.rpc('register_fcm2', params: {'p_token': nt, 'p_build': UpdateService.currentBuild}).catchError((_) => null);
+        CacheService.setString(kFcmTokenPref, nt);
       });
       final ready = await supa.rpc('push_ready') == true;
       active = ready;
@@ -88,7 +90,7 @@ class PushService {
 
   static Future<void> cancelCallNotification() async {
     try {
-      await FlutterLocalNotificationsPlugin().cancel(_callNotifId);
+      await FlutterLocalNotificationsPlugin().cancel(kCallNotifId);
     } catch (_) {}
   }
 
@@ -122,17 +124,24 @@ Future<void> firebaseBackgroundHandler(RemoteMessage message) async {
   } catch (_) {}
   final d = message.data;
   final kind = d['kind'];
-  if (kind != 'call' && kind != 'call_end') return; // الرسائل يعرضها النظام تلقائيًا
-
   final plugin = FlutterLocalNotificationsPlugin();
-  await plugin.initialize(const InitializationSettings(
-    android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-  ));
+  await initNotifPlugin(plugin);
 
-  if (kind == 'call_end') {
-    await plugin.cancel(_callNotifId);
+  if (kind == 'msg') {
+    if (message.notification != null) return; // نسخة قديمة من الخادم: النظام عرضها
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    if (!(prefs.getBool('notifications_on') ?? true)) return;
+    final conv = d['conv'];
+    if (conv == null) return;
+    await showMessageNotification(plugin, d['title'] ?? 'رسالة جديدة', d['body'] ?? '', conv);
     return;
   }
+  if (kind == 'call_end') {
+    await plugin.cancel(kCallNotifId);
+    return;
+  }
+  if (kind != 'call') return;
 
   final prefs = await SharedPreferences.getInstance();
   await prefs.reload();
@@ -152,27 +161,6 @@ Future<void> firebaseBackgroundHandler(RemoteMessage message) async {
     audioAttributesUsage: AudioAttributesUsage.notificationRingtone,
   ));
 
-  final video = d['video'] == '1';
-  final name = d['name'] ?? 'مستخدم';
-  await plugin.show(
-    _callNotifId,
-    video ? '📹 مكالمة فيديو واردة' : '📞 مكالمة واردة',
-    '$name يتصل بك — اضغط للرد',
-    NotificationDetails(
-      android: AndroidNotificationDetails(
-        channelId,
-        'المكالمات الواردة',
-        importance: Importance.max,
-        priority: Priority.max,
-        category: AndroidNotificationCategory.call,
-        fullScreenIntent: true,
-        ongoing: true,
-        autoCancel: true,
-        timeoutAfter: 45000,
-        visibility: NotificationVisibility.public,
-        // FLAG_INSISTENT: يتكرر الرنين حتى الرد أو انتهاء المهلة
-        additionalFlags: Int32List.fromList(<int>[4]),
-      ),
-    ),
-  );
+  await showCallNotification(plugin,
+      callId: d['call_id'] ?? '', name: d['name'] ?? 'مستخدم', video: d['video'] == '1', channelId: channelId);
 }

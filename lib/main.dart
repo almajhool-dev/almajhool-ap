@@ -13,6 +13,7 @@ import 'services/background_service.dart';
 import 'services/call_service.dart';
 import 'services/core_services.dart';
 import 'services/local_notifications.dart';
+import 'services/notif_router.dart';
 import 'services/push_service.dart';
 import 'services/update_service.dart';
 
@@ -45,6 +46,7 @@ class _RootAppState extends State<RootApp> {
   Future<void> _init() async {
     try {
       await Supabase.initialize(url: AppConfig.url, anonKey: AppConfig.anonKey);
+      NotifRouter.install();
       await LocalNotifications.init();
       await BackgroundBridge.configure();
       Future.delayed(const Duration(seconds: 4),

@@ -45,7 +45,12 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
   void initState() {
     super.initState();
     CallService.instance.inCall = true;
+    CallService.instance.currentIncoming = widget.callId;
+    CallService.instance.incomingAccept = _accept;
     PushService.cancelCallNotification();
+    if (CallService.instance.autoAcceptId == widget.callId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _accept());
+    }
     _vibe = Timer.periodic(const Duration(milliseconds: 1500), (_) {
       HapticFeedback.vibrate();
       SoundService.startRingtone(); // لا يتكرر إذا كان يرن
@@ -68,6 +73,10 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
     _timeout?.cancel();
     _poll?.cancel();
     SoundService.stopRingtone();
+    if (CallService.instance.currentIncoming == widget.callId) {
+      CallService.instance.currentIncoming = null;
+      CallService.instance.incomingAccept = null;
+    }
     super.dispose();
   }
 
@@ -86,7 +95,12 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
     _close();
   }
 
+  bool _accepting = false;
+
   Future<void> _accept() async {
+    if (_accepting) return;
+    _accepting = true;
+    CallService.instance.autoAcceptId = null;
     _vibe?.cancel();
     await SoundService.stopRingtone();
     _timeout?.cancel();

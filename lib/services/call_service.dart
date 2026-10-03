@@ -28,6 +28,26 @@ class CallService {
   Timer? _pendingTimer;
   final _seen = <String>{};
   bool inCall = false;
+
+  /// مكالمة واردة معروضة حاليًا + دالة الرد عليها (للرد من الإشعار).
+  String? currentIncoming;
+  VoidCallback? incomingAccept;
+  String? autoAcceptId;
+
+  /// فتح مكالمة من الإشعار؛ accept=true يعني ضغط زر «رد».
+  Future<void> openFromNotification(String callId, {bool accept = false}) async {
+    if (accept) autoAcceptId = callId;
+    if (currentIncoming == callId) {
+      if (accept) incomingAccept?.call();
+      return;
+    }
+    try {
+      final row = await supa.from('call_sessions').select().eq('id', callId).maybeSingle();
+      if (row == null || row['status'] != 'ringing') return;
+      _seen.remove(callId);
+      await _onDbCall(Map<String, dynamic>.from(row));
+    } catch (_) {}
+  }
   String? _myName;
   String? _myAvatar;
 

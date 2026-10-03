@@ -7,6 +7,7 @@ import '../core/theme.dart';
 import '../providers/providers.dart';
 import '../repositories/user_repositories.dart';
 import '../services/background_service.dart';
+import '../services/notif_router.dart';
 import '../services/push_service.dart';
 import '../services/call_service.dart';
 import '../services/core_services.dart';
@@ -93,6 +94,7 @@ class _GateState extends State<Gate> {
             // إشعارات Google (الأساس) + خدمة الخلفية (احتياط تلقائي إذا تعطلت Google)
             PushService.start();
             BackgroundBridge.start();
+            NotifRouter.handleLaunch();
           }
         } else if (session.status == SessionStatus.signedOut) {
           hub.stop();

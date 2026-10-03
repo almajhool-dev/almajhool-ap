@@ -16,6 +16,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/config.dart';
 import 'call_service.dart';
 import 'core_services.dart';
+import 'notif_actions.dart';
 import 'push_service.dart';
 import 'update_service.dart';
 
@@ -378,9 +379,7 @@ class _BgWorker {
       if (ringingCall != null) _stopRinging(); // التطبيق ظاهر: هو يعرض المكالمة
     });
 
-    await notif.initialize(const InitializationSettings(
-      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-    ));
+    await initNotifPlugin(notif);
     final android = notif.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
     await android?.createNotificationChannel(const AndroidNotificationChannel(
       BackgroundBridge.callsChannel,
@@ -502,26 +501,8 @@ class _BgWorker {
   Future<void> _ring(String callId, String name, bool video) async {
     ringingCall = callId;
     ringStarted = DateTime.now();
-    await notif.show(
-      9100,
-      video ? '📹 مكالمة فيديو واردة' : '📞 مكالمة واردة',
-      '$name يتصل بك — اضغط للرد',
-      const NotificationDetails(
-        android: AndroidNotificationDetails(
-          BackgroundBridge.callsChannel,
-          'المكالمات الواردة',
-          importance: Importance.max,
-          priority: Priority.max,
-          category: AndroidNotificationCategory.call,
-          fullScreenIntent: true,
-          ongoing: true,
-          autoCancel: true,
-          playSound: false,
-          timeoutAfter: 45000,
-          visibility: NotificationVisibility.public,
-        ),
-      ),
-    );
+    await showCallNotification(notif,
+        callId: callId, name: name, video: video, channelId: BackgroundBridge.callsChannel);
     final soundsOn = prefs.getBool('sound_calls_on') ?? true;
     if (soundsOn) {
       final id = prefs.getString('sound_ringtone') ?? 'ring_naseem';
@@ -565,20 +546,6 @@ class _BgWorker {
     final title = (m['title'] ?? 'رسالة جديدة') as String;
     final body = (m['body'] ?? '') as String;
     final conv = (m['conversation_id'] ?? '') as String;
-    await notif.show(
-      conv.hashCode & 0x7fffffff,
-      title,
-      body,
-      NotificationDetails(
-        android: AndroidNotificationDetails(
-          BackgroundBridge.msgsChannel,
-          'الرسائل',
-          importance: Importance.high,
-          priority: Priority.high,
-          category: AndroidNotificationCategory.message,
-          styleInformation: BigTextStyleInformation(body),
-        ),
-      ),
-    );
+    await showMessageNotification(notif, title, body, conv);
   }
 }
