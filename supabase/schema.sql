@@ -3279,5 +3279,316 @@ create policy user_stickers_insert on public.user_stickers for insert to authent
 drop policy if exists user_stickers_delete on public.user_stickers;
 create policy user_stickers_delete on public.user_stickers for delete to authenticated using (user_id = auth.uid());
 
+-- =====================================================================
+--  الإصدار 23: حماية مشددة + منع الإغراق + صيانة ذاتية
+-- =====================================================================
+
+-- ---------- منع الإغراق العام (حد لكل مستخدم لكل نوع عملية) ----------
+create table if not exists public.rate_events (
+  user_id uuid not null,
+  kind text not null,
+  at timestamptz not null default now()
+);
+create index if not exists rate_events_idx on public.rate_events(user_id, kind, at desc);
+alter table public.rate_events enable row level security;
+
+create or replace function public._rate(p_kind text, p_max int, p_secs int) returns void
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := auth.uid();
+begin
+  if uid is null or is_admin() then return; end if;
+  if (select count(*) from rate_events where user_id = uid and kind = p_kind
+        and at > now() - make_interval(secs => p_secs)) >= p_max then
+    raise exception 'rate_limited: تمهّل شوية وحاول بعد قليل';
+  end if;
+  insert into rate_events(user_id, kind) values (uid, p_kind);
+end $$;
+revoke execute on function public._rate(text, int, int) from public, anon, authenticated;
+
+create or replace function public._rate_trigger() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform _rate(tg_argv[0], tg_argv[1]::int, tg_argv[2]::int);
+  return new;
+end $$;
+revoke execute on function public._rate_trigger() from public, anon, authenticated;
+
+do $$
+declare t record;
+begin
+  for t in select * from (values
+      ('post_likes', 'like', 40, 60),
+      ('follows', 'follow', 20, 60),
+      ('reports', 'report', 10, 3600),
+      ('blocks', 'block', 30, 3600),
+      ('contact_requests', 'friend_req', 30, 3600),
+      ('conversations', 'new_conv', 30, 3600),
+      ('lives', 'live_start', 4, 600),
+      ('user_stickers', 'sticker_add', 20, 3600),
+      ('story_views', 'story_view', 300, 60)
+    ) as x(tbl, kind, mx, secs)
+  loop
+    begin
+      execute format('drop trigger if exists rl_%s on public.%I', t.tbl, t.tbl);
+      execute format('create trigger rl_%s before insert on public.%I for each row execute function public._rate_trigger(%L, %L, %L)',
+                     t.tbl, t.tbl, t.kind, t.mx::text, t.secs::text);
+    exception when others then raise notice 'rate trigger %: %', t.tbl, sqlerrm;
+    end;
+  end loop;
+end $$;
+
+-- ---------- التعليقات والإعجابات تحترم خصوصية المنشور ----------
+drop policy if exists comments_select on public.post_comments;
+create policy comments_select on public.post_comments for select to authenticated using (
+  is_admin() or (not is_blocked_between(auth.uid(), author_id) and exists(
+    select 1 from posts p where p.id = post_id and not p.deleted
+      and not is_blocked_between(auth.uid(), p.author_id)
+      and can_see_post(p.id, p.author_id, p.visibility))));
+drop policy if exists comments_insert on public.post_comments;
+create policy comments_insert on public.post_comments for insert to authenticated with check (
+  author_id = auth.uid() and can_post() and exists(
+    select 1 from posts p where p.id = post_id and not p.deleted
+      and not is_blocked_between(auth.uid(), p.author_id)
+      and can_see_post(p.id, p.author_id, p.visibility)));
+drop policy if exists likes_insert on public.post_likes;
+create policy likes_insert on public.post_likes for insert to authenticated with check (
+  user_id = auth.uid() and can_post() and exists(
+    select 1 from posts p where p.id = post_id and not p.deleted
+      and can_see_post(p.id, p.author_id, p.visibility)));
+
+-- ---------- منع تجميع نقاط وهمية للوصول للتوثيق ----------
+alter table public.xp_daily add column if not exists like_xp int not null default 0;
+alter table public.xp_daily add column if not exists contact_xp int not null default 0;
+alter table public.xp_daily add column if not exists recv_comment_xp int not null default 0;
+
+create or replace function public.on_like_change() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare author uuid; liker_name text;
+begin
+  if tg_op = 'INSERT' then
+    update posts set like_count = like_count + 1 where id = new.post_id returning author_id into author;
+    if author is not null and author <> new.user_id then
+      perform add_capped_xp(author, 'like_xp', 2, 40);
+      -- إشعار واحد لكل شخص لكل منشور (حتى ما يصير إغراق بالإعجاب وإلغائه)
+      if not exists(select 1 from notifications where user_id = author and type = 'post_like'
+          and data->>'post_id' = new.post_id::text and data->>'by' = new.user_id::text) then
+        select display_name into liker_name from profiles where id = new.user_id;
+        perform notify_user(author, 'post_like', 'إعجاب جديد',
+          coalesce(liker_name, '') || ' أعجبه منشورك',
+          jsonb_build_object('post_id', new.post_id, 'by', new.user_id));
+      end if;
+    end if;
+    return new;
+  else
+    update posts set like_count = greatest(0, like_count - 1) where id = old.post_id;
+    return old;
+  end if;
+end $$;
+
+create or replace function public.xp_on_contact() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.status = 'accepted' and old.status <> 'accepted' then
+    perform add_capped_xp(new.sender_id, 'contact_xp', 5, 25);
+    perform add_capped_xp(new.receiver_id, 'contact_xp', 5, 25);
+  end if;
+  return new;
+end $$;
+
+create or replace function public.on_comment_change() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare author uuid; n text;
+begin
+  if tg_op = 'INSERT' then
+    if (select count(*) from post_comments where author_id = new.author_id
+        and created_at > now() - interval '30 seconds') > 5 then
+      raise exception 'rate_limited: تعليقات كثيرة بسرعة';
+    end if;
+    update posts set comment_count = comment_count + 1 where id = new.post_id returning author_id into author;
+    perform add_capped_xp(new.author_id, 'comment_xp', 3, 30);
+    if author is not null and author <> new.author_id then
+      perform add_capped_xp(author, 'recv_comment_xp', 2, 30);
+      select display_name into n from profiles where id = new.author_id;
+      perform notify_user(author, 'post_comment', 'تعليق جديد',
+        coalesce(n, '') || ': ' || left(new.content, 80), jsonb_build_object('post_id', new.post_id));
+    end if;
+    return new;
+  else
+    update posts set comment_count = greatest(0, comment_count - 1) where id = old.post_id;
+    return old;
+  end if;
+end $$;
+
+-- ---------- تغيير كلمة المرور يطرد كل الأجهزة القديمة ----------
+create or replace function public._kill_sessions(uid uuid) returns void
+language plpgsql security definer set search_path = public, auth as $$
+begin
+  delete from device_tokens where user_id = uid;
+  delete from fcm_tokens where user_id = uid;
+  begin
+    delete from auth.refresh_tokens where user_id = uid::text;
+  exception when others then null;
+  end;
+  begin
+    delete from auth.sessions where user_id = uid;
+  exception when others then null;
+  end;
+end $$;
+revoke execute on function public._kill_sessions(uuid) from public, anon, authenticated;
+
+create or replace function public.reset_password_with_code(p_username text, p_code text, p_new_password text)
+returns text language plpgsql security definer set search_path = public, extensions, auth as $$
+declare un text := lower(trim(coalesce(p_username, ''))); uid uuid; h text; em text;
+  code text := upper(regexp_replace(coalesce(p_code, ''), '[^A-Za-z0-9]', '', 'g'));
+begin
+  if char_length(coalesce(p_new_password, '')) < 8 then raise exception 'كلمة المرور 8 أحرف على الأقل'; end if;
+  delete from recovery_attempts where at < now() - interval '1 day';
+  if (select count(*) from recovery_attempts where username = un and at > now() - interval '1 hour') >= 5 then
+    raise exception 'rate_limited: محاولات كثيرة، حاول بعد ساعة';
+  end if;
+  insert into recovery_attempts(username) values (un);
+  select p.id into uid from profiles p where p.username = un and not p.is_banned;
+  select code_hash into h from recovery_codes where user_id = uid;
+  if uid is null or h is null or crypt(code, h) <> h then
+    raise exception 'اسم المستخدم أو رمز الاسترداد غير صحيح';
+  end if;
+  update auth.users set encrypted_password = crypt(p_new_password, gen_salt('bf')), updated_at = now()
+    where id = uid returning email into em;
+  delete from recovery_codes where user_id = uid;
+  perform _kill_sessions(uid);
+  return em;
+end $$;
+
+create or replace function public.admin_set_password(target uuid, new_password text) returns void
+language plpgsql security definer set search_path = public, extensions, auth as $$
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  if char_length(coalesce(new_password, '')) < 8 then raise exception 'كلمة المرور 8 أحرف على الأقل'; end if;
+  if target <> auth.uid() and exists(select 1 from profiles where id = target and (is_owner or is_admin))
+     and not coalesce((select is_owner from profiles where id = auth.uid()), false) then
+    raise exception 'غير مسموح';
+  end if;
+  update auth.users set encrypted_password = crypt(new_password, gen_salt('bf')), updated_at = now()
+  where id = target;
+  if not found then raise exception 'المستخدم غير موجود'; end if;
+  if target <> auth.uid() then perform _kill_sessions(target); end if;
+end $$;
+
+-- رموز الأجهزة القديمة (أكثر من 30 يوم بدون استخدام) ما تنقبل
+create or replace function public._device_user(p_token text) returns uuid
+language sql stable security definer set search_path = public as $$
+  select coalesce(
+    (select user_id from fcm_tokens where token = p_token and updated_at > now() - interval '60 days'),
+    (select user_id from device_tokens where token = p_token and last_poll > now() - interval '30 days'));
+$$;
+revoke execute on function public._device_user(text) from public, anon, authenticated;
+
+-- ---------- المالك ما ينسرق حتى لو انحذف حسابه ----------
+create or replace function public.handle_new_user() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  uname text := lower(coalesce(new.raw_user_meta_data->>'username', ''));
+  first_user boolean := not exists(select 1 from profiles);
+begin
+  if uname !~ '^[a-z0-9_.]{3,24}$' or exists(select 1 from profiles where username = uname) then
+    uname := 'user_' || substr(replace(new.id::text, '-', ''), 1, 10);
+  end if;
+  insert into profiles(id, username, display_name, is_admin, is_owner, is_verified)
+  values (new.id, uname,
+          coalesce(nullif(trim(new.raw_user_meta_data->>'display_name'), ''), uname),
+          first_user, first_user, first_user);
+  return new;
+end $$;
+
+-- ---------- دوال داخلية تنقفل ----------
+do $$ begin
+  -- (is_blocked_between/are_friends تبقى لأن سياسات الحماية تستدعيها بصلاحية المستخدم)
+  revoke execute on function public.is_blocked_between(uuid, uuid) from anon;
+  revoke execute on function public.are_friends(uuid, uuid) from anon;
+  revoke execute on function public.trusted_begin() from public, anon, authenticated;
+  revoke execute on function public._lk_url() from public, anon, authenticated;
+  revoke execute on function public.push_submit_sa(text) from anon;
+  revoke execute on function public.friends_of(uuid) from anon;
+exception when others then raise notice 'revoke v23: %', sqlerrm;
+end $$;
+
+-- ---------- قائمة ملفات المستخدمين ما تنكشف (الروابط العامة تبقى شغالة) ----------
+drop policy if exists posts_read on storage.objects;
+create policy posts_read on storage.objects for select to authenticated
+  using (bucket_id = 'posts' and owner = auth.uid());
+drop policy if exists avatars_read on storage.objects;
+create policy avatars_read on storage.objects for select to authenticated
+  using (bucket_id = 'avatars' and owner = auth.uid());
+
+-- ---------- البث: مشاركة وحدة لكل شخص + عدد مشاهدين منطقي ----------
+create table if not exists public.live_shares (
+  live_id uuid not null references public.lives(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  primary key (live_id, user_id)
+);
+alter table public.live_shares enable row level security;
+
+create or replace function public.live_share(p_live uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then return; end if;
+  insert into live_shares(live_id, user_id) values (p_live, auth.uid()) on conflict do nothing;
+  if found then
+    update lives set share_count = share_count + 1 where id = p_live and status = 'live';
+  end if;
+end $$;
+grant execute on function public.live_share(uuid) to authenticated;
+
+create or replace function public.live_heartbeat(p_live uuid, p_viewers int, p_likes bigint) returns text
+language plpgsql security definer set search_path = public as $$
+declare st text; v int := least(greatest(coalesce(p_viewers, 0), 0), 100000);
+begin
+  update lives set last_beat = now(), viewer_count = v,
+    peak_viewers = greatest(peak_viewers, v),
+    like_count = least(greatest(like_count, coalesce(p_likes, 0)), like_count + 5000)
+  where id = p_live and host_id = auth.uid() returning status into st;
+  return coalesce(st, 'ended');
+end $$;
+
+-- ---------- صيانة ذاتية: تنظيف تلقائي كل ساعة ----------
+create or replace function public._self_heal() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  delete from rate_events where at < now() - interval '1 day';
+  begin delete from signup_attempts where at < now() - interval '1 day'; exception when others then null; end;
+  begin delete from recovery_attempts where at < now() - interval '1 day'; exception when others then null; end;
+  -- مكالمات عالقة «ترن» من زمان
+  begin
+    update call_sessions set status = 'ended' where status = 'ringing' and created_at < now() - interval '2 minutes';
+  exception when others then null; end;
+  -- رموز أجهزة ميتة
+  begin delete from device_tokens where last_poll < now() - interval '45 days'; exception when others then null; end;
+  begin delete from fcm_tokens where updated_at < now() - interval '90 days'; exception when others then null; end;
+  -- ردود الإشعارات القديمة بجدول pg_net
+  begin delete from net._http_response where created < now() - interval '1 day'; exception when others then null; end;
+  -- إشعارات قديمة جدًا
+  begin delete from notifications where created_at < now() - interval '90 days'; exception when others then null; end;
+end $$;
+revoke execute on function public._self_heal() from public, anon, authenticated;
+do $$ begin
+  perform cron.schedule('almajhool-self-heal', '23 * * * *', 'select public._self_heal()');
+exception when others then raise notice 'self heal not scheduled: %', sqlerrm;
+end $$;
+
+-- ---------- مفتاح توقيع جديد سري (تدوير المفتاح القديم المكشوف) ----------
+-- يُنشأ مرة وحدة من GitHub Actions ويُحفظ هنا فقط؛ ما ينقرأ إلا من بناء هذا المستودع.
+create or replace function public.ci_signing(p_gh text, p_ks text, p_pass text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _gh_verify(p_gh) then return null; end if;
+  if char_length(coalesce(p_ks, '')) between 100 and 20000 and char_length(coalesce(p_pass, '')) >= 16 then
+    insert into private_settings(key, value)
+      values ('sign_v2', jsonb_build_object('ks', p_ks, 'pass', p_pass)::text)
+      on conflict (key) do nothing;
+  end if;
+  return (select value::jsonb from private_settings where key = 'sign_v2');
+end $$;
+grant execute on function public.ci_signing(text, text, text) to anon;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

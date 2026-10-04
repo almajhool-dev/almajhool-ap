@@ -10,6 +10,9 @@ on:
       - 'admin/**'
       - '.github/workflows/push-refresh.yml'
       - 'tool/push_refresh.py'
+      - 'supabase/**'
+      - 'tool/rotation-test/**'
+      - '.github/workflows/rotation-test.yml'
   workflow_dispatch:
 
 permissions:
