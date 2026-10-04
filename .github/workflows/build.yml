@@ -71,8 +71,20 @@ jobs:
           body: |
             ## تحميل التطبيق
             - **almajhool-app.apk** ← للتثبيت على أي هاتف أندرويد (6 فما فوق، 32 و 64 بت)
+            - almajhool-arm64.apk ← نسخة أصغر لأغلب الهواتف الحديثة
+            - almajhool-armv7.apk ← نسخة أصغر للهواتف القديمة (32 بت)
             - almajhool-app.aab ← للنشر على Google Play
-          files: dist/*
+          files: |
+            dist/split/*.apk
+            dist/almajhool-app.aab
+
+      - name: Publish universal APK (last, for older in-app updaters)
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          make_latest: true
+          files: dist/almajhool-app.apk
 
       - name: Save build log
         if: always()

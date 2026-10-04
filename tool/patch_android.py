@@ -310,6 +310,8 @@ class MainActivity : FlutterActivity() {
                     } catch (e: Exception) {
                         result.success(listOf<String>())
                     }
+                } else if (call.method == "abis") {
+                    result.success(Build.SUPPORTED_ABIS.toList())
                 } else if (call.method == "lastExit") {
                     result.success(lastExit())
                 } else if (call.method == "recentNativeCrashes") {

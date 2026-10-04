@@ -64,6 +64,19 @@ else
   cp build/app/outputs/flutter-apk/app-release.apk dist/almajhool-app.apk
 fi
 cp build/app/outputs/bundle/release/app-release.aab dist/almajhool-app.aab
+
+# نسخ أصغر بالنص لكل نوع معالج (تحديث أسرع)، بنفس رقم الإصدار والتوقيع
+if [[ -n "${GH_TOKEN:-}" ]]; then
+  BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+  mkdir -p dist/split
+  for v in arm64:armeabi-v7a armv7:arm64-v8a; do
+    name="${v%%:*}"; drop="${v##*:}"
+    python3 tool/strip_abi.py build/app/outputs/flutter-apk/app-release.apk "$drop" /tmp/strip-$name.apk
+    "$BT/zipalign" -P 16 -f 4 /tmp/strip-$name.apk /tmp/aligned-$name.apk 2>/dev/null || "$BT/zipalign" -p -f 4 /tmp/strip-$name.apk /tmp/aligned-$name.apk
+    bash tool/sign_rotate.sh /tmp/aligned-$name.apk dist/split/almajhool-$name.apk
+  done
+  ls -la dist/split
+fi
 ls -la dist
 
 echo ">> Verifying APK signature"

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:ota_update/ota_update.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -29,11 +30,28 @@ class UpdateService {
       final j = jsonDecode(r.body) as Map<String, dynamic>;
       final tag = (j['tag_name'] ?? '') as String;
       final build = int.tryParse(tag.split('.').last) ?? 0;
-      String? url;
+      // نختار النسخة الأصغر المناسبة لمعالج الجهاز (تنزيل أسرع)، وإلا النسخة الشاملة
+      var abis = <String>[];
+      try {
+        abis = ((await const MethodChannel('almajhool/integrity').invokeMethod<List<dynamic>>('abis')) ?? const [])
+            .map((e) => '$e')
+            .toList();
+      } catch (_) {}
+      final want = abis.isEmpty
+          ? null
+          : abis.first.contains('arm64')
+              ? 'almajhool-arm64.apk'
+              : abis.first.contains('armeabi')
+                  ? 'almajhool-armv7.apk'
+                  : null;
+      String? url, universal;
       for (final a in (j['assets'] as List? ?? const [])) {
         final name = (a['name'] ?? '') as String;
-        if (name.endsWith('.apk')) url = a['browser_download_url'] as String?;
+        final u = a['browser_download_url'] as String?;
+        if (name == want) url = u;
+        if (name == 'almajhool-app.apk') universal = u;
       }
+      url ??= universal;
       if (url == null || build == 0) return null;
       return (build: build, url: url, notes: (j['body'] ?? '') as String);
     } catch (_) {
