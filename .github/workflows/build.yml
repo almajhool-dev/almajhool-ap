@@ -75,7 +75,6 @@ jobs:
             - almajhool-armv7.apk ← نسخة أصغر للهواتف القديمة (32 بت)
             - almajhool-app.aab ← للنشر على Google Play
           files: |
-            dist/split/*.apk
             dist/almajhool-app.aab
 
       - name: Publish universal APK (last, for older in-app updaters)
