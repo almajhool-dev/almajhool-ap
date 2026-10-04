@@ -42,7 +42,14 @@ def oauth(sa):
         return json.loads(r.read())
 
 
-cfg = rpc("push_refresh_config", {"p_gh": GH})
+cfg = None
+for attempt in range(5):
+    try:
+        cfg = rpc("push_refresh_config", {"p_gh": GH})
+        break
+    except Exception as e:  # noqa: BLE001
+        print("config fetch failed:", e)
+        time.sleep(20)
 if not cfg:
     print("GitHub verification FAILED")
     sys.exit(1)

@@ -1,12 +1,16 @@
 name: Push key refresh
 
+# يجدد مفتاح إشعارات Google كل 40 دقيقة بشكل متواصل:
+# كل تشغيل يبقى ~5 ساعات ثم يشغّل نفسه من جديد (لا يعتمد على جدولة GitHub غير المضمونة)،
+# والجدولة كل ساعة احتياط لإعادة السلسلة إذا توقفت.
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '17 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: push-refresh
@@ -15,10 +19,23 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 340
     steps:
       - uses: actions/checkout@v4
       - run: pip install --quiet cryptography
-      - run: python tool/push_refresh.py
+      - name: Refresh loop
         env:
           GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 8); do
+            python tool/push_refresh.py || echo "refresh failed, retry in 2 minutes" && sleep 0
+            if [ "$i" -lt 8 ]; then sleep 2400; fi
+          done
+      - name: Continue chain
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/push-refresh.yml/dispatches" \
+            -d '{"ref":"main"}' && echo "next run dispatched"
