@@ -1,0 +1,25 @@
+30
+>> install current (old key)
+Performing Streamed Install
+Success
+>> upgrade to rotated
+Serving...
+Performing Incremental Install
+Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Package com.almajhool.almajhool_app signatures do not match previously installed version; ignoring!]
+Performing Streamed Install
+Success
+>> try fake (old key only) over rotated
+Serving...
+All files should be loaded. Notifying the device.
+Performing Incremental Install
+Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Package com.almajhool.almajhool_app signatures do not match previously installed version; ignoring!]
+Performing Streamed Install
+adb: failed to install fake.apk: Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Package com.almajhool.almajhool_app signatures do not match previously installed version; ignoring!]
+
+>> rotated again over itself (next update)
+Serving...
+All files should be loaded. Notifying the device.
+Performing Incremental Install
+Success
+Install command complete in 662 ms
+RESULT=PASS
