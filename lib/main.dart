@@ -17,12 +17,14 @@ import 'services/integrity_service.dart';
 import 'services/local_notifications.dart';
 import 'services/notif_router.dart';
 import 'services/push_service.dart';
+import 'services/rtc_safety.dart';
 import 'services/update_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('ar');
   await CacheService.init();
+  await RtcSafety.init();
   await AppConfig.load();
   await PushService.init();
   await IntegrityService.check();

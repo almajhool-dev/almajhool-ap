@@ -24,6 +24,7 @@ import '../../services/call_service.dart';
 import '../../services/core_services.dart';
 import '../../services/filter_service.dart';
 import '../../services/live_recordings.dart';
+import '../../services/rtc_safety.dart';
 import '../../repositories/chat_repository.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
@@ -315,6 +316,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
       await old.disconnect();
       await old.dispose();
     }
+    RtcSafety.active(true);
     final room = lk.Room(
       roomOptions: lk.RoomOptions(
         adaptiveStream: true,
@@ -766,8 +768,17 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
       _repo.end(_liveId!).catchError((_) {});
     }
     _listener?.dispose();
-    _room?.disconnect();
-    _room?.dispose();
+    final room = _room;
+    _room = null;
+    // فصل ثم تنظيف بالتسلسل (التنظيف المتزامن كان يسبب انهيار WebRTC)
+    if (room != null) {
+      room.disconnect().catchError((_) {}).whenComplete(() {
+        room.dispose().catchError((_) {});
+        RtcSafety.active(false);
+      });
+    } else {
+      RtcSafety.active(false);
+    }
     if (_ch != null) supa.removeChannel(_ch!);
     if (_db != null) supa.removeChannel(_db!);
     _text.dispose();
@@ -2236,7 +2247,7 @@ class _LivePreviewCardState extends State<LivePreviewCard> with WidgetsBindingOb
     _debounce = Timer(const Duration(milliseconds: 600), _evaluate);
   }
 
-  bool get _shouldPlay => mounted && _tickerOn && _onScreen && _foreground && !_opening && !_ended;
+  bool get _shouldPlay => RtcSafety.previewAllowed && mounted && _tickerOn && _onScreen && _foreground && !_opening && !_ended;
 
   Future<void> _evaluate() async {
     if (!mounted) return;
@@ -2253,6 +2264,7 @@ class _LivePreviewCardState extends State<LivePreviewCard> with WidgetsBindingOb
       final info = await _repo.preview(widget.live.id);
       if (!_shouldPlay) return;
       _cover = (info['cover_url'] as String?)?.isNotEmpty == true ? info['cover_url'] as String : null;
+      RtcSafety.active(true);
       final room = lk.Room(roomOptions: const lk.RoomOptions(adaptiveStream: true, dynacast: true));
       _room = room;
       _listener = room.createListener()
@@ -2269,7 +2281,7 @@ class _LivePreviewCardState extends State<LivePreviewCard> with WidgetsBindingOb
         ..on<lk.TrackUnpublishedEvent>((_) => _refresh());
       await room.connect(info['url'] as String, info['token'] as String);
       if (!_shouldPlay) {
-        await _disconnect();
+        await _disconnect(force: true);
         return;
       }
       _refresh();
@@ -2277,7 +2289,7 @@ class _LivePreviewCardState extends State<LivePreviewCard> with WidgetsBindingOb
     } catch (e) {
       final msg = '$e';
       if (msg.contains('انتهى')) _ended = true;
-      await _disconnect();
+      await _disconnect(force: true);
     } finally {
       _connecting = false;
     }
@@ -2300,7 +2312,9 @@ class _LivePreviewCardState extends State<LivePreviewCard> with WidgetsBindingOb
     });
   }
 
-  Future<void> _disconnect() async {
+  Future<void> _disconnect({bool force = false}) async {
+    // أثناء الاتصال ما نفكك الغرفة من مكان ثاني (يسبب انهيار)؛ _connect نفسها تنظّف بعد ما تخلص
+    if (_connecting && !force) return;
     final r = _room;
     _room = null;
     _listener?.dispose();
@@ -2312,8 +2326,11 @@ class _LivePreviewCardState extends State<LivePreviewCard> with WidgetsBindingOb
     if (r != null) {
       try {
         await r.disconnect();
+      } catch (_) {}
+      try {
         await r.dispose();
       } catch (_) {}
+      RtcSafety.active(false);
     }
     _refresh();
   }

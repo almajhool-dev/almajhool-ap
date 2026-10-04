@@ -312,6 +312,18 @@ class MainActivity : FlutterActivity() {
                     }
                 } else if (call.method == "lastExit") {
                     result.success(lastExit())
+                } else if (call.method == "recentNativeCrashes") {
+                    var n = 0
+                    try {
+                        if (Build.VERSION.SDK_INT >= 30) {
+                            val am = getSystemService(android.app.ActivityManager::class.java)
+                            val since = System.currentTimeMillis() - 86400000L
+                            for (x in am.getHistoricalProcessExitReasons(packageName, 0, 16)) {
+                                if (x.reason == android.app.ApplicationExitInfo.REASON_CRASH_NATIVE && x.timestamp > since) n++
+                            }
+                        }
+                    } catch (t: Throwable) {}
+                    result.success(n)
                 } else {
                     result.notImplemented()
                 }
@@ -349,10 +361,45 @@ class MainActivity : FlutterActivity() {
                 e.reason == android.app.ApplicationExitInfo.REASON_LOW_MEMORY
             if (!interesting) return null
             "reason=" + e.reason + " status=" + e.status + " desc=" + (e.description ?: "") +
-                " pss=" + e.pss + " api=" + Build.VERSION.SDK_INT + " model=" + Build.MODEL
+                " pss=" + e.pss + " api=" + Build.VERSION.SDK_INT + " model=" + Build.MODEL +
+                " hw=" + Build.HARDWARE + " trace=" + traceOf(e)
         } catch (t: Throwable) {
             null
         }
+    }
+
+    /** أهم أسطر آثار الانهيار الأصلي (أسماء المكتبات والدوال فقط). */
+    private fun traceOf(e: android.app.ApplicationExitInfo): String {
+        return try {
+            val bytes = e.traceInputStream?.use { ins ->
+                val buf = java.io.ByteArrayOutputStream()
+                val b = ByteArray(16384)
+                var total = 0
+                while (true) {
+                    val n = ins.read(b)
+                    if (n <= 0 || total > 600000) break
+                    buf.write(b, 0, n); total += n
+                }
+                buf.toByteArray()
+            } ?: return ""
+            val runs = ArrayList<String>()
+            val sb = StringBuilder()
+            for (x in bytes) {
+                val c = x.toInt() and 0xff
+                if (c in 32..126) sb.append(c.toChar()) else {
+                    if (sb.length >= 6) runs.add(sb.toString())
+                    sb.setLength(0)
+                }
+            }
+            if (sb.length >= 6) runs.add(sb.toString())
+            val keys = listOf("Abort", "signal", "SIG", ".so", "::", "Java_", "webrtc", "jni", "Exception", "assert", "Check failed", "Fatal")
+            val seen = LinkedHashSet<String>()
+            for (r in runs) {
+                if (keys.any { r.contains(it) }) seen.add((if (r.startsWith("/")) r.substringAfterLast('/') else r).take(140))
+                if (seen.size >= 40) break
+            }
+            seen.joinToString(" ; ").take(2000)
+        } catch (t: Throwable) { "err:" + t.javaClass.simpleName }
     }
 
     private fun sha256(s: Signature): String {

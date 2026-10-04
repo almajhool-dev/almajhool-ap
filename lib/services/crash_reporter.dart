@@ -1,9 +1,9 @@
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 
 import 'core_services.dart';
+import 'rtc_safety.dart';
 import 'update_service.dart';
 
 /// يرسل أسباب الأعطال للمطوّر (بدون أي بيانات شخصية) حتى تُصلح بسرعة.
@@ -26,8 +26,14 @@ class CrashReporter {
   /// انهيار من الجزء الأصلي (Android) حُفظ قبل إغلاق التطبيق.
   static Future<void> sendPendingNativeCrash() async {
     try {
-      final exit = await const MethodChannel('almajhool/integrity').invokeMethod<String>('lastExit');
-      if (exit != null && exit.isNotEmpty) _send('exit: $exit');
+      final exit = RtcSafety.pendingExit;
+      RtcSafety.pendingExit = null;
+      if (exit != null && exit.isNotEmpty) {
+        // السبب + آثار الانهيار (قد تكون طويلة فتُرسل على أجزاء)
+        for (var i = 0; i < exit.length && i < 2200; i += 520) {
+          _send('exit${i == 0 ? '' : '+$i'} L${RtcSafety.level}: ${exit.substring(i, (i + 520).clamp(0, exit.length))}');
+        }
+      }
     } catch (_) {}
     final c = CacheService.getString('last_crash');
     if (c == null || c.isEmpty) return;
