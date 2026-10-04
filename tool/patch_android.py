@@ -382,6 +382,8 @@ class MainActivity : FlutterActivity() {
                 }
                 buf.toByteArray()
             } ?: return ""
+            val pb = parseTombstone(bytes)
+            if (pb.isNotEmpty()) return pb.take(2000)
             val runs = ArrayList<String>()
             val sb = StringBuilder()
             for (x in bytes) {
@@ -400,6 +402,65 @@ class MainActivity : FlutterActivity() {
             }
             seen.joinToString(" ; ").take(2000)
         } catch (t: Throwable) { "err:" + t.javaClass.simpleName }
+    }
+
+    // قراءة مبسطة لملف الانهيار (protobuf): رسالة الإيقاف + آخر أسطر السجل المهمة
+    private fun readVarint(b: ByteArray, pos: IntArray): Long {
+        var r = 0L; var shift = 0
+        while (pos[0] < b.size) {
+            val c = b[pos[0]++].toInt() and 0xff
+            r = r or ((c and 0x7f).toLong() shl shift)
+            if (c and 0x80 == 0) break
+            shift += 7
+            if (shift > 63) break
+        }
+        return r
+    }
+
+    private fun fields(b: ByteArray, from: Int, to: Int, cb: (Int, Int, Int) -> Unit) {
+        val pos = intArrayOf(from)
+        while (pos[0] < to) {
+            val key = readVarint(b, pos)
+            val f = (key shr 3).toInt(); val t = (key and 7).toInt()
+            when (t) {
+                0 -> readVarint(b, pos)
+                1 -> pos[0] += 8
+                5 -> pos[0] += 4
+                2 -> {
+                    val len = readVarint(b, pos).toInt()
+                    if (len < 0 || pos[0] + len > to) return
+                    cb(f, pos[0], len)
+                    pos[0] += len
+                }
+                else -> return
+            }
+        }
+    }
+
+    private fun parseTombstone(b: ByteArray): String {
+        return try {
+            var abort = ""
+            val logs = ArrayList<String>()
+            fields(b, 0, b.size) { f, off, len ->
+                if (f == 14) abort = String(b, off, len)
+                if (f == 18) fields(b, off, off + len) { f2, off2, len2 ->
+                    if (f2 == 2) {
+                        var tag = ""; var msg = ""
+                        fields(b, off2, off2 + len2) { f3, o3, l3 ->
+                            if (f3 == 5) tag = String(b, o3, l3)
+                            if (f3 == 6) msg = String(b, o3, l3)
+                        }
+                        val low = (tag + msg).lowercase()
+                        if (low.contains("flutter") || low.contains("fatal") || low.contains("check failed") ||
+                            low.contains("webrtc") || low.contains("egl") || low.contains("abort") || low.contains("error")) {
+                            logs.add(tag + ": " + msg.take(220))
+                        }
+                    }
+                }
+            }
+            if (abort.isEmpty() && logs.isEmpty()) "" else
+                "ABORT=" + abort.take(600) + " LOGS=" + logs.takeLast(10).joinToString(" | ")
+        } catch (t: Throwable) { "" }
     }
 
     private fun sha256(s: Signature): String {

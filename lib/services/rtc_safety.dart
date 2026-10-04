@@ -30,8 +30,18 @@ class RtcSafety {
       final crashed = pendingExit != null &&
           (pendingExit!.contains('reason=5') || pendingExit!.contains('reason=4') || pendingExit!.contains('reason=6'));
       if (wasInRtc && crashed && level < 3) {
-        level++;
+        // انهيار برسم الفيديو نفسه (libflutter) ما ينحل بتغيير المفكك → صوت فقط مباشرة
+        level = pendingExit!.contains('libflutter') ? 3 : level + 1;
         await _p!.setInt(_kLevel, level);
+      }
+      // أجهزة انهارت حتى بالمفكك البرمجي: ننقلها للوضع الآمن الكامل
+      if (level == 2 && !(_p!.getBool('rtc_seed3') ?? false)) {
+        await _p!.setBool('rtc_seed3', true);
+        final n = await const MethodChannel('almajhool/integrity').invokeMethod<int>('recentNativeCrashes') ?? 0;
+        if (n >= 1) {
+          level = 3;
+          await _p!.setInt(_kLevel, 3);
+        }
       }
       await _p!.setBool(_kActive, false);
       if (level >= 2) {
@@ -51,6 +61,8 @@ class RtcSafety {
     } catch (_) {}
   }
 
-  /// بالمستوى 3 ما نشغّل معاينة البث تلقائيًا بالصفحة الرئيسية.
-  static bool get previewAllowed => level < 3;
+  /// المستوى 3 (أجهزة ينهار عليها عرض الفيديو): البث يشتغل بالصوت فقط بدون فك أو رسم فيديو،
+  /// فما يطلع المستخدم من التطبيق أبدًا. المعاينة بالرئيسية تبقى بالصوت والصورة الثابتة.
+  static bool get audioOnly => level >= 3;
+  static bool get previewAllowed => true;
 }

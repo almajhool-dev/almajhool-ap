@@ -37,6 +37,18 @@ String _compact(int n) {
   return '$n';
 }
 
+
+/// للأجهزة بالوضع الآمن: نشترك بالصوت فقط (بدون فيديو) حتى ما ينهار الجهاز.
+void _subscribeAudioOnly(lk.Room room) {
+  for (final p in room.remoteParticipants.values) {
+    for (final a in p.audioTrackPublications) {
+      if (!a.subscribed) a.subscribe().catchError((_) {});
+    }
+  }
+}
+
+lk.ConnectOptions get _connectOpts => lk.ConnectOptions(autoSubscribe: !RtcSafety.audioOnly);
+
 /// بدء بث (يسأل عن العنوان ثم يفتح شاشة البث).
 Future<void> startLive(BuildContext context) async {
   final title = await promptText(context, 'عنوان البث', hint: 'مثلاً: دردشة مع المتابعين 🔥', ok: 'ابدأ البث');
@@ -368,7 +380,16 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
         if (_reconnecting) return;
         if (mounted && _endedMsg == null) _ended(widget.isHost ? 'انقطع البث' : 'انتهى البث');
       });
-    await room.connect(url, token);
+    if (RtcSafety.audioOnly) {
+      _listener!
+        ..on<lk.TrackPublishedEvent>((_) => _subscribeAudioOnly(room))
+        ..on<lk.ParticipantConnectedEvent>((_) => _subscribeAudioOnly(room));
+    }
+    await room.connect(url, token, connectOptions: _connectOpts);
+    if (RtcSafety.audioOnly) {
+      _subscribeAudioOnly(room);
+      if (!publish && mounted) showSnack(context, '🔈 البث يشتغل بالصوت على جهازك لحمايته من الإغلاق المفاجئ');
+    }
     _reconnecting = false;
     if (publish) {
       // صاحب البث يبدأ بالكاميرا؛ الضيف يبدأ بالصوت فقط ويقرر هو فتح الكاميرا
@@ -957,6 +978,10 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
   }
 
   Future<void> _toggleCam() async {
+    if (!widget.isHost && !_camOn && RtcSafety.audioOnly) {
+      showSnack(context, 'جهازك يشتغل بوضع الصوت فقط بالبث لحمايته من الإغلاق المفاجئ');
+      return;
+    }
     if (_rec != null) {
       await _stopRecording();
       if (mounted) showSnack(context, 'توقف التسجيل وحُفظ (تغيرت الكاميرا)');
@@ -2279,7 +2304,13 @@ class _LivePreviewCardState extends State<LivePreviewCard> with WidgetsBindingOb
         ..on<lk.ParticipantDisconnectedEvent>((_) => _refresh())
         ..on<lk.TrackPublishedEvent>((_) => _refresh())
         ..on<lk.TrackUnpublishedEvent>((_) => _refresh());
-      await room.connect(info['url'] as String, info['token'] as String);
+      if (RtcSafety.audioOnly) {
+        _listener!
+          ..on<lk.TrackPublishedEvent>((_) => _subscribeAudioOnly(room))
+          ..on<lk.ParticipantConnectedEvent>((_) => _subscribeAudioOnly(room));
+      }
+      await room.connect(info['url'] as String, info['token'] as String, connectOptions: _connectOpts);
+      if (RtcSafety.audioOnly) _subscribeAudioOnly(room);
       if (!_shouldPlay) {
         await _disconnect(force: true);
         return;
