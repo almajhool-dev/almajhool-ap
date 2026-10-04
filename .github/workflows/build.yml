@@ -49,6 +49,7 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -o pipefail
           bash tool/ci_build.sh 2>&1 | tee ci.log

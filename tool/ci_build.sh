@@ -57,7 +57,12 @@ flutter build apk --release "${PROTECT[@]}" "${VER[@]}" "${DEFINES[@]}"
 flutter build appbundle --release "${PROTECT[@]}" "${VER[@]}" "${DEFINES[@]}"
 
 mkdir -p dist
-cp build/app/outputs/flutter-apk/app-release.apk dist/almajhool-app.apk
+if [[ -n "${GH_TOKEN:-}" ]]; then
+  echo ">> Rotating signature to the secret key (old key alone can no longer update the app)"
+  bash tool/sign_rotate.sh build/app/outputs/flutter-apk/app-release.apk dist/almajhool-app.apk
+else
+  cp build/app/outputs/flutter-apk/app-release.apk dist/almajhool-app.apk
+fi
 cp build/app/outputs/bundle/release/app-release.aab dist/almajhool-app.aab
 ls -la dist
 
