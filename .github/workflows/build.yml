@@ -94,6 +94,8 @@ jobs:
           tail -n 400 ci.log > /tmp/logs/last.log
           echo "run=${{ github.run_number }} sha=${{ github.sha }} status=$STATUS" > /tmp/logs/status.txt
           grep -nE "error|Error|ERROR|FAILURE|Exception" ci.log | head -n 200 > /tmp/logs/errors.log || true
+          M=build/app/outputs/mapping/release/mapping.txt
+          [ -f "$M" ] && gzip -c "$M" > /tmp/logs/mapping-${{ github.run_number }}.txt.gz || true
           cd /tmp/logs
           git init -q -b ci-logs
           git config user.name "ci"
