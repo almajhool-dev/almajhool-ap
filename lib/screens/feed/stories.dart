@@ -8,10 +8,12 @@ import 'package:provider/provider.dart';
 import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../providers/providers.dart';
+import '../../repositories/live_repository.dart';
 import '../../repositories/story_repository.dart';
 import '../../services/core_services.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
+import '../live/live_screens.dart';
 import '../profile/profile_screens.dart';
 import 'feed_screens.dart';
 import 'image_editor.dart';
@@ -26,6 +28,7 @@ class StoryBar extends StatefulWidget {
 class StoryBarState extends State<StoryBar> {
   final _repo = StoryRepository();
   List<StoryGroup> _groups = [];
+  List<LiveSummary> _lives = [];
 
   @override
   void initState() {
@@ -37,6 +40,10 @@ class StoryBarState extends State<StoryBar> {
     try {
       final g = await _repo.active();
       if (mounted) setState(() => _groups = g);
+    } catch (_) {}
+    try {
+      final l = await LiveRepository().active();
+      if (mounted) setState(() => _lives = l);
     } catch (_) {}
   }
 
@@ -121,6 +128,8 @@ class StoryBarState extends State<StoryBar> {
             onTap: mineIndex >= 0 ? () => _open(mineIndex) : _add,
             onPlus: _add,
           ),
+          for (final l in _lives)
+            _liveBubble(l),
           for (var i = 0; i < _groups.length; i++)
             if (_groups[i].user.id != myId)
               _bubble(
@@ -131,6 +140,46 @@ class StoryBarState extends State<StoryBar> {
                 onTap: () => _open(i),
               ),
         ],
+      ),
+    );
+  }
+
+  Widget _liveBubble(LiveSummary l) {
+    return GestureDetector(
+      onTap: () async {
+        await openLive(context, l.id);
+        reload();
+      },
+      child: SizedBox(
+        width: 78,
+        child: Column(children: [
+          const SizedBox(height: 6),
+          Stack(clipBehavior: Clip.none, children: [
+            Container(
+              padding: const EdgeInsets.all(3),
+              decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.red),
+              child: Container(
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(shape: BoxShape.circle, color: Theme.of(context).scaffoldBackgroundColor),
+                child: Avatar(url: l.host.avatarUrl, name: l.host.displayName, size: 58),
+              ),
+            ),
+            Positioned(
+              bottom: -4,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(6)),
+                  child: const Text('مباشر', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w900)),
+                ),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 6),
+          Text(l.host.displayName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
+        ]),
       ),
     );
   }

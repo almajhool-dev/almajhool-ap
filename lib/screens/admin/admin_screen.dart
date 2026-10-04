@@ -10,11 +10,13 @@ import 'package:provider/provider.dart';
 import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../providers/providers.dart';
+import '../../repositories/live_repository.dart';
 import '../../repositories/social_repositories.dart';
 import '../../services/core_services.dart';
 import '../../services/update_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
+import '../live/live_screens.dart';
 import '../profile/profile_screens.dart';
 
 /// لوحة تحكم المدير داخل التطبيق.
@@ -27,7 +29,7 @@ class AdminScreen extends StatelessWidget {
       return Scaffold(appBar: AppBar(), body: const EmptyState(icon: Icons.lock, title: 'للمدير فقط'));
     }
     return DefaultTabController(
-      length: 6,
+      length: 7,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('لوحة التحكم'),
@@ -39,13 +41,14 @@ class AdminScreen extends StatelessWidget {
               Tab(icon: Icon(Icons.people_alt_rounded), text: 'المستخدمون'),
               Tab(icon: Icon(Icons.dynamic_feed_rounded), text: 'المنشورات'),
               Tab(icon: Icon(Icons.flag_rounded), text: 'البلاغات'),
+              Tab(icon: Icon(Icons.live_tv_rounded), text: 'البث'),
               Tab(icon: Icon(Icons.groups_rounded), text: 'المجموعات'),
               Tab(icon: Icon(Icons.campaign_rounded), text: 'إشعار عام'),
             ],
           ),
         ),
         body: const TabBarView(
-          children: [_Overview(), _Users(), _Posts(), _Reports(), _Groups(), _Broadcast()],
+          children: [_Overview(), _Users(), _Posts(), _Reports(), _LivesAdmin(), _Groups(), _Broadcast()],
         ),
       ),
     );
@@ -159,6 +162,8 @@ class _OverviewState extends State<_Overview> {
               ),
             ),
           ),
+          const SizedBox(height: 12),
+          const _LiveSettingsCard(),
           const SizedBox(height: 12),
           const _OldVersionsCard(),
           const SizedBox(height: 12),
@@ -1013,6 +1018,242 @@ class _OldVersionsCardState extends State<_OldVersionsCard> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+
+/// إعداد خادم البث المباشر (LiveKit).
+class _LiveSettingsCard extends StatefulWidget {
+  const _LiveSettingsCard();
+  @override
+  State<_LiveSettingsCard> createState() => _LiveSettingsCardState();
+}
+
+class _LiveSettingsCardState extends State<_LiveSettingsCard> {
+  final _url = TextEditingController();
+  final _key = TextEditingController();
+  final _secret = TextEditingController();
+  bool? _ready;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    LiveRepository().ready().then((v) {
+      if (mounted) setState(() => _ready = v);
+    }).catchError((_) {
+      if (mounted) setState(() => _ready = false);
+    });
+  }
+
+  Future<void> _save() async {
+    setState(() => _busy = true);
+    try {
+      await LiveRepository().configure(_url.text.trim(), _key.text.trim(), _secret.text.trim());
+      _secret.clear();
+      if (mounted) {
+        setState(() => _ready = true);
+        showSnack(context, 'تم تفعيل البث المباشر ✅');
+      }
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(children: [
+              const Icon(Icons.live_tv_rounded, color: Colors.redAccent),
+              const SizedBox(width: 8),
+              const Expanded(child: Text('البث المباشر (LiveKit)', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16))),
+              if (_ready != null)
+                Chip(label: Text(_ready! ? 'مفعّل ✅' : 'غير مفعّل'), visualDensity: VisualDensity.compact),
+            ]),
+            const SizedBox(height: 6),
+            const Text('من cloud.livekit.io ← Settings ← Keys. تُحفظ سرًا في قاعدة البيانات.', style: TextStyle(fontSize: 12.5)),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _url,
+              textDirection: TextDirection.ltr,
+              decoration: const InputDecoration(labelText: 'URL (wss://...)', isDense: true),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _key,
+              textDirection: TextDirection.ltr,
+              decoration: const InputDecoration(labelText: 'API Key', isDense: true),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _secret,
+              textDirection: TextDirection.ltr,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'API Secret', isDense: true),
+            ),
+            const SizedBox(height: 10),
+            FilledButton.icon(
+              onPressed: _busy ? null : _save,
+              icon: const Icon(Icons.lock_rounded),
+              label: const Text('حفظ بشكل سري'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// إدارة البث: البثوث النشطة والمبلّغ عنها، العقوبات المتصاعدة، وفك الحظر.
+class _LivesAdmin extends StatefulWidget {
+  const _LivesAdmin();
+  @override
+  State<_LivesAdmin> createState() => _LivesAdminState();
+}
+
+class _LivesAdminState extends State<_LivesAdmin> {
+  final _repo = LiveRepository();
+  List<Map<String, dynamic>> _lives = [];
+  List<Map<String, dynamic>> _pen = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final l = await _repo.adminLives();
+      final p = await _repo.adminPenalties();
+      if (mounted) {
+        setState(() {
+          _lives = l;
+          _pen = p;
+        });
+      }
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _violation(Map<String, dynamic> l) async {
+    if (!await confirmDialog(
+        context,
+        'بث مخالف',
+        'سيُغلق بث «${l['host']}» فورًا وتُسجّل عليه مخالفة.\n'
+            'المخالفات: الأولى تحذير، الثانية إيقاف 10 دقائق، الثالثة ساعة، الرابعة حظر نهائي من البث.',
+        ok: 'إغلاق ومعاقبة',
+        danger: true)) {
+      return;
+    }
+    try {
+      final r = await _repo.violation(l['id'] as String);
+      if (mounted) showSnack(context, 'تم: $r');
+      _load();
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView(
+        padding: const EdgeInsets.all(12),
+        children: [
+          const Text('البثوث النشطة والمبلّغ عنها', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+          if (_lives.isEmpty)
+            const Padding(padding: EdgeInsets.all(16), child: Text('لا يوجد بث نشط أو بلاغات')),
+          for (final l in _lives)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                            color: l['status'] == 'live' ? Colors.red : Colors.grey, borderRadius: BorderRadius.circular(6)),
+                        child: Text(l['status'] == 'live' ? 'مباشر' : 'انتهى',
+                            style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text('${l['host']}', style: const TextStyle(fontWeight: FontWeight.w800))),
+                      Chip(
+                        label: Text('🚩 ${l['reports']} بلاغ'),
+                        backgroundColor: ((l['reports'] as num?) ?? 0) > 0 ? Colors.red.withValues(alpha: 0.2) : null,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ]),
+                    if ('${l['title']}'.isNotEmpty) Text('${l['title']}'),
+                    Text('👁 ${l['viewers']} · ❤️ ${l['likes']} · مخالفات سابقة: ${l['strikes']}',
+                        style: const TextStyle(fontSize: 12)),
+                    for (final r in (l['reasons'] as List? ?? const []))
+                      Text('• $r', style: const TextStyle(fontSize: 12.5, color: Colors.redAccent)),
+                    const SizedBox(height: 8),
+                    Row(children: [
+                      if (l['status'] == 'live')
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () => openLive(context, l['id'] as String),
+                            icon: const Icon(Icons.visibility_rounded),
+                            label: const Text('مشاهدة'),
+                          ),
+                        ),
+                      if (l['status'] == 'live') const SizedBox(width: 8),
+                      Expanded(
+                        child: FilledButton.icon(
+                          style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+                          onPressed: () => _violation(l),
+                          icon: const Icon(Icons.gavel_rounded),
+                          label: const Text('مخالف'),
+                        ),
+                      ),
+                    ]),
+                  ],
+                ),
+              ),
+            ),
+          const SizedBox(height: 16),
+          const Text('عقوبات البث', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+          if (_pen.isEmpty) const Padding(padding: EdgeInsets.all(16), child: Text('لا توجد عقوبات')),
+          for (final p in _pen)
+            ListTile(
+              leading: Icon(p['permanent'] == true ? Icons.block_rounded : Icons.warning_amber_rounded,
+                  color: p['permanent'] == true ? Colors.red : Colors.orange),
+              title: Text('${p['name']}'),
+              subtitle: Text(p['permanent'] == true
+                  ? 'محظور من البث نهائيًا · ${p['strikes']} مخالفات'
+                  : '${p['strikes']} مخالفات${p['banned_until'] != null ? ' · موقوف مؤقتًا' : ''}'),
+              trailing: TextButton(
+                onPressed: () async {
+                  try {
+                    await _repo.unban(p['user_id'] as String);
+                    _load();
+                  } catch (e) {
+                    if (context.mounted) showSnack(context, friendlyError(e), error: true);
+                  }
+                },
+                child: const Text('فك الحظر'),
+              ),
+            ),
+        ],
       ),
     );
   }

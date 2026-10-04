@@ -2500,5 +2500,421 @@ begin
 exception when others then return null;
 end $$;
 
+-- =====================================================================
+--  الإصدار 14: البث المباشر (لايف) مثل تيك توك
+--  الفيديو عبر LiveKit (يتكيف حسب نت كل مشاهد)، والتعليقات والتكبيس والإدارة هنا.
+-- =====================================================================
+
+create table if not exists public.lives (
+  id uuid primary key default gen_random_uuid(),
+  host_id uuid not null references public.profiles(id) on delete cascade,
+  title text not null default '' check (char_length(title) <= 120),
+  status text not null default 'live' check (status in ('live', 'ended')),
+  viewer_count int not null default 0,
+  peak_viewers int not null default 0,
+  like_count bigint not null default 0,
+  started_at timestamptz not null default now(),
+  last_beat timestamptz not null default now(),
+  ended_at timestamptz,
+  ended_reason text
+);
+create index if not exists lives_active_idx on public.lives(status, last_beat desc);
+alter table public.lives enable row level security;
+drop policy if exists lives_select on public.lives;
+create policy lives_select on public.lives for select to authenticated
+  using (is_admin() or host_id = auth.uid() or not is_blocked_between(auth.uid(), host_id));
+
+create table if not exists public.live_comments (
+  id bigint generated always as identity primary key,
+  live_id uuid not null references public.lives(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null default 'text' check (kind in ('text', 'join', 'system')),
+  content text not null check (char_length(content) between 1 and 300),
+  created_at timestamptz not null default now()
+);
+create index if not exists live_comments_live_idx on public.live_comments(live_id, id desc);
+alter table public.live_comments enable row level security;
+drop policy if exists live_comments_select on public.live_comments;
+create policy live_comments_select on public.live_comments for select to authenticated using (true);
+
+create table if not exists public.live_mods (
+  host_id uuid not null references public.profiles(id) on delete cascade,
+  mod_id uuid not null references public.profiles(id) on delete cascade,
+  primary key (host_id, mod_id)
+);
+create table if not exists public.live_mutes (
+  host_id uuid not null references public.profiles(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  until timestamptz, -- null = للأبد
+  primary key (host_id, user_id)
+);
+create table if not exists public.live_bans (
+  host_id uuid not null references public.profiles(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (host_id, user_id)
+);
+create table if not exists public.live_reports (
+  live_id uuid not null references public.lives(id) on delete cascade,
+  reporter_id uuid not null references public.profiles(id) on delete cascade,
+  reason text not null default '',
+  created_at timestamptz not null default now(),
+  primary key (live_id, reporter_id)
+);
+create table if not exists public.live_penalties (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  strikes int not null default 0,
+  banned_until timestamptz,
+  permanent boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+alter table public.live_mods enable row level security;
+alter table public.live_mutes enable row level security;
+alter table public.live_bans enable row level security;
+alter table public.live_reports enable row level security;
+alter table public.live_penalties enable row level security;
+drop policy if exists live_mods_select on public.live_mods;
+create policy live_mods_select on public.live_mods for select to authenticated using (true);
+
+do $$ begin
+  begin execute 'alter publication supabase_realtime add table public.live_comments'; exception when others then null; end;
+  begin execute 'alter publication supabase_realtime add table public.lives'; exception when others then null; end;
+end $$;
+
+-- ---------- رموز الدخول لـ LiveKit (JWT موقّعة داخل قاعدة البيانات) ----------
+create or replace function public._b64url(b bytea) returns text
+language sql immutable as $$ select translate(encode(b, 'base64'), E'+/\n=', '-_'); $$;
+
+create or replace function public._lk_token(p_identity text, p_name text, p_room text, p_publish boolean,
+  p_admin boolean default false, p_ttl int default 21600) returns text
+language plpgsql security definer set search_path = public, extensions as $$
+declare k text; sec text; head text; body text; now_s bigint := extract(epoch from now())::bigint; grant_ jsonb;
+begin
+  select value into k from private_settings where key = 'livekit_key';
+  select value into sec from private_settings where key = 'livekit_secret';
+  if k is null or sec is null then raise exception 'البث المباشر غير مفعّل بعد'; end if;
+  grant_ := case when p_admin
+    then jsonb_build_object('room', p_room, 'roomAdmin', true, 'roomCreate', true, 'roomList', true)
+    else jsonb_build_object('room', p_room, 'roomJoin', true, 'canPublish', p_publish, 'canSubscribe', true,
+                            'canPublishData', true) end;
+  head := _b64url(convert_to('{"alg":"HS256","typ":"JWT"}', 'utf8'));
+  body := _b64url(convert_to(jsonb_build_object('iss', k, 'sub', p_identity, 'name', coalesce(p_name, ''),
+            'nbf', now_s - 10, 'exp', now_s + p_ttl, 'video', grant_)::text, 'utf8'));
+  return head || '.' || body || '.' || _b64url(extensions.hmac(head || '.' || body, sec, 'sha256'));
+end $$;
+revoke execute on function public._lk_token(text, text, text, boolean, boolean, int) from public, anon, authenticated;
+
+create or replace function public._lk_url() returns text
+language sql stable security definer set search_path = public as $$
+  select value from private_settings where key = 'livekit_url';
+$$;
+
+-- استدعاء واجهة LiveKit (طرد مشاهد / إغلاق غرفة) — غير متزامن
+create or replace function public._lk_api(p_method text, p_room text, p_body jsonb) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare u text := _lk_url();
+begin
+  if u is null then return; end if;
+  u := replace(replace(u, 'wss://', 'https://'), 'ws://', 'http://');
+  perform net.http_post(
+    url := rtrim(u, '/') || '/twirp/livekit.RoomService/' || p_method,
+    body := p_body,
+    headers := jsonb_build_object('Content-Type', 'application/json',
+      'Authorization', 'Bearer ' || _lk_token('server', 'server', p_room, false, true, 300)),
+    timeout_milliseconds := 8000);
+exception when others then null;
+end $$;
+revoke execute on function public._lk_api(text, text, jsonb) from public, anon, authenticated;
+
+create or replace function public.admin_set_live(p_url text, p_key text, p_secret text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  if coalesce(p_url, '') not like 'wss://%' or char_length(coalesce(p_key, '')) < 5 or char_length(coalesce(p_secret, '')) < 10 then
+    raise exception 'بيانات غير صالحة: تأكد من URL (يبدأ بـ wss://) و API Key و API Secret';
+  end if;
+  insert into private_settings(key, value) values ('livekit_url', trim(p_url)), ('livekit_key', trim(p_key)),
+    ('livekit_secret', trim(p_secret))
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+end $$;
+
+create or replace function public.live_ready() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists(select 1 from private_settings where key = 'livekit_secret');
+$$;
+
+-- ---------- العقوبات ----------
+create or replace function public._live_ban_message(uid uuid) returns text
+language plpgsql stable security definer set search_path = public as $$
+declare p live_penalties;
+begin
+  select * into p from live_penalties where user_id = uid;
+  if p.user_id is null then return null; end if;
+  if p.permanent then return 'تم حظرك من البث المباشر نهائيًا. راسل إدارة التطبيق.'; end if;
+  if p.banned_until is not null and p.banned_until > now() then
+    return 'لا يمكنك البث الآن بسبب مخالفة. يُفتح البث بعد ' ||
+      greatest(1, ceil(extract(epoch from (p.banned_until - now())) / 60))::int || ' دقيقة.';
+  end if;
+  return null;
+end $$;
+
+create or replace function public._live_close(p_live uuid, p_reason text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  update lives set status = 'ended', ended_at = now(), ended_reason = p_reason where id = p_live and status = 'live';
+  perform _lk_api('DeleteRoom', p_live::text, jsonb_build_object('room', p_live::text));
+end $$;
+
+-- ---------- البث ----------
+create or replace function public.live_start(p_title text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare msg text; lid uuid; me profiles; msgs jsonb;
+begin
+  if auth.uid() is null or not can_post() then raise exception 'لا يمكنك البث الآن'; end if;
+  if not live_ready() then raise exception 'البث المباشر غير مفعّل بعد من الإدارة'; end if;
+  msg := _live_ban_message(auth.uid());
+  if msg is not null then raise exception '%', msg; end if;
+  update lives set status = 'ended', ended_at = now(), ended_reason = 'new'
+    where host_id = auth.uid() and status = 'live';
+  select * into me from profiles where id = auth.uid();
+  insert into lives(host_id, title) values (auth.uid(), left(coalesce(trim(p_title), ''), 120)) returning id into lid;
+
+  -- إشعار للأصدقاء والمتابعين
+  insert into notifications(user_id, type, title, body, data)
+    select distinct u, 'live', '🔴 بث مباشر', me.display_name || ' بدأ بثًا مباشرًا الآن', jsonb_build_object('live_id', lid)
+    from (
+      select follower_id u from follows where followee_id = auth.uid()
+      union select case when sender_id = auth.uid() then receiver_id else sender_id end
+        from contact_requests where status = 'accepted' and (sender_id = auth.uid() or receiver_id = auth.uid())
+    ) x limit 1000;
+  select coalesce(jsonb_agg(jsonb_build_object(
+      'token', t.token,
+      'notification', jsonb_build_object('title', '🔴 ' || me.display_name || ' في بث مباشر', 'body', coalesce(nullif(p_title, ''), 'انضم الآن!')),
+      'data', jsonb_build_object('kind', 'live', 'live_id', lid::text),
+      'android', jsonb_build_object('priority', 'high', 'ttl', '1800s',
+        'notification', jsonb_build_object('channel_id', 'almajhool_msgs', 'tag', 'live-' || auth.uid()::text)))), '[]'::jsonb)
+    into msgs
+  from fcm_tokens t
+  where t.user_id in (
+    select follower_id from follows where followee_id = auth.uid()
+    union select case when sender_id = auth.uid() then receiver_id else sender_id end
+      from contact_requests where status = 'accepted' and (sender_id = auth.uid() or receiver_id = auth.uid()));
+  perform _push(msgs);
+
+  return jsonb_build_object('live_id', lid, 'url', _lk_url(),
+    'token', _lk_token(auth.uid()::text, me.display_name, lid::text, true));
+end $$;
+
+create or replace function public.live_join(p_live uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare l lives; me profiles;
+begin
+  select * into l from lives where id = p_live;
+  if l.id is null or l.status <> 'live' then raise exception 'انتهى هذا البث'; end if;
+  if is_banned() then raise exception 'حسابك محظور'; end if;
+  if exists(select 1 from live_bans where host_id = l.host_id and user_id = auth.uid()) then
+    raise exception 'تم طردك من بثوث هذا المستخدم';
+  end if;
+  if is_blocked_between(auth.uid(), l.host_id) then raise exception 'لا يمكنك مشاهدة هذا البث'; end if;
+  select * into me from profiles where id = auth.uid();
+  if l.host_id <> auth.uid() then
+    insert into live_comments(live_id, user_id, kind, content) values (p_live, auth.uid(), 'join', 'انضم');
+  end if;
+  return jsonb_build_object('url', _lk_url(),
+    'token', _lk_token(auth.uid()::text, me.display_name, p_live::text, l.host_id = auth.uid()),
+    'host_id', l.host_id, 'title', l.title, 'like_count', l.like_count,
+    'is_mod', exists(select 1 from live_mods where host_id = l.host_id and mod_id = auth.uid()));
+end $$;
+
+create or replace function public.live_heartbeat(p_live uuid, p_viewers int, p_likes bigint) returns text
+language plpgsql security definer set search_path = public as $$
+declare st text;
+begin
+  update lives set last_beat = now(), viewer_count = greatest(coalesce(p_viewers, 0), 0),
+    peak_viewers = greatest(peak_viewers, coalesce(p_viewers, 0)),
+    like_count = greatest(like_count, coalesce(p_likes, 0))
+  where id = p_live and host_id = auth.uid() returning status into st;
+  return coalesce(st, 'ended');
+end $$;
+
+create or replace function public.live_end(p_live uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not exists(select 1 from lives where id = p_live and (host_id = auth.uid() or is_admin())) then
+    raise exception 'غير مسموح';
+  end if;
+  perform _live_close(p_live, 'host');
+end $$;
+
+create or replace function public.live_comment(p_live uuid, p_text text) returns void
+language plpgsql security definer set search_path = public as $$
+declare l lives; m live_mutes;
+begin
+  select * into l from lives where id = p_live;
+  if l.id is null or l.status <> 'live' then raise exception 'انتهى البث'; end if;
+  if is_banned() or exists(select 1 from live_bans where host_id = l.host_id and user_id = auth.uid()) then
+    raise exception 'غير مسموح';
+  end if;
+  select * into m from live_mutes where host_id = l.host_id and user_id = auth.uid();
+  if m.user_id is not null and (m.until is null or m.until > now()) then
+    raise exception '%', case when m.until is null then 'أنت مكتوم في بثوث هذا المستخدم'
+      else 'أنت مكتوم لمدة ' || greatest(1, ceil(extract(epoch from (m.until - now())) / 60))::int || ' دقيقة' end;
+  end if;
+  if (select count(*) from live_comments where user_id = auth.uid() and created_at > now() - interval '10 seconds') >= 5 then
+    raise exception 'rate_limited: تمهّل قليلًا';
+  end if;
+  insert into live_comments(live_id, user_id, content) values (p_live, auth.uid(), left(trim(p_text), 300));
+end $$;
+
+-- إجراءات الإدارة داخل البث: mute5 | mute | unmute | kick | mod | unmod
+create or replace function public.live_mod_action(p_live uuid, p_target uuid, p_action text) returns void
+language plpgsql security definer set search_path = public as $$
+declare l lives; is_host boolean; is_mod boolean; n text;
+begin
+  select * into l from lives where id = p_live;
+  if l.id is null then raise exception 'البث غير موجود'; end if;
+  is_host := l.host_id = auth.uid();
+  is_mod := exists(select 1 from live_mods where host_id = l.host_id and mod_id = auth.uid());
+  if not (is_host or is_mod or is_admin()) then raise exception 'غير مسموح'; end if;
+  if p_target = l.host_id then raise exception 'لا يمكن تطبيق هذا على صاحب البث'; end if;
+  if p_action in ('mod', 'unmod') and not (is_host or is_admin()) then raise exception 'صاحب البث فقط يعيّن المشرفين'; end if;
+  if not (is_host or is_admin()) and exists(select 1 from live_mods where host_id = l.host_id and mod_id = p_target) then
+    raise exception 'لا يمكن للمشرف معاقبة مشرف آخر';
+  end if;
+  select display_name into n from profiles where id = p_target;
+  if p_action = 'mute5' then
+    insert into live_mutes(host_id, user_id, until) values (l.host_id, p_target, now() + interval '5 minutes')
+      on conflict (host_id, user_id) do update set until = excluded.until;
+    insert into live_comments(live_id, user_id, kind, content) values (p_live, p_target, 'system', 'تم كتم ' || n || ' لمدة 5 دقائق');
+  elsif p_action = 'mute' then
+    insert into live_mutes(host_id, user_id, until) values (l.host_id, p_target, null)
+      on conflict (host_id, user_id) do update set until = null;
+    insert into live_comments(live_id, user_id, kind, content) values (p_live, p_target, 'system', 'تم كتم ' || n || ' للأبد');
+  elsif p_action = 'unmute' then
+    delete from live_mutes where host_id = l.host_id and user_id = p_target;
+  elsif p_action = 'kick' then
+    insert into live_bans(host_id, user_id) values (l.host_id, p_target) on conflict do nothing;
+    insert into live_comments(live_id, user_id, kind, content) values (p_live, p_target, 'system', 'تم طرد ' || n || ' من البث');
+    perform _lk_api('RemoveParticipant', p_live::text, jsonb_build_object('room', p_live::text, 'identity', p_target::text));
+  elsif p_action = 'unban' then
+    delete from live_bans where host_id = l.host_id and user_id = p_target;
+  elsif p_action = 'mod' then
+    insert into live_mods(host_id, mod_id) values (l.host_id, p_target) on conflict do nothing;
+    insert into live_comments(live_id, user_id, kind, content) values (p_live, p_target, 'system', n || ' أصبح مشرفًا');
+  elsif p_action = 'unmod' then
+    delete from live_mods where host_id = l.host_id and mod_id = p_target;
+  else
+    raise exception 'إجراء غير معروف';
+  end if;
+end $$;
+
+create or replace function public.live_report(p_live uuid, p_reason text) returns int
+language plpgsql security definer set search_path = public as $$
+declare c int;
+begin
+  insert into live_reports(live_id, reporter_id, reason) values (p_live, auth.uid(), left(coalesce(p_reason, ''), 300))
+    on conflict (live_id, reporter_id) do update set reason = excluded.reason, created_at = now();
+  select count(*) into c from live_reports where live_id = p_live;
+  return c;
+end $$;
+
+-- المدير: البث مخالف ← إغلاقه + عقوبة متصاعدة (تحذير، 10 دقائق، ساعة، حظر مؤبد)
+create or replace function public.admin_live_violation(p_live uuid) returns text
+language plpgsql security definer set search_path = public as $$
+declare l lives; s int; result text;
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  select * into l from lives where id = p_live;
+  if l.id is null then raise exception 'البث غير موجود'; end if;
+  perform _live_close(p_live, 'violation');
+  insert into live_penalties(user_id, strikes) values (l.host_id, 1)
+    on conflict (user_id) do update set strikes = live_penalties.strikes + 1, updated_at = now()
+    returning strikes into s;
+  if s = 1 then
+    result := 'تحذير أول';
+    perform notify_user(l.host_id, 'live_penalty', '⚠️ تحذير أول', 'تم إغلاق بثك بسبب مخالفة القواعد. المخالفة القادمة توقفك 10 دقائق.', '{}'::jsonb);
+  elsif s = 2 then
+    update live_penalties set banned_until = now() + interval '10 minutes' where user_id = l.host_id;
+    result := 'إيقاف 10 دقائق';
+    perform notify_user(l.host_id, 'live_penalty', '⛔ إيقاف البث 10 دقائق', 'مخالفة ثانية: لا يمكنك البث لمدة 10 دقائق.', '{}'::jsonb);
+  elsif s = 3 then
+    update live_penalties set banned_until = now() + interval '1 hour' where user_id = l.host_id;
+    result := 'إيقاف ساعة';
+    perform notify_user(l.host_id, 'live_penalty', '⛔ إيقاف البث ساعة', 'مخالفة ثالثة: لا يمكنك البث لمدة ساعة. المخالفة القادمة حظر نهائي.', '{}'::jsonb);
+  else
+    update live_penalties set permanent = true where user_id = l.host_id;
+    result := 'حظر مؤبد من البث';
+    perform notify_user(l.host_id, 'live_penalty', '🚫 حظر نهائي من البث', 'تم حظرك من البث المباشر نهائيًا بسبب تكرار المخالفات.', '{}'::jsonb);
+  end if;
+  return result;
+end $$;
+
+create or replace function public.admin_live_unban(p_user uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  update live_penalties set strikes = 0, banned_until = null, permanent = false, updated_at = now() where user_id = p_user;
+end $$;
+
+create or replace function public.admin_lives() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select case when not is_admin() then '[]'::jsonb else coalesce((
+    select jsonb_agg(x order by (x->>'reports')::int desc, x->>'started_at' desc) from (
+      select jsonb_build_object('id', l.id, 'title', l.title, 'host_id', l.host_id, 'host', p.display_name,
+        'status', case when l.status = 'live' and l.last_beat > now() - interval '60 seconds' then 'live' else 'ended' end,
+        'viewers', l.viewer_count, 'likes', l.like_count, 'started_at', l.started_at,
+        'reports', (select count(*) from live_reports r where r.live_id = l.id),
+        'reasons', (select coalesce(jsonb_agg(r.reason) filter (where r.reason <> ''), '[]'::jsonb)
+                    from (select reason from live_reports r where r.live_id = l.id order by created_at desc limit 5) r),
+        'strikes', coalesce((select strikes from live_penalties where user_id = l.host_id), 0)) x
+      from lives l join profiles p on p.id = l.host_id
+      where l.started_at > now() - interval '2 days'
+        and (l.status = 'live' or exists(select 1 from live_reports r where r.live_id = l.id))
+      limit 100) t), '[]'::jsonb) end;
+$$;
+
+create or replace function public.admin_live_penalties() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select case when not is_admin() then '[]'::jsonb else coalesce(jsonb_agg(jsonb_build_object(
+    'user_id', lp.user_id, 'name', p.display_name, 'strikes', lp.strikes, 'banned_until', lp.banned_until,
+    'permanent', lp.permanent) order by lp.updated_at desc), '[]'::jsonb) end
+  from live_penalties lp join profiles p on p.id = lp.user_id where lp.strikes > 0 or lp.permanent;
+$$;
+
+-- البثوث النشطة مرتبة: التكبيس والمشاهدين يرفعون البث للأعلى
+create or replace function public.active_lives() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(x order by (x->>'score')::numeric desc), '[]'::jsonb) from (
+    select jsonb_build_object('id', l.id, 'title', l.title, 'host_id', l.host_id, 'viewers', l.viewer_count,
+      'likes', l.like_count, 'started_at', l.started_at,
+      'score', l.viewer_count * 10 + l.like_count / 20.0
+        + case when exists(select 1 from follows f where f.follower_id = auth.uid() and f.followee_id = l.host_id) then 500 else 0 end,
+      'host', jsonb_build_object('id', p.id, 'username', p.username, 'display_name', p.display_name,
+        'avatar_url', p.avatar_url, 'is_verified', p.is_verified, 'is_owner', p.is_owner, 'xp', p.xp)) x
+    from lives l join profiles p on p.id = l.host_id
+    where l.status = 'live' and l.last_beat > now() - interval '60 seconds'
+      and not is_blocked_between(auth.uid(), l.host_id)
+    limit 100) t;
+$$;
+
+grant execute on function public.admin_set_live(text, text, text) to authenticated;
+grant execute on function public.live_ready() to authenticated;
+grant execute on function public.live_start(text) to authenticated;
+grant execute on function public.live_join(uuid) to authenticated;
+grant execute on function public.live_heartbeat(uuid, int, bigint) to authenticated;
+grant execute on function public.live_end(uuid) to authenticated;
+grant execute on function public.live_comment(uuid, text) to authenticated;
+grant execute on function public.live_mod_action(uuid, uuid, text) to authenticated;
+grant execute on function public.live_report(uuid, text) to authenticated;
+grant execute on function public.admin_live_violation(uuid) to authenticated;
+grant execute on function public.admin_live_unban(uuid) to authenticated;
+grant execute on function public.admin_lives() to authenticated;
+grant execute on function public.admin_live_penalties() to authenticated;
+grant execute on function public.active_lives() to authenticated;
+
+-- إغلاق البثوث المتروكة (أكثر من دقيقتين بدون نبض) — مع التحديث التلقائي
+update public.lives set status = 'ended', ended_at = now(), ended_reason = 'timeout'
+  where status = 'live' and last_beat < now() - interval '2 minutes';
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

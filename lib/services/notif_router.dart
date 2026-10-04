@@ -1,9 +1,10 @@
-import 'package:flutter/material.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../repositories/chat_repository.dart';
 import '../screens/call/call_screen.dart';
 import '../screens/home/home_shell.dart';
+import '../screens/live/live_screens.dart';
 import 'call_service.dart';
 import 'local_notifications.dart';
 import 'notif_actions.dart';
@@ -15,12 +16,35 @@ class NotifRouter {
 
   static void install() {
     foregroundNotificationHandler = handle;
+    try {
+      FirebaseMessaging.onMessageOpenedApp.listen((m) => _openData(m.data));
+    } catch (_) {}
+  }
+
+  /// فتح إشعار Google (بث مباشر أو رسالة) عند الضغط عليه.
+  static Future<void> _openData(Map<String, dynamic> d) async {
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    final ctx = CallService.instance.navigatorKey.currentContext;
+    if (ctx == null || !ctx.mounted) return;
+    if (d['kind'] == 'live' && d['live_id'] is String) {
+      await openLive(ctx, d['live_id'] as String);
+    } else if (d['kind'] == 'msg' && d['conv'] is String) {
+      await openChat(ctx, d['conv'] as String);
+    }
   }
 
   /// إذا فُتح التطبيق بالضغط على إشعار (والتطبيق كان مغلقًا).
   static Future<void> handleLaunch() async {
     if (_launchHandled) return;
     _launchHandled = true;
+    try {
+      final m = await FirebaseMessaging.instance.getInitialMessage();
+      if (m != null) {
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+        await _openData(m.data);
+        return;
+      }
+    } catch (_) {}
     final r = await LocalNotifications.launchResponse();
     if (r != null) {
       await Future<void>.delayed(const Duration(milliseconds: 600));

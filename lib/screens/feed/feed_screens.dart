@@ -17,6 +17,7 @@ import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../admin/admin_screen.dart';
 import '../profile/profile_screens.dart';
+import '../live/live_screens.dart';
 import 'image_editor.dart';
 import 'stories.dart';
 
@@ -152,6 +153,12 @@ class _FeedTabState extends State<FeedTab> {
                             style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Colors.white)),
                       ),
                       const Spacer(),
+                      IconButton(
+                        tooltip: 'البث المباشر',
+                        onPressed: () =>
+                            Navigator.push(context, MaterialPageRoute(builder: (_) => const LiveListScreen())),
+                        icon: const Icon(Icons.live_tv_rounded, color: Colors.redAccent),
+                      ),
                       if (me != null) LevelChip(me.level),
                       if (me?.isAdmin ?? false)
                         IconButton(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../live/live_screens.dart';
 import '../../models/models.dart';
 import '../../providers/providers.dart';
 import '../../utils/helpers.dart';
@@ -55,10 +56,18 @@ class _NotificationsTabState extends State<NotificationsTab> {
         'post_like' => Icons.favorite_rounded,
         'warning' => Icons.warning_amber_rounded,
         'post_comment' => Icons.mode_comment_rounded,
+        'live' => Icons.live_tv_rounded,
+        'follow' => Icons.person_add_rounded,
+        'live_penalty' => Icons.gpp_maybe_rounded,
         _ => Icons.notifications_rounded,
       };
 
   void _open(AppNotification n) {
+    final live = n.data['live_id'] as String?;
+    if (live != null) {
+      openLive(context, live);
+      return;
+    }
     final post = n.data['post_id'] as String?;
     if (post != null) {
       openPost(context, post);

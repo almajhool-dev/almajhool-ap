@@ -33,6 +33,7 @@ dependencies:
   ota_update: ^7.1.0
   firebase_core: any
   firebase_messaging: any
+  livekit_client: any
 
 dev_dependencies:
   flutter_test:
