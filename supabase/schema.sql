@@ -2916,5 +2916,45 @@ grant execute on function public.active_lives() to authenticated;
 update public.lives set status = 'ended', ended_at = now(), ended_reason = 'timeout'
   where status = 'live' and last_beat < now() - interval '2 minutes';
 
+-- =====================================================================
+--  الإصدار 15: رسالة مثبتة في البث + حذف سجل البث
+-- =====================================================================
+alter table public.lives add column if not exists hidden boolean not null default false;
+
+create or replace function public.live_set_title(p_live uuid, p_title text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  update lives set title = left(coalesce(trim(p_title), ''), 120)
+    where id = p_live and (host_id = auth.uid() or exists(
+      select 1 from live_mods m where m.host_id = lives.host_id and m.mod_id = auth.uid()));
+  if not found then raise exception 'غير مسموح'; end if;
+end $$;
+
+create or replace function public.my_lives() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', id, 'title', title, 'status', status,
+    'started_at', started_at, 'ended_at', ended_at, 'peak', peak_viewers, 'likes', like_count,
+    'comments', (select count(*) from live_comments c where c.live_id = l.id)) order by started_at desc), '[]'::jsonb)
+  from (select * from lives where host_id = auth.uid() and not hidden order by started_at desc limit 100) l;
+$$;
+
+-- حذف سجل البث (يختفي من سجلك وتُحذف تعليقاته؛ تبقى البلاغات عند الإدارة)
+create or replace function public.live_delete(p_live uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not exists(select 1 from lives where id = p_live and host_id = auth.uid()) then raise exception 'غير مسموح'; end if;
+  perform _live_close(p_live, 'host');
+  delete from live_comments where live_id = p_live;
+  if exists(select 1 from live_reports where live_id = p_live) then
+    update lives set hidden = true where id = p_live;
+  else
+    delete from lives where id = p_live;
+  end if;
+end $$;
+
+grant execute on function public.live_set_title(uuid, text) to authenticated;
+grant execute on function public.my_lives() to authenticated;
+grant execute on function public.live_delete(uuid) to authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

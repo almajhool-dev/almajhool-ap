@@ -73,6 +73,14 @@ class LiveRepository {
     return r.map(LiveComment.fromMap).toList().reversed.toList();
   }
 
+  Future<void> setTitle(String liveId, String title) =>
+      supa.rpc('live_set_title', params: {'p_live': liveId, 'p_title': title});
+
+  Future<List<Map<String, dynamic>>> myLives() async =>
+      (await supa.rpc('my_lives') as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+
+  Future<void> delete(String liveId) => supa.rpc('live_delete', params: {'p_live': liveId});
+
   // ---- المدير ----
   Future<void> configure(String url, String key, String secret) =>
       supa.rpc('admin_set_live', params: {'p_url': url, 'p_key': key, 'p_secret': secret});

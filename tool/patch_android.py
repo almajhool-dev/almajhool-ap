@@ -135,6 +135,9 @@ def patch_kts(path):
         s = re.sub(r"compileOptions\s*\{", "compileOptions {\n        isCoreLibraryDesugaringEnabled = true", s, count=1)
     if "desugar_jdk_libs" not in s:
         s += '\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n}\n'
+    if "webrtc-sdk" not in s:
+        # لفلاتر البث: نحتاج واجهات WebRTC وقت الترجمة فقط (موجودة أصلًا مع flutter_webrtc)
+        s += '\ndependencies {\n    compileOnly("io.github.webrtc-sdk:android:150.7871.01")\n}\n'
     if "keystoreProperties" not in s:
         header = (
             "import java.util.Properties\n"
@@ -225,9 +228,11 @@ def patch_groovy(path):
 
 def write_proguard():
     p = os.path.join(APP, "proguard-rules.pro")
-    rules = "-keep class org.webrtc.** { *; }\n-keep class com.cloudwebrtc.webrtc.** { *; }\n-dontwarn org.webrtc.**\n"
+    rules = ("-keep class org.webrtc.** { *; }\n-keep class com.cloudwebrtc.webrtc.** { *; }\n-dontwarn org.webrtc.**\n"
+             "-keep class io.livekit.** { *; }\n-dontwarn io.livekit.**\n"
+             "-keep class com.twilio.audioswitch.** { *; }\n-keep class com.almajhool.** { *; }\n")
     existing = read(p) if os.path.exists(p) else ""
-    if "org.webrtc" not in existing:
+    if "io.livekit" not in existing:
         write(p, existing + rules)
     print("proguard rules written")
 
@@ -237,14 +242,41 @@ MAIN_ACTIVITY = """package com.almajhool.almajhool_app
 import android.content.pm.PackageManager
 import android.content.pm.Signature
 import android.os.Build
+import android.os.Bundle
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.PrintWriter
+import java.io.StringWriter
 import java.security.MessageDigest
 
 class MainActivity : FlutterActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        // حفظ سبب أي انهيار حتى يُرسل للمطوّر عند الفتح التالي
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            try {
+                val sw = StringWriter()
+                e.printStackTrace(PrintWriter(sw))
+                getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE).edit()
+                    .putString("flutter.last_crash", ("[" + t.name + "] " + sw.toString()).take(1800)).commit()
+            } catch (_: Throwable) {}
+            previous?.uncaughtException(t, e)
+        }
+        super.onCreate(savedInstanceState)
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "almajhool/filters")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "set") {
+                    val ok = FilterManager.set(call.argument<String>("track") ?: "", call.argument<String>("name") ?: "none")
+                    result.success(ok)
+                } else {
+                    result.notImplemented()
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "almajhool/integrity")
             .setMethodCallHandler { call, result ->
                 if (call.method == "sig") {
@@ -282,17 +314,20 @@ class MainActivity : FlutterActivity() {
 
 
 def write_main_activity():
-    """MainActivity مع قناة فحص سلامة التطبيق (بصمة التوقيع)."""
+    """MainActivity مع قناة فحص سلامة التطبيق (بصمة التوقيع) وفلاتر البث."""
     base = os.path.join(APP, "src", "main", "kotlin")
+    filters_src = read(os.path.join(ROOT, "tool", "android", "FilterManager.kt"))
     for root, _dirs, files in os.walk(base):
         for f in files:
             if f == "MainActivity.kt":
                 write(os.path.join(root, f), MAIN_ACTIVITY)
+                write(os.path.join(root, "FilterManager.kt"), filters_src)
                 print("MainActivity patched:", os.path.join(root, f))
                 return
     target = os.path.join(base, "com", "almajhool", "almajhool_app")
     os.makedirs(target, exist_ok=True)
     write(os.path.join(target, "MainActivity.kt"), MAIN_ACTIVITY)
+    write(os.path.join(target, "FilterManager.kt"), filters_src)
     print("MainActivity written")
 
 

@@ -12,6 +12,7 @@ import 'screens/setup_screen.dart';
 import 'services/background_service.dart';
 import 'services/call_service.dart';
 import 'services/core_services.dart';
+import 'services/crash_reporter.dart';
 import 'services/integrity_service.dart';
 import 'services/local_notifications.dart';
 import 'services/notif_router.dart';
@@ -49,6 +50,8 @@ class _RootAppState extends State<RootApp> {
     try {
       await Supabase.initialize(url: AppConfig.url, anonKey: AppConfig.anonKey);
       NotifRouter.install();
+      CrashReporter.install();
+      CrashReporter.sendPendingNativeCrash();
       await LocalNotifications.init();
       await BackgroundBridge.configure();
       Future.delayed(const Duration(seconds: 4),

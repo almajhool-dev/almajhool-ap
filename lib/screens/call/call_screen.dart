@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/config.dart';
 import '../../core/theme.dart';
@@ -301,6 +303,11 @@ class _CallScreenState extends State<CallScreen> {
       await _local.initialize();
       await _remote.initialize();
 
+      if (Platform.isAndroid) {
+        try {
+          await Permission.bluetoothConnect.request();
+        } catch (_) {}
+      }
       _stream = await navigator.mediaDevices.getUserMedia({
         'audio': {'echoCancellation': true, 'noiseSuppression': true, 'autoGainControl': true},
         'video': widget.video

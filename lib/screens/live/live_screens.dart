@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -14,6 +16,7 @@ import '../../repositories/live_repository.dart';
 import '../../repositories/social_repositories.dart';
 import '../../services/call_service.dart';
 import '../../services/core_services.dart';
+import '../../services/filter_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../profile/profile_screens.dart';
@@ -72,7 +75,13 @@ class _LiveListScreenState extends State<LiveListScreen> {
   Widget build(BuildContext context) {
     final l = _lives;
     return Scaffold(
-      appBar: AppBar(title: const Text('🔴 البث المباشر')),
+      appBar: AppBar(title: const Text('🔴 البث المباشر'), actions: [
+        TextButton.icon(
+          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MyLivesScreen())),
+          icon: const Icon(Icons.history_rounded),
+          label: const Text('بثوثي'),
+        ),
+      ]),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: Colors.red,
         foregroundColor: Colors.white,
@@ -217,7 +226,9 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   int _likes = 0;
   int _pendingTaps = 0;
   bool _micOn = true;
+  bool _camOn = true;
   bool _front = true;
+  String _filter = 'none';
 
   final List<LiveComment> _comments = [];
   final Map<String, Profile> _people = {};
@@ -246,6 +257,11 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
       _host = await _profile(_hostId!);
       await _connectRealtime();
 
+      if (Platform.isAndroid) {
+        try {
+          await Permission.bluetoothConnect.request();
+        } catch (_) {}
+      }
       final room = lk.Room(
         roomOptions: lk.RoomOptions(
           adaptiveStream: true,
@@ -267,7 +283,10 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
         })
         ..on<lk.TrackSubscribedEvent>((_) => mounted ? setState(() {}) : null)
         ..on<lk.TrackUnsubscribedEvent>((_) => mounted ? setState(() {}) : null)
-        ..on<lk.LocalTrackPublishedEvent>((_) => mounted ? setState(() {}) : null)
+        ..on<lk.LocalTrackPublishedEvent>((_) {
+          _applyFilter();
+          if (mounted) setState(() {});
+        })
         ..on<lk.RoomDisconnectedEvent>((_) {
           if (mounted && _endedMsg == null) _ended(widget.isHost ? 'انقطع البث' : 'انتهى البث');
         });
@@ -332,6 +351,8 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
           table: 'lives',
           filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'id', value: id),
           callback: (p) {
+            final t = p.newRecord['title'];
+            if (t is String && t != _title && mounted) setState(() => _title = t);
             final st = p.newRecord['status'];
             if (st == 'ended' && mounted && _endedMsg == null) {
               final reason = p.newRecord['ended_reason'];
@@ -598,7 +619,135 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     try {
       await t.setCameraPosition(_front ? lk.CameraPosition.front : lk.CameraPosition.back);
     } catch (_) {}
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    await _applyFilter();
     if (mounted) setState(() {});
+  }
+
+  Future<void> _applyFilter() async {
+    final t = _hostVideo();
+    if (!widget.isHost || t is! lk.LocalVideoTrack) return;
+    final id = t.mediaStreamTrack.id;
+    if (id == null) return;
+    await FilterService.apply(id, _filter);
+  }
+
+  Future<void> _toggleCam() async {
+    _camOn = !_camOn;
+    try {
+      await _room?.localParticipant?.setCameraEnabled(_camOn);
+    } catch (_) {}
+    if (_camOn) {
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      await _applyFilter();
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _filtersSheet() async {
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.black87,
+      builder: (c) => SafeArea(
+        child: StatefulBuilder(
+          builder: (c, set) => SizedBox(
+            height: 130,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.all(12),
+              children: [
+                for (final f in FilterService.filters)
+                  GestureDetector(
+                    onTap: () async {
+                      _filter = f.id;
+                      set(() {});
+                      if (mounted) setState(() {});
+                      await _applyFilter();
+                    },
+                    child: Container(
+                      width: 78,
+                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        color: _filter == f.id ? Colors.white24 : Colors.white10,
+                        border: Border.all(color: _filter == f.id ? Colors.pinkAccent : Colors.transparent, width: 2),
+                      ),
+                      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        Text(f.emoji, style: const TextStyle(fontSize: 30)),
+                        const SizedBox(height: 6),
+                        Text(f.name, style: const TextStyle(color: Colors.white, fontSize: 12)),
+                      ]),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editPin() async {
+    if (_liveId == null || !(widget.isHost || _isMod)) return;
+    final t = await promptText(context, 'الرسالة المثبتة', initial: _title, maxLines: 2, ok: 'تثبيت');
+    if (t == null) return;
+    try {
+      await _repo.setTitle(_liveId!, t);
+      if (mounted) setState(() => _title = t);
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    }
+  }
+
+  Future<void> _hostMenu() async {
+    await showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (c) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: Icon(_camOn ? Icons.videocam_off_rounded : Icons.videocam_rounded),
+            title: Text(_camOn ? 'إغلاق الكاميرا' : 'فتح الكاميرا'),
+            onTap: () {
+              Navigator.pop(c);
+              _toggleCam();
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.cameraswitch_rounded),
+            title: const Text('تبديل الكاميرا'),
+            onTap: () {
+              Navigator.pop(c);
+              _switchCamera();
+            },
+          ),
+          ListTile(
+            leading: Icon(_micOn ? Icons.mic_off_rounded : Icons.mic_rounded),
+            title: Text(_micOn ? 'كتم المايك' : 'تشغيل المايك'),
+            onTap: () {
+              Navigator.pop(c);
+              _toggleMic();
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.push_pin_rounded),
+            title: const Text('تعديل الرسالة المثبتة'),
+            onTap: () {
+              Navigator.pop(c);
+              _editPin();
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.people_alt_rounded),
+            title: Text('المشاهدون ($_viewers)'),
+            onTap: () {
+              Navigator.pop(c);
+              _viewersSheet();
+            },
+          ),
+        ]),
+      ),
+    );
   }
 
   Future<void> _toggleMic() async {
@@ -648,7 +797,11 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                               )
                             : _connecting
                                 ? const CircularProgressIndicator(color: Colors.white)
-                                : const Text('بانتظار الصورة...', style: TextStyle(color: Colors.white70)),
+                                : Column(mainAxisSize: MainAxisSize.min, children: [
+                                    if (host != null) Avatar(url: host.avatarUrl, name: host.displayName, size: 110),
+                                    const SizedBox(height: 14),
+                                    const Text('📷 الكاميرا مغلقة', style: TextStyle(color: Colors.white70, fontSize: 16)),
+                                  ]),
                       ),
                     ),
             ),
@@ -747,11 +900,27 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (_title.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: Text(_title,
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, shadows: [Shadow(blurRadius: 4)])),
+                    if (_title.isNotEmpty || widget.isHost || _isMod)
+                      GestureDetector(
+                        onTap: _editPin,
+                        child: Container(
+                          margin: const EdgeInsets.fromLTRB(10, 0, 10, 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.8),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.withValues(alpha: 0.85),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            const Text('📌 ', style: TextStyle(fontSize: 14)),
+                            Flexible(
+                              child: Text(
+                                _title.isEmpty ? 'اضغط لتثبيت رسالة' : _title,
+                                style: const TextStyle(color: Colors.black, fontWeight: FontWeight.w800),
+                              ),
+                            ),
+                          ]),
+                        ),
                       ),
                     SizedBox(
                       height: 220,
@@ -830,9 +999,8 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                           ),
                           const SizedBox(width: 6),
                           if (widget.isHost) ...[
-                            _RoundIcon(icon: Icons.cameraswitch_rounded, onTap: _switchCamera),
-                            _RoundIcon(icon: _micOn ? Icons.mic_rounded : Icons.mic_off_rounded, onTap: _toggleMic),
-                            _RoundIcon(icon: Icons.people_alt_rounded, onTap: _viewersSheet),
+                            _RoundIcon(icon: Icons.auto_awesome_rounded, color: Colors.pinkAccent, onTap: _filtersSheet),
+                            _RoundIcon(icon: Icons.more_horiz_rounded, onTap: _hostMenu),
                           ] else
                             _RoundIcon(icon: Icons.favorite_rounded, color: Colors.pinkAccent, onTap: _tap),
                         ],
@@ -919,6 +1087,72 @@ class _FollowPillState extends State<_FollowPill> {
         decoration: BoxDecoration(color: Colors.pinkAccent, borderRadius: BorderRadius.circular(14)),
         child: const Text('متابعة', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12)),
       ),
+    );
+  }
+}
+
+
+/// سجل بثوثي السابقة مع إمكانية الحذف.
+class MyLivesScreen extends StatefulWidget {
+  const MyLivesScreen({super.key});
+  @override
+  State<MyLivesScreen> createState() => _MyLivesScreenState();
+}
+
+class _MyLivesScreenState extends State<MyLivesScreen> {
+  final _repo = LiveRepository();
+  List<Map<String, dynamic>>? _list;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final l = await _repo.myLives();
+      if (mounted) setState(() => _list = l);
+    } catch (e) {
+      if (mounted) setState(() => _list = []);
+    }
+  }
+
+  Future<void> _delete(Map<String, dynamic> l) async {
+    if (!await confirmDialog(context, 'حذف سجل البث', 'سيُحذف هذا البث وتعليقاته من سجلك.', ok: 'حذف', danger: true)) return;
+    try {
+      await _repo.delete(l['id'] as String);
+      _load();
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l = _list;
+    return Scaffold(
+      appBar: AppBar(title: const Text('بثوثي السابقة')),
+      body: l == null
+          ? const Center(child: CircularProgressIndicator())
+          : l.isEmpty
+              ? const EmptyState(icon: Icons.history_rounded, title: 'لا يوجد بثوث سابقة')
+              : ListView(
+                  children: [
+                    for (final x in l)
+                      ListTile(
+                        leading: Icon(Icons.live_tv_rounded, color: x['status'] == 'live' ? Colors.red : null),
+                        title: Text('${x['title']}'.isEmpty ? 'بث مباشر' : '${x['title']}'),
+                        subtitle: Text(
+                            '${Fmt.chatListTime(DateTime.tryParse('${x['started_at']}') ?? DateTime.now())} · '
+                            '👁 ${x['peak']} · ❤️ ${x['likes']} · 💬 ${x['comments']}'),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
+                          onPressed: () => _delete(x),
+                        ),
+                      ),
+                  ],
+                ),
     );
   }
 }
