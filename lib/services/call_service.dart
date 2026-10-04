@@ -41,6 +41,8 @@ class CallService {
       if (accept) incomingAccept?.call();
       return;
     }
+    // شاشة المكالمة قيد الفتح (من مسار آخر): ستلتقط autoAcceptId بنفسها
+    if (_seen.contains(callId)) return;
     try {
       final row = await supa.from('call_sessions').select().eq('id', callId).maybeSingle();
       if (row == null || row['status'] != 'ringing') return;
@@ -136,7 +138,7 @@ class CallService {
     final from = p['from'] as String?;
     if (callId == null || from == null || _seen.contains(callId)) return;
     _seen.add(callId);
-    if (inCall) {
+    if (inCall && currentIncoming != callId) {
       CallSignal.update(callId, status: 'busy').catchError((_) {});
       return;
     }

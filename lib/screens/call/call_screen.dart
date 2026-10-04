@@ -52,6 +52,10 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) => _accept());
     }
     _vibe = Timer.periodic(const Duration(milliseconds: 1500), (_) {
+      if (CallService.instance.autoAcceptId == widget.callId) {
+        _accept();
+        return;
+      }
       HapticFeedback.vibrate();
       SoundService.startRingtone(); // لا يتكرر إذا كان يرن
     });

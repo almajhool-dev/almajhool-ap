@@ -66,6 +66,17 @@ def patch_manifest():
             '    </application>',
             1,
         )
+    # أزرار الإشعارات (رد/رفض) تعمل والتطبيق مغلق
+    if "ActionBroadcastReceiver" not in s:
+        s = s.replace(
+            "</application>",
+            '    <receiver android:exported="false"\n'
+            '            android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver"/>\n'
+            '        <receiver android:exported="false"\n'
+            '            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"/>\n'
+            '    </application>',
+            1,
+        )
     # التحديث من داخل التطبيق (ota_update)
     if "OtaUpdateFileProvider" not in s:
         s = s.replace(
