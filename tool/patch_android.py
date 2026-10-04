@@ -120,6 +120,23 @@ def patch_manifest():
     write(os.path.join(raw_dir, "keep.xml"),
           '<?xml version="1.0" encoding="utf-8"?>\n'
           '<resources xmlns:tools="http://schemas.android.com/tools" tools:keep="@raw/*"/>\n')
+    # روابط البث: almajhool://live/<id> تفتح التطبيق مباشرة على البث
+    if 'android:scheme="almajhool"' not in s:
+        s = s.replace(
+            "</activity>",
+            '    <intent-filter>\n'
+            '                <action android:name="android.intent.action.VIEW"/>\n'
+            '                <category android:name="android.intent.category.DEFAULT"/>\n'
+            '                <category android:name="android.intent.category.BROWSABLE"/>\n'
+            '                <data android:scheme="almajhool" android:host="live"/>\n'
+            '            </intent-filter>\n'
+            '        </activity>',
+            1,
+        )
+    # حفظ تسجيلات البث في المعرض (أندرويد 9 وأقدم)
+    if "WRITE_EXTERNAL_STORAGE" not in s:
+        s = s.replace("<application",
+                      '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>\n    <application', 1)
     # عرض شاشة المكالمة فوق قفل الشاشة
     if "showWhenLocked" not in s:
         s = s.replace('android:name=".MainActivity"',

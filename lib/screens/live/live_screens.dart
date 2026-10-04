@@ -4,7 +4,11 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
+import 'package:gal/gal.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
+import 'package:path_provider/path_provider.dart';
+import 'package:video_player/video_player.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -19,6 +23,8 @@ import '../../repositories/social_repositories.dart';
 import '../../services/call_service.dart';
 import '../../services/core_services.dart';
 import '../../services/filter_service.dart';
+import '../../services/live_recordings.dart';
+import '../../repositories/chat_repository.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../feed/image_editor.dart';
@@ -205,7 +211,7 @@ class _Heart {
   _Heart(this.id, this.x, this.color);
 }
 
-class _LiveRoomScreenState extends State<LiveRoomScreen> {
+class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObserver {
   final _repo = LiveRepository();
   final _text = TextEditingController();
   final _scroll = ScrollController();
@@ -237,10 +243,15 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   Map<String, String?> _guestCovers = {};
   bool _amGuest = false;
   bool get _publishing => widget.isHost || _amGuest;
+  final Map<String, DateTime> _awaySince = {};
+  Timer? _awayTimer;
+  final _likesN = ValueNotifier<int>(0);
+  final _heartsN = ValueNotifier<List<_Heart>>(const []);
+  dynamic _rec; // تسجيل البث (MediaRecorder)
+  String? _recPath;
 
   final List<LiveComment> _comments = [];
   final Map<String, Profile> _people = {};
-  final List<_Heart> _hearts = [];
   int _heartSeq = 0;
   final _rnd = Random();
 
@@ -250,6 +261,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   void initState() {
     super.initState();
     CallService.instance.inCall = true; // لا مكالمات أثناء البث
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) => _start());
   }
 
@@ -260,6 +272,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
       _hostId = (info['host_id'] ?? myId) as String;
       _title = (info['title'] ?? widget.title) as String;
       _likes = ((info['like_count'] ?? 0) as num).toInt();
+      _likesN.value = _likes;
       _isMod = info['is_mod'] == true;
       _cover = info['cover_url'] as String?;
 
@@ -275,6 +288,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
       if (widget.isHost) {
         _beat = Timer.periodic(const Duration(seconds: 10), (_) => _heartbeat());
         _heartbeat();
+        _awayTimer = Timer.periodic(const Duration(seconds: 30), (_) => _checkAwayGuests());
       }
       _refreshCount();
       if (mounted) setState(() => _connecting = false);
@@ -339,6 +353,8 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
       ..on<lk.TrackMutedEvent>((_) => refresh())
       ..on<lk.TrackUnmutedEvent>((_) => refresh())
       ..on<lk.ActiveSpeakersChangedEvent>((_) => refresh())
+      ..on<lk.ParticipantMetadataUpdatedEvent>((_) => refresh())
+      ..on<lk.ParticipantPermissionsUpdatedEvent>((_) => refresh())
       ..on<lk.LocalTrackPublishedEvent>((_) {
         _applyFilter();
         refresh();
@@ -370,27 +386,37 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
       await _loadPeople(_guests.keys);
     } catch (_) {}
     final mine = _guests[myId];
-    // تمت الموافقة على صعودي: نعيد الاتصال كمذيع ضيف
+    // تمت الموافقة على صعودي: الخادم يعطيني صلاحية البث مباشرة (بدون قطع المشاهدة)
     if (!widget.isHost && mine == 'accepted' && !_amGuest) {
       _amGuest = true;
-      try {
-        final t = await _repo.guestToken(_liveId!);
-        await _connectRoom(t['url'] as String, t['token'] as String, publish: true);
-        if (mounted) showSnack(context, 'صعدت للبث 🎙');
-      } catch (e) {
+      _camOn = false;
+      _micOn = true;
+      var ok = false;
+      for (var i = 0; i < 12 && !ok && mounted && _amGuest; i++) {
+        try {
+          await _room?.localParticipant?.setMicrophoneEnabled(true);
+          ok = true;
+        } catch (_) {
+          await Future<void>.delayed(const Duration(milliseconds: 800));
+        }
+      }
+      if (mounted) showSnack(context, ok ? 'صعدت للبث 🎙 (الكاميرا مغلقة، افتحها من ⋯)' : 'تعذّر الصعود، حاول مجددًا');
+      if (!ok) {
         _amGuest = false;
-        if (mounted) showSnack(context, friendlyError(e), error: true);
+        _repo.guestLeave(_liveId!, myId!).catchError((_) {});
       }
     } else if (!widget.isHost && _amGuest && mine != 'accepted') {
       _amGuest = false;
+      await _stopRecording();
       try {
         await _room?.localParticipant?.setCameraEnabled(false);
-        await _room?.localParticipant?.setMicrophoneEnabled(false);
-        final info = await _repo.join(_liveId!);
-        await _connectRoom(info['url'] as String, info['token'] as String, publish: false);
       } catch (_) {}
-      if (mounted) showSnack(context, 'نزلت من البث');
+      try {
+        await _room?.localParticipant?.setMicrophoneEnabled(false);
+      } catch (_) {}
+      if (mounted) showSnack(context, 'نزلت من البث، تكمل المشاهدة 👀');
     }
+    _checkAwayGuests();
     if (mounted) setState(() {});
   }
 
@@ -514,10 +540,10 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     _ch = supa.channel('live-$id').onBroadcast(event: 'tap', callback: (p) {
       final n = ((p['payload'] is Map ? p['payload']['n'] : p['n']) as num?)?.toInt() ?? 1;
       _likes += n;
+      _likesN.value = _likes;
       for (var i = 0; i < min(n, 6); i++) {
         _addHeart();
       }
-      if (mounted) setState(() {});
     }).subscribe();
     _db = supa
         .channel('live-db-$id')
@@ -587,6 +613,44 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     } catch (_) {}
   }
 
+  /// الضيف غائب (طلع من التطبيق أو انقطع نته)؟
+  bool _isAway(String identity) {
+    final r = _room;
+    if (r == null) return false;
+    if (identity == myId) return false;
+    for (final p in r.remoteParticipants.values) {
+      if (p.identity == identity) return p.metadata == 'away';
+    }
+    return true; // غير موجود في الغرفة = منقطع
+  }
+
+  bool _micMuted(String identity) {
+    final r = _room;
+    if (r == null) return false;
+    if (identity == myId) return !(r.localParticipant?.isMicrophoneEnabled() ?? false);
+    for (final p in r.remoteParticipants.values) {
+      if (p.identity == identity) return !p.isMicrophoneEnabled();
+    }
+    return false;
+  }
+
+  /// صاحب البث: الضيف الغائب أكثر من 5 دقائق ينزل تلقائيًا
+  void _checkAwayGuests() {
+    if (!widget.isHost || _liveId == null) return;
+    final now = DateTime.now();
+    for (final g in _guests.entries.where((e) => e.value == 'accepted')) {
+      if (_isAway(g.key)) {
+        final since = _awaySince.putIfAbsent(g.key, () => now);
+        if (now.difference(since).inMinutes >= 5) {
+          _awaySince.remove(g.key);
+          _repo.guestLeave(_liveId!, g.key).catchError((_) {});
+        }
+      } else {
+        _awaySince.remove(g.key);
+      }
+    }
+  }
+
   void _refreshCount() {
     final r = _room;
     if (r == null) return;
@@ -608,18 +672,18 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
 
   void _toBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scroll.hasClients) _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      if (_scroll.hasClients) _scroll.jumpTo(0);
     });
   }
 
   void _addHeart() {
     const colors = [Colors.pinkAccent, Colors.redAccent, Colors.amber, Colors.purpleAccent, Colors.cyanAccent];
     final h = _Heart(_heartSeq++, _rnd.nextDouble() * 50, colors[_rnd.nextInt(colors.length)]);
-    _hearts.add(h);
-    if (_hearts.length > 30) _hearts.removeAt(0);
+    final list = [..._heartsN.value, h];
+    _heartsN.value = list.length > 25 ? list.sublist(list.length - 25) : list;
     Future.delayed(const Duration(milliseconds: 1800), () {
-      _hearts.remove(h);
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      _heartsN.value = _heartsN.value.where((x) => x.id != h.id).toList();
     });
   }
 
@@ -628,10 +692,10 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     if (_liveId == null || _endedMsg != null) return;
     HapticFeedback.selectionClick();
     _likes++;
+    _likesN.value = _likes;
     _pendingTaps++;
     _addHeart();
-    setState(() {});
-    _tapFlush ??= Timer(const Duration(milliseconds: 900), () {
+    _tapFlush ??= Timer(const Duration(milliseconds: 500), () {
       final n = _pendingTaps;
       _pendingTaps = 0;
       _tapFlush = null;
@@ -652,6 +716,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
 
   void _ended(String msg) {
     _endedMsg = msg;
+    _stopRecording();
     _beat?.cancel();
     _room?.disconnect();
     if (mounted) setState(() {});
@@ -668,7 +733,20 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // الضيف/صاحب البث طلع من التطبيق: يظهر للآخرين أنه غير متصل
+    if (!_publishing) return;
+    final away = state == AppLifecycleState.paused || state == AppLifecycleState.detached;
+    try {
+      _room?.localParticipant?.setMetadata(away ? 'away' : '');
+    } catch (_) {}
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _awayTimer?.cancel();
+    _stopRecording();
     CallService.instance.inCall = false;
     _beat?.cancel();
     _tapFlush?.cancel();
@@ -834,6 +912,10 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   Future<void> _switchCamera() async {
     final t = _videoOf(myId ?? '');
     if (t is! lk.LocalVideoTrack) return;
+    if (_rec != null) {
+      await _stopRecording();
+      if (mounted) showSnack(context, 'توقف التسجيل وحُفظ (تغيرت الكاميرا)');
+    }
     _front = !_front;
     try {
       await t.setCameraPosition(_front ? lk.CameraPosition.front : lk.CameraPosition.back);
@@ -852,6 +934,10 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   }
 
   Future<void> _toggleCam() async {
+    if (_rec != null) {
+      await _stopRecording();
+      if (mounted) showSnack(context, 'توقف التسجيل وحُفظ (تغيرت الكاميرا)');
+    }
     _camOn = !_camOn;
     try {
       await _room?.localParticipant?.setCameraEnabled(_camOn);
@@ -916,6 +1002,113 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     } catch (e) {
       if (mounted) showSnack(context, friendlyError(e), error: true);
     }
+  }
+
+  // ---------- تسجيل البث (على جهاز صاحب البث) ----------
+  Future<void> _toggleRecording() async {
+    if (_rec != null) {
+      await _stopRecording();
+      if (mounted) showSnack(context, 'تم حفظ التسجيل ✅ تجده في «بثوثي»');
+      return;
+    }
+    final t = _videoOf(myId ?? '');
+    if (t is! lk.LocalVideoTrack) {
+      showSnack(context, 'افتح الكاميرا أولًا حتى يبدأ التسجيل', error: true);
+      return;
+    }
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final folder = Directory('${dir.path}/recordings');
+      if (!folder.existsSync()) folder.createSync(recursive: true);
+      final path = '${folder.path}/live_${DateTime.now().millisecondsSinceEpoch}.mp4';
+      final r = rtc.MediaRecorder();
+      await r.start(path, videoTrack: t.mediaStreamTrack, audioChannel: rtc.RecorderAudioChannel.INPUT);
+      _rec = r;
+      _recPath = path;
+      if (mounted) {
+        setState(() {});
+        showSnack(context, '⏺ بدأ تسجيل البث');
+      }
+    } catch (e) {
+      _rec = null;
+      if (mounted) showSnack(context, 'تعذّر بدء التسجيل', error: true);
+    }
+  }
+
+  Future<void> _stopRecording() async {
+    final r = _rec;
+    final path = _recPath;
+    if (r == null || path == null) return;
+    _rec = null;
+    _recPath = null;
+    try {
+      await (r as rtc.MediaRecorder).stop();
+      if (File(path).existsSync()) {
+        await LiveRecordings.add(LiveRecording(_liveId ?? '', _title, path, DateTime.now()));
+      }
+    } catch (_) {}
+    if (mounted) setState(() {});
+  }
+
+  // ---------- مشاركة البث ----------
+  String get _liveLink => 'almajhool://live/$_liveId';
+
+  Future<void> _shareSheet() async {
+    if (_liveId == null) return;
+    final hub = context.read<ChatHub>();
+    await showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (c) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.of(c).size.height * 0.6,
+          child: Column(children: [
+            ListTile(
+              leading: const CircleAvatar(child: Icon(Icons.link_rounded)),
+              title: const Text('نسخ رابط البث'),
+              subtitle: Text(_liveLink, textDirection: TextDirection.ltr, style: const TextStyle(fontSize: 11)),
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: _liveLink));
+                _repo.share(_liveId!).catchError((_) {});
+                Navigator.pop(c);
+                showSnack(context, 'تم نسخ الرابط 🔗');
+              },
+            ),
+            const Divider(),
+            const Padding(
+              padding: EdgeInsets.all(8),
+              child: Text('إرسال في الخاص', style: TextStyle(fontWeight: FontWeight.w800)),
+            ),
+            Expanded(
+              child: ListView(children: [
+                for (final conv in hub.conversations)
+                  ListTile(
+                    leading: Avatar(url: conv.avatar, name: conv.title, group: conv.isGroup),
+                    title: Text(conv.title),
+                    trailing: const Icon(Icons.send_rounded),
+                    onTap: () async {
+                      Navigator.pop(c);
+                      try {
+                        final repo = ChatRepository();
+                        await repo.send(
+                          conversationId: conv.id,
+                          clientId: repo.newClientId(),
+                          content: '🔴 بث مباشر لـ ${_host?.displayName ?? ''}${_title.isNotEmpty ? ': $_title' : ''}\n$_liveLink',
+                        );
+                        _repo.share(_liveId!).catchError((_) {});
+                        if (mounted) showSnack(context, 'تم الإرسال إلى ${conv.title} ✅');
+                      } catch (e) {
+                        if (mounted) showSnack(context, friendlyError(e), error: true);
+                      }
+                    },
+                  ),
+              ]),
+            ),
+          ]),
+        ),
+      ),
+    );
   }
 
   Future<void> _guestMenu() async {
@@ -1011,6 +1204,24 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
             onTap: () {
               Navigator.pop(c);
               _toggleMic();
+            },
+          ),
+          ListTile(
+            leading: Icon(_rec != null ? Icons.stop_circle_rounded : Icons.fiber_manual_record_rounded,
+                color: Colors.redAccent),
+            title: Text(_rec != null ? 'إيقاف التسجيل وحفظه' : 'تسجيل البث'),
+            subtitle: const Text('يُحفظ على جهازك، وتجده في «بثوثي»'),
+            onTap: () {
+              Navigator.pop(c);
+              _toggleRecording();
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.share_rounded),
+            title: const Text('مشاركة البث'),
+            onTap: () {
+              Navigator.pop(c);
+              _shareSheet();
             },
           ),
           ListTile(
@@ -1140,6 +1351,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                               child: const CircularProgressIndicator(color: Colors.white),
                             )
                           : _CameraOffView(
+                              muted: _micMuted(_hostId ?? ''),
                               cover: _cover,
                               avatarUrl: host?.avatarUrl,
                               name: host?.displayName ?? '',
@@ -1159,6 +1371,8 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                         child: GestureDetector(
                           onTap: () => widget.isHost ? _guestsSheet() : _personMenu(g.key),
                           child: _GuestTile(
+                            muted: _micMuted(g.key),
+                            away: _isAway(g.key),
                             cover: _guestCovers[g.key],
                             video: _videoOf(g.key),
                             mirror: g.key == myId && _front,
@@ -1173,8 +1387,10 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
               ),
             // القلوب المتطايرة
             IgnorePointer(
-              child: Stack(children: [
-                for (final h in _hearts)
+              child: ValueListenableBuilder<List<_Heart>>(
+                valueListenable: _heartsN,
+                builder: (_, hearts, __) => Stack(children: [
+                for (final h in hearts)
                   PositionedDirectional(
                     key: ValueKey(h.id),
                     end: 18 + h.x,
@@ -1190,6 +1406,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                     ),
                   ),
               ]),
+              ),
             ),
             // الشريط العلوي
             SafeArea(
@@ -1209,16 +1426,32 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                             Avatar(url: host.avatarUrl, name: host.displayName, size: 34),
                             const SizedBox(width: 6),
                             ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 140),
+                              constraints: const BoxConstraints(maxWidth: 170),
                               child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                Text(host.displayName,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-                                Row(children: [
+                                Row(mainAxisSize: MainAxisSize.min, children: [
+                                  Flexible(
+                                    child: Text(host.displayName,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+                                  ),
+                                  if (host.verified) ...[const SizedBox(width: 3), const VerifiedBadge(size: 14)],
+                                  if (_micMuted(host.id)) ...[
+                                    const SizedBox(width: 3),
+                                    const Icon(Icons.mic_off_rounded, size: 14, color: Colors.redAccent),
+                                  ],
+                                ]),
+                                if (host.isOwner)
+                                  const Text('👑 مالك التطبيق',
+                                      style: TextStyle(color: Colors.amberAccent, fontSize: 10.5, fontWeight: FontWeight.w800)),
+                                Row(mainAxisSize: MainAxisSize.min, children: [
                                   const Icon(Icons.favorite_rounded, size: 12, color: Colors.pinkAccent),
                                   const SizedBox(width: 3),
-                                  Text(_compact(_likes), style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                                  ValueListenableBuilder<int>(
+                                    valueListenable: _likesN,
+                                    builder: (_, v, __) =>
+                                        Text(_compact(v), style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                                  ),
                                 ]),
                               ]),
                             ),
@@ -1244,7 +1477,18 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                         ]),
                       ),
                     ),
-                    const SizedBox(width: 6),
+                    if (_rec != null)
+                      Container(
+                        margin: const EdgeInsetsDirectional.only(start: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                        decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(6)),
+                        child: const Text('⏺ REC', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900)),
+                      ),
+                    IconButton(
+                      onPressed: _shareSheet,
+                      icon: const Icon(Icons.share_rounded, color: Colors.white),
+                      tooltip: 'مشاركة',
+                    ),
                     if (!widget.isHost)
                       IconButton(
                         onPressed: _report,
@@ -1279,14 +1523,18 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                           stops: [0, 0.25],
                         ).createShader(r),
                         blendMode: BlendMode.dstIn,
+                        // أحدث تعليق في الأسفل، والقديمة تصعد للأعلى
                         child: ListView.builder(
                           controller: _scroll,
+                          reverse: true,
                           padding: const EdgeInsets.symmetric(horizontal: 10),
                           itemCount: _comments.length,
                           itemBuilder: (_, i) {
-                            final c = _comments[i];
+                            final c = _comments[_comments.length - 1 - i];
                             final p = _people[c.userId];
-                            return GestureDetector(
+                            return Align(
+                              alignment: AlignmentDirectional.centerStart,
+                              child: GestureDetector(
                               onLongPress: () => _personMenu(c.userId),
                               onTap: _canModerate ? () => _personMenu(c.userId) : null,
                               child: Padding(
@@ -1303,7 +1551,8 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                                     TextSpan(children: [
                                       if (c.kind != 'system')
                                         TextSpan(
-                                          text: '${p?.displayName ?? '...'}${c.userId == _hostId ? ' 🎙' : ''} ',
+                                          text: '${(p?.isOwner ?? false) ? '👑 ' : ''}${p?.displayName ?? '...'}'
+                                              '${(p?.verified ?? false) ? ' ☑️' : ''}${c.userId == _hostId ? ' 🎙' : ''} ',
                                           style: TextStyle(
                                               color: c.userId == _hostId ? Colors.amberAccent : Colors.cyanAccent,
                                               fontWeight: FontWeight.w800),
@@ -1315,6 +1564,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                                     ]),
                                   ),
                                 ),
+                              ),
                               ),
                             );
                           },
@@ -1447,12 +1697,14 @@ class _FollowPillState extends State<_FollowPill> {
         setState(() => _following = true);
         try {
           await ContactRepository().follow(widget.userId);
+          if (context.mounted) showSnack(context, 'أصبحت تتابعه ✅');
         } catch (_) {}
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(color: Colors.pinkAccent, borderRadius: BorderRadius.circular(14)),
-        child: const Text('متابعة', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12)),
+        width: 26,
+        height: 26,
+        decoration: const BoxDecoration(color: Colors.pinkAccent, shape: BoxShape.circle),
+        child: const Icon(Icons.add_rounded, color: Colors.white, size: 20),
       ),
     );
   }
@@ -1485,6 +1737,46 @@ class _MyLivesScreenState extends State<MyLivesScreen> {
     }
   }
 
+  List<LiveRecording> _recs = LiveRecordings.all();
+
+  Future<void> _recMenu(LiveRecording r) async {
+    final a = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (c) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+              leading: const Icon(Icons.play_circle_rounded),
+              title: const Text('مشاهدة'),
+              onTap: () => Navigator.pop(c, 'play')),
+          ListTile(
+              leading: const Icon(Icons.download_rounded),
+              title: const Text('حفظ في المعرض'),
+              onTap: () => Navigator.pop(c, 'save')),
+          ListTile(
+              leading: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
+              title: const Text('حذف التسجيل', style: TextStyle(color: Colors.redAccent)),
+              onTap: () => Navigator.pop(c, 'delete')),
+        ]),
+      ),
+    );
+    if (a == null || !mounted) return;
+    if (a == 'play') {
+      await Navigator.push(context, MaterialPageRoute(builder: (_) => _RecordingPlayer(path: r.path)));
+    } else if (a == 'save') {
+      try {
+        await Gal.putVideo(r.path, album: 'المبرمج المجهول');
+        if (mounted) showSnack(context, 'تم الحفظ في المعرض ✅');
+      } catch (e) {
+        if (mounted) showSnack(context, 'تعذّر الحفظ: اسمح للتطبيق بالوصول للصور', error: true);
+      }
+    } else if (a == 'delete') {
+      if (!await confirmDialog(context, 'حذف التسجيل', 'سيُحذف الفيديو من جهازك.', ok: 'حذف', danger: true)) return;
+      await LiveRecordings.remove(r);
+      if (mounted) setState(() => _recs = LiveRecordings.all());
+    }
+  }
+
   Future<void> _delete(Map<String, dynamic> l) async {
     if (!await confirmDialog(context, 'حذف سجل البث', 'سيُحذف هذا البث وتعليقاته من سجلك.', ok: 'حذف', danger: true)) return;
     try {
@@ -1502,10 +1794,26 @@ class _MyLivesScreenState extends State<MyLivesScreen> {
       appBar: AppBar(title: const Text('بثوثي السابقة')),
       body: l == null
           ? const Center(child: CircularProgressIndicator())
-          : l.isEmpty
+          : l.isEmpty && _recs.isEmpty
               ? const EmptyState(icon: Icons.history_rounded, title: 'لا يوجد بثوث سابقة')
               : ListView(
                   children: [
+                    if (_recs.isNotEmpty) ...[
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                        child: Text('🎬 تسجيلاتي (على هذا الجهاز)', style: TextStyle(fontWeight: FontWeight.w800)),
+                      ),
+                      for (final r in _recs)
+                        ListTile(
+                          leading: const CircleAvatar(
+                              backgroundColor: Colors.redAccent, child: Icon(Icons.videocam_rounded, color: Colors.white)),
+                          title: Text(r.title.isEmpty ? 'تسجيل بث' : r.title),
+                          subtitle: Text('${Fmt.chatListTime(r.at)} · ${Fmt.fileSize(File(r.path).lengthSync())}'),
+                          trailing: const Icon(Icons.more_vert),
+                          onTap: () => _recMenu(r),
+                        ),
+                      const Divider(),
+                    ],
                     for (final x in l)
                       ListTile(
                         leading: Icon(Icons.live_tv_rounded, color: x['status'] == 'live' ? Colors.red : null),
@@ -1531,7 +1839,9 @@ class _CameraOffView extends StatelessWidget {
   final String? avatarUrl;
   final String name;
   final bool speaking;
-  const _CameraOffView({required this.cover, required this.avatarUrl, required this.name, required this.speaking});
+  final bool muted;
+  const _CameraOffView(
+      {required this.cover, required this.avatarUrl, required this.name, required this.speaking, this.muted = false});
 
   @override
   Widget build(BuildContext context) {
@@ -1543,9 +1853,20 @@ class _CameraOffView extends StatelessWidget {
       Container(color: Colors.black.withValues(alpha: cover != null ? 0.25 : 0)),
       Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          _SpeakingAvatar(avatarUrl: avatarUrl, name: name, speaking: speaking, size: 104),
+          _SpeakingAvatar(avatarUrl: avatarUrl, name: name, speaking: speaking && !muted, size: 104),
           const SizedBox(height: 14),
-          _SoundWave(active: speaking),
+          if (muted)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(20)),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.mic_off_rounded, color: Colors.redAccent, size: 18),
+                SizedBox(width: 6),
+                Text('المايك مكتوم', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+              ]),
+            )
+          else
+            _SoundWave(active: speaking),
         ]),
       ),
     ]);
@@ -1656,8 +1977,17 @@ class _GuestTile extends StatelessWidget {
   final String? avatarUrl;
   final String? cover;
   final bool speaking;
+  final bool muted;
+  final bool away;
   const _GuestTile(
-      {required this.video, required this.mirror, required this.name, this.avatarUrl, this.cover, required this.speaking});
+      {required this.video,
+      required this.mirror,
+      required this.name,
+      this.avatarUrl,
+      this.cover,
+      required this.speaking,
+      this.muted = false,
+      this.away = false});
 
   @override
   Widget build(BuildContext context) {
@@ -1680,6 +2010,26 @@ class _GuestTile extends StatelessWidget {
           Center(child: _SpeakingAvatar(avatarUrl: avatarUrl, name: name, speaking: speaking, size: 46)),
           Positioned(left: 0, right: 0, bottom: 20, child: Center(child: Transform.scale(scale: 0.55, child: _SoundWave(active: speaking)))),
         ],
+        if (away)
+          Container(
+            color: Colors.black54,
+            alignment: Alignment.center,
+            child: const Column(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.signal_wifi_connected_no_internet_4_rounded, color: Colors.white, size: 26),
+              SizedBox(height: 4),
+              Text('غير متصل', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+            ]),
+          ),
+        if (muted)
+          const Positioned(
+            top: 4,
+            right: 4,
+            child: CircleAvatar(
+              radius: 11,
+              backgroundColor: Colors.black54,
+              child: Icon(Icons.mic_off_rounded, size: 14, color: Colors.redAccent),
+            ),
+          ),
         Positioned(
           left: 0,
           right: 0,
@@ -1695,6 +2045,61 @@ class _GuestTile extends StatelessWidget {
           ),
         ),
       ]),
+    );
+  }
+}
+
+
+class _RecordingPlayer extends StatefulWidget {
+  final String path;
+  const _RecordingPlayer({required this.path});
+  @override
+  State<_RecordingPlayer> createState() => _RecordingPlayerState();
+}
+
+class _RecordingPlayerState extends State<_RecordingPlayer> {
+  late final VideoPlayerController _c = VideoPlayerController.file(File(widget.path));
+
+  @override
+  void initState() {
+    super.initState();
+    _c.initialize().then((_) {
+      if (mounted) {
+        setState(() {});
+        _c.play();
+      }
+    });
+    _c.addListener(() {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(backgroundColor: Colors.black, foregroundColor: Colors.white, title: const Text('تسجيل البث')),
+      body: !_c.value.isInitialized
+          ? const Center(child: CircularProgressIndicator(color: Colors.white))
+          : GestureDetector(
+              onTap: () => _c.value.isPlaying ? _c.pause() : _c.play(),
+              child: Stack(alignment: Alignment.center, children: [
+                Center(child: AspectRatio(aspectRatio: _c.value.aspectRatio, child: VideoPlayer(_c))),
+                if (!_c.value.isPlaying) const Icon(Icons.play_circle_fill_rounded, color: Colors.white70, size: 80),
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  bottom: 24,
+                  child: VideoProgressIndicator(_c, allowScrubbing: true),
+                ),
+              ]),
+            ),
     );
   }
 }

@@ -101,6 +101,13 @@ class LiveRepository {
   Future<void> guestSetCover(String liveId, String? url) =>
       supa.rpc('live_guest_set_cover', params: {'p_live': liveId, 'p_url': url ?? ''});
 
+  Future<void> share(String liveId) => supa.rpc('live_share', params: {'p_live': liveId});
+
+  Future<Map<String, dynamic>?> info(String liveId) async {
+    final r = await supa.rpc('live_info', params: {'p_live': liveId});
+    return r == null ? null : Map<String, dynamic>.from(r as Map);
+  }
+
   // ---- المدير ----
   Future<void> configure(String url, String key, String secret) =>
       supa.rpc('admin_set_live', params: {'p_url': url, 'p_key': key, 'p_secret': secret});

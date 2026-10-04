@@ -8,6 +8,7 @@ import '../core/theme.dart';
 import '../models/models.dart';
 import '../services/media_service.dart';
 import '../utils/helpers.dart';
+import '../screens/live/live_screens.dart';
 import 'common.dart';
 
 enum ReceiptState { none, pending, failed, sent, delivered, read }
@@ -233,8 +234,28 @@ class MessageBubble extends StatelessWidget {
           ),
         );
       default:
+        final text = message.content ?? '';
+        final live = RegExp(r'almajhool://live/([0-9a-fA-F-]{36})').firstMatch(text);
+        if (live != null) {
+          final rest = text.replaceFirst(live.group(0)!, '').trim();
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (rest.isNotEmpty)
+                Text(rest, style: TextStyle(color: fg, fontSize: 15, height: 1.35, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(backgroundColor: Colors.red, minimumSize: const Size(180, 42)),
+                onPressed: () => openLive(context, live.group(1)!),
+                icon: const Icon(Icons.live_tv_rounded, color: Colors.white),
+                label: const Text('مشاهدة البث 🔴', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+              ),
+            ],
+          );
+        }
         return SelectableText.rich(
-          _linkify(message.content ?? '', fg),
+          _linkify(text, fg),
           style: TextStyle(color: fg, fontSize: 15.5, height: 1.35),
         );
     }

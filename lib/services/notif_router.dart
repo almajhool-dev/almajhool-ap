@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:app_links/app_links.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
@@ -14,8 +17,28 @@ class NotifRouter {
   NotifRouter._();
   static bool _launchHandled = false;
 
+  static StreamSubscription? _linkSub;
+
+  /// روابط almajhool://live/<id> (من التلكرام أو أي مكان)
+  static String? _lastLink;
+  static DateTime _lastLinkAt = DateTime(2000);
+
+  static Future<void> _openLink(Uri uri) async {
+    if (uri.scheme != 'almajhool' || uri.host != 'live' || uri.pathSegments.isEmpty) return;
+    final now = DateTime.now();
+    if (_lastLink == uri.toString() && now.difference(_lastLinkAt).inSeconds < 8) return;
+    _lastLink = uri.toString();
+    _lastLinkAt = now;
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    final ctx = CallService.instance.navigatorKey.currentContext;
+    if (ctx != null && ctx.mounted) await openLive(ctx, uri.pathSegments.first);
+  }
+
   static void install() {
     foregroundNotificationHandler = handle;
+    try {
+      _linkSub ??= AppLinks().uriLinkStream.listen(_openLink);
+    } catch (_) {}
     try {
       FirebaseMessaging.onMessageOpenedApp.listen((m) => _openData(m.data));
     } catch (_) {}
@@ -37,6 +60,13 @@ class NotifRouter {
   static Future<void> handleLaunch() async {
     if (_launchHandled) return;
     _launchHandled = true;
+    try {
+      final link = await AppLinks().getInitialLink();
+      if (link != null) {
+        await _openLink(link);
+        return;
+      }
+    } catch (_) {}
     try {
       final m = await FirebaseMessaging.instance.getInitialMessage();
       if (m != null) {

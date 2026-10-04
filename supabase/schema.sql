@@ -2596,7 +2596,7 @@ begin
   grant_ := case when p_admin
     then jsonb_build_object('room', p_room, 'roomAdmin', true, 'roomCreate', true, 'roomList', true)
     else jsonb_build_object('room', p_room, 'roomJoin', true, 'canPublish', p_publish, 'canSubscribe', true,
-                            'canPublishData', true) end;
+                            'canPublishData', true, 'canUpdateOwnMetadata', true) end;
   head := _b64url(convert_to('{"alg":"HS256","typ":"JWT"}', 'utf8'));
   body := _b64url(convert_to(jsonb_build_object('iss', k, 'sub', p_identity, 'name', coalesce(p_name, ''),
             'nbf', now_s - 10, 'exp', now_s + p_ttl, 'video', grant_)::text, 'utf8'));
@@ -3049,6 +3049,60 @@ begin
   if not found then raise exception 'يجب أن تكون على البث'; end if;
 end $$;
 grant execute on function public.live_guest_set_cover(uuid, text) to authenticated;
+
+-- =====================================================================
+--  الإصدار 18: مشاركة البث (تُحسب وتقوّي ترتيب البث)
+-- =====================================================================
+alter table public.lives add column if not exists share_count int not null default 0;
+
+create or replace function public.live_share(p_live uuid) returns void
+language sql security definer set search_path = public as $$
+  update lives set share_count = share_count + 1 where id = p_live and status = 'live';
+$$;
+grant execute on function public.live_share(uuid) to authenticated;
+
+create or replace function public.live_info(p_live uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('id', l.id, 'title', l.title, 'status',
+      case when l.status = 'live' and l.last_beat > now() - interval '60 seconds' then 'live' else 'ended' end,
+      'host', p.display_name, 'avatar_url', p.avatar_url)
+  from lives l join profiles p on p.id = l.host_id where l.id = p_live;
+$$;
+grant execute on function public.live_info(uuid) to authenticated;
+
+create or replace function public.active_lives() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(x order by (x->>'score')::numeric desc), '[]'::jsonb) from (
+    select jsonb_build_object('id', l.id, 'title', l.title, 'host_id', l.host_id, 'viewers', l.viewer_count,
+      'likes', l.like_count, 'shares', l.share_count, 'started_at', l.started_at,
+      'score', l.viewer_count * 10 + l.like_count / 20.0 + l.share_count * 15
+        + case when exists(select 1 from follows f where f.follower_id = auth.uid() and f.followee_id = l.host_id) then 500 else 0 end,
+      'host', jsonb_build_object('id', p.id, 'username', p.username, 'display_name', p.display_name,
+        'avatar_url', p.avatar_url, 'is_verified', p.is_verified, 'is_owner', p.is_owner, 'xp', p.xp)) x
+    from lives l join profiles p on p.id = l.host_id
+    where l.status = 'live' and l.last_beat > now() - interval '60 seconds'
+      and not is_blocked_between(auth.uid(), l.host_id)
+    limit 100) t;
+$$;
+
+-- =====================================================================
+--  الإصدار 19: الضيف يصعد/ينزل بدون إعادة اتصال (تغيير الصلاحية مباشرة في LiveKit)
+-- =====================================================================
+create or replace function public.live_guest_respond(p_live uuid, p_user uuid, p_accept boolean) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not exists(select 1 from lives where id = p_live and host_id = auth.uid()) then raise exception 'غير مسموح'; end if;
+  if p_accept and (select count(*) from live_guests where live_id = p_live and status = 'accepted') >= 3 then
+    raise exception 'الحد الأقصى 3 ضيوف في نفس الوقت';
+  end if;
+  update live_guests set status = case when p_accept then 'accepted' else 'rejected' end, updated_at = now()
+    where live_id = p_live and user_id = p_user;
+  if p_accept then
+    perform _lk_api('UpdateParticipant', p_live::text, jsonb_build_object('room', p_live::text, 'identity', p_user::text,
+      'permission', jsonb_build_object('canPublish', true, 'canSubscribe', true, 'canPublishData', true,
+        'canUpdateMetadata', true)));
+  end if;
+end $$;
 
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
