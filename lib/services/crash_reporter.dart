@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 
 import 'core_services.dart';
+import 'integrity_service.dart';
 import 'rtc_safety.dart';
 import 'update_service.dart';
 
@@ -25,6 +26,8 @@ class CrashReporter {
 
   /// انهيار من الجزء الأصلي (Android) حُفظ قبل إغلاق التطبيق.
   static Future<void> sendPendingNativeCrash() async {
+    if (IntegrityService.v2Missing) _send('integrity: new signing cert missing');
+    if (RtcSafety.healedCache) _send('self-heal: cache cleared after repeated startup crashes');
     try {
       final exit = RtcSafety.pendingExit;
       RtcSafety.pendingExit = null;
