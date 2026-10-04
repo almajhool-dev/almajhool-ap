@@ -221,9 +221,74 @@ def write_proguard():
     print("proguard rules written")
 
 
+MAIN_ACTIVITY = """package com.almajhool.almajhool_app
+
+import android.content.pm.PackageManager
+import android.content.pm.Signature
+import android.os.Build
+import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+import java.security.MessageDigest
+
+class MainActivity : FlutterActivity() {
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "almajhool/integrity")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "sig") {
+                    try {
+                        result.success(signatures().map { sha256(it) })
+                    } catch (e: Exception) {
+                        result.success(listOf<String>())
+                    }
+                } else {
+                    result.notImplemented()
+                }
+            }
+    }
+
+    private fun signatures(): List<Signature> {
+        return if (Build.VERSION.SDK_INT >= 28) {
+            val info = packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+            val si = info.signingInfo ?: return emptyList()
+            val arr = if (si.hasMultipleSigners()) si.apkContentsSigners else si.signingCertificateHistory
+            arr?.toList() ?: emptyList()
+        } else {
+            @Suppress("DEPRECATION")
+            val info = packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES)
+            @Suppress("DEPRECATION")
+            info.signatures?.toList() ?: emptyList()
+        }
+    }
+
+    private fun sha256(s: Signature): String {
+        val d = MessageDigest.getInstance("SHA-256").digest(s.toByteArray())
+        return d.joinToString("") { "%02X".format(it) }
+    }
+}
+"""
+
+
+def write_main_activity():
+    """MainActivity مع قناة فحص سلامة التطبيق (بصمة التوقيع)."""
+    base = os.path.join(APP, "src", "main", "kotlin")
+    for root, _dirs, files in os.walk(base):
+        for f in files:
+            if f == "MainActivity.kt":
+                write(os.path.join(root, f), MAIN_ACTIVITY)
+                print("MainActivity patched:", os.path.join(root, f))
+                return
+    target = os.path.join(base, "com", "almajhool", "almajhool_app")
+    os.makedirs(target, exist_ok=True)
+    write(os.path.join(target, "MainActivity.kt"), MAIN_ACTIVITY)
+    print("MainActivity written")
+
+
 def main():
     patch_manifest()
     write_proguard()
+    write_main_activity()
     kts = os.path.join(APP, "build.gradle.kts")
     groovy = os.path.join(APP, "build.gradle")
     if os.path.exists(kts):

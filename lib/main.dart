@@ -12,6 +12,7 @@ import 'screens/setup_screen.dart';
 import 'services/background_service.dart';
 import 'services/call_service.dart';
 import 'services/core_services.dart';
+import 'services/integrity_service.dart';
 import 'services/local_notifications.dart';
 import 'services/notif_router.dart';
 import 'services/push_service.dart';
@@ -23,6 +24,7 @@ Future<void> main() async {
   await CacheService.init();
   await AppConfig.load();
   await PushService.init();
+  await IntegrityService.check();
   runApp(const RootApp());
 }
 

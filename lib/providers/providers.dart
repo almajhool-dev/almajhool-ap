@@ -130,6 +130,9 @@ class AppStatusProvider extends ChangeNotifier {
   bool enabled = true;
   String message = '';
   bool loaded = false;
+  int minBuild = 0;
+  String updateUrl = 'https://t.me/ikd5n';
+  String updateMessage = 'هذه النسخة قديمة ومتوقفة. نزّل النسخة الجديدة من قناتنا على تلكرام.';
   RealtimeChannel? _ch;
   Timer? _poll;
 
@@ -149,8 +152,12 @@ class AppStatusProvider extends ChangeNotifier {
 
   void _apply(Map<String, dynamic> m) {
     if (m.isEmpty) return;
-    enabled = (m['app_enabled'] ?? true) as bool;
+    // النسخ الحديثة تتبع «service_enabled» (النسخ القديمة تتبع app_enabled فقط)
+    enabled = (m['service_enabled'] ?? m['app_enabled'] ?? true) as bool;
     message = (m['maintenance_message'] ?? '') as String;
+    minBuild = ((m['min_build'] ?? 0) as num).toInt();
+    updateUrl = (m['update_url'] ?? updateUrl) as String;
+    updateMessage = (m['update_message'] ?? updateMessage) as String;
     loaded = true;
     notifyListeners();
   }

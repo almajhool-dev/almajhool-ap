@@ -118,6 +118,9 @@ class AdminRepository {
     return (r as Map).cast<String, dynamic>();
   }
 
+  Future<void> blockOld({required int build, required bool block, String message = '', String url = ''}) =>
+      supa.rpc('admin_block_old', params: {'p_build': build, 'p_block': block, 'p_message': message, 'p_url': url});
+
   Future<void> setApp(bool enabled, String message) =>
       supa.rpc('admin_set_app', params: {'enabled': enabled, 'message': message});
 

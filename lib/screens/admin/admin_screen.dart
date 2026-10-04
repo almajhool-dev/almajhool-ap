@@ -12,6 +12,7 @@ import '../../models/models.dart';
 import '../../providers/providers.dart';
 import '../../repositories/social_repositories.dart';
 import '../../services/core_services.dart';
+import '../../services/update_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../profile/profile_screens.dart';
@@ -158,6 +159,8 @@ class _OverviewState extends State<_Overview> {
               ),
             ),
           ),
+          const SizedBox(height: 12),
+          const _OldVersionsCard(),
           const SizedBox(height: 12),
           const _PushSettingsCard(),
           const SizedBox(height: 12),
@@ -902,6 +905,111 @@ class _PushSettingsCardState extends State<_PushSettingsCard> {
                   ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.upload_file_rounded),
               label: Text(ok ? 'استبدال الملف' : 'اختيار ملف حساب الخدمة'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+/// إيقاف كل النسخ الأقدم من نسخة المدير، وإظهار زر تحميل من قناة التلكرام.
+class _OldVersionsCard extends StatefulWidget {
+  const _OldVersionsCard();
+  @override
+  State<_OldVersionsCard> createState() => _OldVersionsCardState();
+}
+
+class _OldVersionsCardState extends State<_OldVersionsCard> {
+  late final _msg = TextEditingController(text: context.read<AppStatusProvider>().updateMessage);
+  late final _url = TextEditingController(text: context.read<AppStatusProvider>().updateUrl);
+  bool _busy = false;
+
+  Future<void> _set(bool block) async {
+    final build = UpdateService.currentBuild;
+    if (block &&
+        !await confirmDialog(
+            context,
+            'إيقاف النسخ القديمة',
+            'كل مستخدم عنده نسخة أقدم من ${UpdateService.currentVersion} سيتوقف تطبيقه ويظهر له زر «تحميل النسخة الجديدة» '
+                'الذي يفتح: ${_url.text.trim()}\n\nتأكد أنك رفعت النسخة الجديدة على القناة أولًا.',
+            ok: 'إيقاف',
+            danger: true)) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await AdminRepository().blockOld(build: build, block: block, message: _msg.text.trim(), url: _url.text.trim());
+      if (mounted) {
+        await context.read<AppStatusProvider>().load();
+        if (mounted) showSnack(context, block ? 'تم إيقاف النسخ القديمة ⛔' : 'تم إلغاء الإيقاف ✅');
+      }
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final st = context.watch<AppStatusProvider>();
+    final active = st.minBuild > 0;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.system_update_rounded),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text('النسخ القديمة', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                ),
+                Chip(
+                  label: Text(active ? 'متوقفة (أقدم من 1.0.${st.minBuild})' : 'مسموحة'),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text('نسختك الحالية: ${UpdateService.currentVersion}', style: const TextStyle(fontSize: 12.5)),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _msg,
+              maxLines: 2,
+              decoration: const InputDecoration(labelText: 'الرسالة التي تظهر للمستخدمين', isDense: true),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _url,
+              textDirection: TextDirection.ltr,
+              decoration: const InputDecoration(labelText: 'رابط التحميل (قناة التلكرام)', isDense: true),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+                    onPressed: _busy ? null : () => _set(true),
+                    icon: const Icon(Icons.block_rounded),
+                    label: const Text('إيقاف النسخ الأقدم'),
+                  ),
+                ),
+                if (active) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _busy ? null : () => _set(false),
+                      child: const Text('إلغاء الإيقاف'),
+                    ),
+                  ),
+                ],
+              ],
             ),
           ],
         ),

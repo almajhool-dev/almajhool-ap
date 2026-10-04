@@ -2,10 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../core/theme.dart';
 import '../providers/providers.dart';
 import '../repositories/user_repositories.dart';
+import '../services/integrity_service.dart';
+import '../services/update_service.dart';
 import '../services/background_service.dart';
 import '../services/notif_router.dart';
 import '../services/push_service.dart';
@@ -106,8 +109,22 @@ class _GateState extends State<Gate> {
     }
 
     Widget child;
-    if (!_minSplashDone || session.status == SessionStatus.loading || !status.loaded) {
+    if (IntegrityService.tampered) {
+      child = _UpdateRequiredScreen(
+        icon: Icons.gpp_bad_rounded,
+        title: 'نسخة غير رسمية',
+        message: 'هذه النسخة تم تعديلها ولا يمكن استخدامها. نزّل النسخة الرسمية من قناتنا على تلكرام.',
+        url: status.updateUrl,
+      );
+    } else if (!_minSplashDone || session.status == SessionStatus.loading || !status.loaded) {
       child = const SplashView();
+    } else if (UpdateService.currentBuild > 0 && status.minBuild > UpdateService.currentBuild && !session.isAdmin) {
+      child = _UpdateRequiredScreen(
+        icon: Icons.system_update_rounded,
+        title: 'يلزم تحديث التطبيق',
+        message: status.updateMessage,
+        url: status.updateUrl,
+      );
     } else if (session.status == SessionStatus.signedIn && (session.profile?.isBanned ?? false)) {
       // الحساب محظور: نعرض السبب ثم نسجّل خروجه تلقائيًا
       if (!_banLogoutScheduled) {
@@ -140,6 +157,57 @@ class _GateState extends State<Gate> {
     }
 
     return AnimatedSwitcher(duration: const Duration(milliseconds: 350), child: child);
+  }
+}
+
+/// شاشة «حدّث التطبيق»: زر يفتح قناة التلكرام (أو تحديث مباشر).
+class _UpdateRequiredScreen extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String message;
+  final String url;
+  const _UpdateRequiredScreen({required this.icon, required this.title, required this.message, required this.url});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const BrandLogo(size: 84),
+                const SizedBox(height: 32),
+                Icon(icon, size: 60, color: AppColors.cyan),
+                const SizedBox(height: 14),
+                Text(title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 10),
+                Text(message, textAlign: TextAlign.center, style: const TextStyle(fontSize: 15, height: 1.6)),
+                const SizedBox(height: 28),
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(minimumSize: const Size(260, 52)),
+                  onPressed: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+                  icon: const Icon(Icons.telegram, size: 26),
+                  label: const Text('تحميل النسخة الجديدة', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                ),
+                const SizedBox(height: 10),
+                Text(url, textDirection: TextDirection.ltr, style: TextStyle(color: Theme.of(context).hintColor)),
+                if (!IntegrityService.tampered) ...[
+                  const SizedBox(height: 18),
+                  TextButton.icon(
+                    onPressed: () => UpdateService.manualCheck(context),
+                    icon: const Icon(Icons.download_rounded),
+                    label: const Text('أو تحديث مباشر من داخل التطبيق'),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
