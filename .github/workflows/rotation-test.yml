@@ -35,9 +35,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          URL=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | python3 -c "import json,sys;print([a['browser_download_url'] for a in json.load(sys.stdin)['assets'] if a['name'].endswith('.apk')][0])")
-          curl -sL "$URL" -o old.apk
-          bash tool/sign_rotate.sh old.apk rotated.apk
+          REL=https://github.com/${{ github.repository }}/releases/download
+          curl -sL "$REL/v1.0.52/almajhool-app.apk" -o old.apk
+          curl -sL "$REL/v1.0.54/almajhool-arm64.apk" -o split.apk
+          curl -sL "$REL/v1.0.54/almajhool-app.apk" -o rotated.apk
           BT="$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)"
           P=$(grep '^storePassword=' signing/signing.properties | cut -d= -f2-)
           K=$(grep '^keyPassword=' signing/signing.properties | cut -d= -f2-)
