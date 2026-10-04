@@ -66,6 +66,14 @@ def patch_manifest():
             '    </application>',
             1,
         )
+    # محرك الرسم القديم (Skia): أكثر استقرارًا مع عرض الفيديو على بعض الهواتف
+    if "EnableImpeller" not in s:
+        s = s.replace(
+            "</application>",
+            '    <meta-data android:name="io.flutter.embedding.android.EnableImpeller" android:value="false"/>\n'
+            '    </application>',
+            1,
+        )
     # أزرار الإشعارات (رد/رفض) تعمل والتطبيق مغلق
     if "ActionBroadcastReceiver" not in s:
         s = s.replace(
@@ -285,6 +293,8 @@ class MainActivity : FlutterActivity() {
                     } catch (e: Exception) {
                         result.success(listOf<String>())
                     }
+                } else if (call.method == "lastExit") {
+                    result.success(lastExit())
                 } else {
                     result.notImplemented()
                 }
@@ -302,6 +312,29 @@ class MainActivity : FlutterActivity() {
             val info = packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES)
             @Suppress("DEPRECATION")
             info.signatures?.toList() ?: emptyList()
+        }
+    }
+
+    /** سبب آخر إغلاق للتطبيق (انهيار، نفاد ذاكرة...) لإرساله للمطوّر */
+    private fun lastExit(): String? {
+        if (Build.VERSION.SDK_INT < 30) return null
+        return try {
+            val am = getSystemService(android.app.ActivityManager::class.java)
+            val list = am.getHistoricalProcessExitReasons(packageName, 0, 1)
+            if (list.isEmpty()) return null
+            val e = list[0]
+            val prefs = getSharedPreferences("almajhool_exit", MODE_PRIVATE)
+            if (prefs.getLong("ts", 0) == e.timestamp) return null
+            prefs.edit().putLong("ts", e.timestamp).apply()
+            val interesting = e.reason == android.app.ApplicationExitInfo.REASON_CRASH ||
+                e.reason == android.app.ApplicationExitInfo.REASON_CRASH_NATIVE ||
+                e.reason == android.app.ApplicationExitInfo.REASON_ANR ||
+                e.reason == android.app.ApplicationExitInfo.REASON_LOW_MEMORY
+            if (!interesting) return null
+            "reason=" + e.reason + " status=" + e.status + " desc=" + (e.description ?: "") +
+                " pss=" + e.pss + " api=" + Build.VERSION.SDK_INT + " model=" + Build.MODEL
+        } catch (t: Throwable) {
+            null
         }
     }
 

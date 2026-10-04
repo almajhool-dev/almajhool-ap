@@ -98,6 +98,9 @@ class LiveRepository {
   Future<List<Map<String, dynamic>>> guests(String liveId) async =>
       (await supa.from('live_guests').select().eq('live_id', liveId)).map((e) => Map<String, dynamic>.from(e)).toList();
 
+  Future<void> guestSetCover(String liveId, String? url) =>
+      supa.rpc('live_guest_set_cover', params: {'p_live': liveId, 'p_url': url ?? ''});
+
   // ---- المدير ----
   Future<void> configure(String url, String key, String secret) =>
       supa.rpc('admin_set_live', params: {'p_url': url, 'p_key': key, 'p_secret': secret});

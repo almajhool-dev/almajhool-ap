@@ -3037,5 +3037,18 @@ grant execute on function public.live_guest_respond(uuid, uuid, boolean) to auth
 grant execute on function public.live_guest_leave(uuid, uuid) to authenticated;
 grant execute on function public.live_guest_token(uuid) to authenticated;
 
+-- =====================================================================
+--  الإصدار 17: صورة خاصة لكل ضيف على البث
+-- =====================================================================
+alter table public.live_guests add column if not exists cover_url text;
+create or replace function public.live_guest_set_cover(p_live uuid, p_url text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  update live_guests set cover_url = nullif(trim(p_url), ''), updated_at = now()
+    where live_id = p_live and user_id = auth.uid() and status = 'accepted';
+  if not found then raise exception 'يجب أن تكون على البث'; end if;
+end $$;
+grant execute on function public.live_guest_set_cover(uuid, text) to authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

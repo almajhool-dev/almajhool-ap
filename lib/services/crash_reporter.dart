@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 import 'core_services.dart';
 import 'update_service.dart';
@@ -24,6 +25,10 @@ class CrashReporter {
 
   /// انهيار من الجزء الأصلي (Android) حُفظ قبل إغلاق التطبيق.
   static Future<void> sendPendingNativeCrash() async {
+    try {
+      final exit = await const MethodChannel('almajhool/integrity').invokeMethod<String>('lastExit');
+      if (exit != null && exit.isNotEmpty) _send('exit: $exit');
+    } catch (_) {}
     final c = CacheService.getString('last_crash');
     if (c == null || c.isEmpty) return;
     await CacheService.setString('last_crash', '');

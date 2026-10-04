@@ -234,6 +234,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   String _filter = 'none';
   String? _cover;
   Map<String, String> _guests = {};
+  Map<String, String?> _guestCovers = {};
   bool _amGuest = false;
   bool get _publishing => widget.isHost || _amGuest;
 
@@ -350,10 +351,11 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     await room.connect(url, token);
     _reconnecting = false;
     if (publish) {
-      await room.localParticipant?.setCameraEnabled(true);
-      await room.localParticipant?.setMicrophoneEnabled(true);
-      _camOn = true;
+      // صاحب البث يبدأ بالكاميرا؛ الضيف يبدأ بالصوت فقط ويقرر هو فتح الكاميرا
+      _camOn = widget.isHost;
       _micOn = true;
+      if (_camOn) await room.localParticipant?.setCameraEnabled(true);
+      await room.localParticipant?.setMicrophoneEnabled(true);
     }
     _refreshCount();
   }
@@ -364,6 +366,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     try {
       final rows = await _repo.guests(_liveId!);
       _guests = {for (final r in rows) r['user_id'] as String: r['status'] as String};
+      _guestCovers = {for (final r in rows) r['user_id'] as String: r['cover_url'] as String?};
       await _loadPeople(_guests.keys);
     } catch (_) {}
     final mine = _guests[myId];
@@ -400,6 +403,10 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
       } else if (mine == 'pending') {
         showSnack(context, 'طلبك بانتظار موافقة صاحب البث');
       } else {
+        if (!await confirmDialog(context, 'الصعود في البث', 'هل تريد الصعود في البث المباشر؟ سيصل طلبك لصاحب البث.',
+            ok: 'طلب الصعود')) {
+          return;
+        }
         await _repo.guestRequest(_liveId!);
         if (mounted) showSnack(context, 'تم إرسال طلب الصعود 🙋');
       }
@@ -486,8 +493,13 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
       await supa.storage.from('posts').uploadBinary(path, data,
           fileOptions: FileOptions(contentType: gif ? 'image/gif' : 'image/jpeg'));
       final url = supa.storage.from('posts').getPublicUrl(path);
-      await _repo.setCover(_liveId!, url);
-      if (mounted) setState(() => _cover = url);
+      if (widget.isHost) {
+        await _repo.setCover(_liveId!, url);
+        if (mounted) setState(() => _cover = url);
+      } else {
+        await _repo.guestSetCover(_liveId!, url);
+        await _onGuestsChanged();
+      }
     } catch (e) {
       if (mounted) showSnack(context, friendlyError(e), error: true);
     }
@@ -906,6 +918,71 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     }
   }
 
+  Future<void> _guestMenu() async {
+    await showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (c) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: Icon(_camOn ? Icons.videocam_off_rounded : Icons.videocam_rounded),
+            title: Text(_camOn ? 'إغلاق الكاميرا' : 'فتح الكاميرا'),
+            onTap: () {
+              Navigator.pop(c);
+              _toggleCam();
+            },
+          ),
+          if (_camOn)
+            ListTile(
+              leading: const Icon(Icons.cameraswitch_rounded),
+              title: Text(_front ? 'الكاميرا الخلفية' : 'الكاميرا الأمامية'),
+              onTap: () {
+                Navigator.pop(c);
+                _switchCamera();
+              },
+            ),
+          ListTile(
+            leading: Icon(_micOn ? Icons.mic_off_rounded : Icons.mic_rounded),
+            title: Text(_micOn ? 'كتم المايك' : 'تشغيل المايك'),
+            onTap: () {
+              Navigator.pop(c);
+              _toggleMic();
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.image_rounded),
+            title: const Text('صورتي على البث (ثابتة أو متحركة)'),
+            subtitle: const Text('تظهر مكان الكاميرا عندما تكون مغلقة'),
+            onTap: () {
+              Navigator.pop(c);
+              _pickCover();
+            },
+          ),
+          if (_guestCovers[myId] != null)
+            ListTile(
+              leading: const Icon(Icons.hide_image_rounded),
+              title: const Text('إزالة صورتي'),
+              onTap: () async {
+                Navigator.pop(c);
+                try {
+                  await _repo.guestSetCover(_liveId!, null);
+                  await _onGuestsChanged();
+                } catch (_) {}
+              },
+            ),
+          ListTile(
+            leading: const Icon(Icons.call_end_rounded, color: Colors.redAccent),
+            title: const Text('النزول من البث', style: TextStyle(color: Colors.redAccent)),
+            onTap: () {
+              Navigator.pop(c);
+              _guestButton();
+            },
+          ),
+        ]),
+      ),
+    );
+  }
+
   Future<void> _hostMenu() async {
     await showModalBottomSheet(
       context: context,
@@ -984,6 +1061,45 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     if (mounted) setState(() {});
   }
 
+  /// أزرار متوازنة على جانبي مربع التعليق.
+  List<Widget> _sideButtons(bool first) {
+    final List<Widget> a;
+    final List<Widget> b;
+    if (widget.isHost) {
+      a = [
+        _RoundIcon(icon: Icons.auto_awesome_rounded, color: Colors.pinkAccent, onTap: _filtersSheet),
+        _RoundIcon(
+          icon: Icons.group_add_rounded,
+          color: _guests.values.any((v) => v == 'pending') ? Colors.amberAccent : Colors.white,
+          onTap: _guestsSheet,
+        ),
+      ];
+      b = [
+        _RoundIcon(icon: Icons.favorite_rounded, color: Colors.pinkAccent, onTap: _tap),
+        _RoundIcon(icon: Icons.more_horiz_rounded, onTap: _hostMenu),
+      ];
+    } else if (_amGuest) {
+      a = [
+        _RoundIcon(icon: Icons.auto_awesome_rounded, color: Colors.pinkAccent, onTap: _filtersSheet),
+        _RoundIcon(icon: _micOn ? Icons.mic_rounded : Icons.mic_off_rounded, onTap: _toggleMic),
+      ];
+      b = [
+        _RoundIcon(icon: Icons.favorite_rounded, color: Colors.pinkAccent, onTap: _tap),
+        _RoundIcon(icon: Icons.more_horiz_rounded, onTap: _guestMenu),
+      ];
+    } else {
+      a = [
+        _RoundIcon(
+          icon: _guests[myId] == 'pending' ? Icons.hourglass_top_rounded : Icons.group_add_rounded,
+          color: Colors.amberAccent,
+          onTap: _guestButton,
+        ),
+      ];
+      b = [_RoundIcon(icon: Icons.favorite_rounded, color: Colors.pinkAccent, onTap: _tap)];
+    }
+    return first ? a : b;
+  }
+
   @override
   Widget build(BuildContext context) {
     final video = _hostVideo();
@@ -1001,8 +1117,8 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
           children: [
             // الفيديو
             GestureDetector(
-              onTap: widget.isHost ? null : _tap,
-              onDoubleTap: widget.isHost ? null : _tap,
+              onTap: _tap,
+              onDoubleTap: _tap,
               child: video != null
                   ? lk.VideoTrackRenderer(
                       video,
@@ -1043,6 +1159,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                         child: GestureDetector(
                           onTap: () => widget.isHost ? _guestsSheet() : _personMenu(g.key),
                           child: _GuestTile(
+                            cover: _guestCovers[g.key],
                             video: _videoOf(g.key),
                             mirror: g.key == myId && _front,
                             name: _people[g.key]?.displayName ?? '',
@@ -1080,6 +1197,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                 padding: const EdgeInsets.all(10),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.max,
                   children: [
                     if (host != null)
                       GestureDetector(
@@ -1092,7 +1210,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                             const SizedBox(width: 6),
                             ConstrainedBox(
                               constraints: const BoxConstraints(maxWidth: 140),
-                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
                                 Text(host.displayName,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
@@ -1176,7 +1294,9 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                                   decoration: BoxDecoration(
-                                    color: c.kind == 'system' ? Colors.amber.withValues(alpha: 0.25) : Colors.black38,
+                                    color: c.kind == 'system'
+                                        ? Colors.amber.withValues(alpha: 0.35)
+                                        : Colors.black.withValues(alpha: 0.6),
                                     borderRadius: BorderRadius.circular(14),
                                   ),
                                   child: Text.rich(
@@ -1226,6 +1346,8 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                       padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
                       child: Row(
                         children: [
+                          ..._sideButtons(true),
+                          const SizedBox(width: 4),
                           Expanded(
                             child: TextField(
                               controller: _text,
@@ -1237,7 +1359,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                                 hintText: 'اكتب تعليقًا...',
                                 hintStyle: const TextStyle(color: Colors.white60),
                                 filled: true,
-                                fillColor: Colors.white12,
+                                fillColor: Colors.black.withValues(alpha: 0.45),
                                 isDense: true,
                                 contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
@@ -1246,28 +1368,8 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                               ),
                             ),
                           ),
-                          const SizedBox(width: 6),
-                          if (widget.isHost) ...[
-                            _RoundIcon(icon: Icons.auto_awesome_rounded, color: Colors.pinkAccent, onTap: _filtersSheet),
-                            _RoundIcon(
-                              icon: Icons.group_add_rounded,
-                              color: _guests.values.any((v) => v == 'pending') ? Colors.amberAccent : Colors.white,
-                              onTap: _guestsSheet,
-                            ),
-                            _RoundIcon(icon: Icons.more_horiz_rounded, onTap: _hostMenu),
-                          ] else ...[
-                            if (_amGuest) ...[
-                              _RoundIcon(icon: Icons.auto_awesome_rounded, color: Colors.pinkAccent, onTap: _filtersSheet),
-                              _RoundIcon(icon: _micOn ? Icons.mic_rounded : Icons.mic_off_rounded, onTap: _toggleMic),
-                              _RoundIcon(icon: Icons.call_end_rounded, color: Colors.redAccent, onTap: _guestButton),
-                            ] else
-                              _RoundIcon(
-                                icon: _guests[myId] == 'pending' ? Icons.hourglass_top_rounded : Icons.back_hand_rounded,
-                                color: Colors.amberAccent,
-                                onTap: _guestButton,
-                              ),
-                            _RoundIcon(icon: Icons.favorite_rounded, color: Colors.pinkAccent, onTap: _tap),
-                          ],
+                          const SizedBox(width: 4),
+                          ..._sideButtons(false),
                         ],
                       ),
                     ),
@@ -1552,8 +1654,10 @@ class _GuestTile extends StatelessWidget {
   final bool mirror;
   final String name;
   final String? avatarUrl;
+  final String? cover;
   final bool speaking;
-  const _GuestTile({required this.video, required this.mirror, required this.name, this.avatarUrl, required this.speaking});
+  const _GuestTile(
+      {required this.video, required this.mirror, required this.name, this.avatarUrl, this.cover, required this.speaking});
 
   @override
   Widget build(BuildContext context) {
@@ -1571,8 +1675,11 @@ class _GuestTile extends StatelessWidget {
           lk.VideoTrackRenderer(video!,
               fit: lk.VideoViewFit.cover,
               mirrorMode: mirror ? lk.VideoViewMirrorMode.mirror : lk.VideoViewMirrorMode.off)
-        else
-          Center(child: _SpeakingAvatar(avatarUrl: avatarUrl, name: name, speaking: speaking, size: 52)),
+        else ...[
+          if (cover != null) Image.network(cover!, fit: BoxFit.cover, gaplessPlayback: true),
+          Center(child: _SpeakingAvatar(avatarUrl: avatarUrl, name: name, speaking: speaking, size: 46)),
+          Positioned(left: 0, right: 0, bottom: 20, child: Center(child: Transform.scale(scale: 0.55, child: _SoundWave(active: speaking)))),
+        ],
         Positioned(
           left: 0,
           right: 0,
