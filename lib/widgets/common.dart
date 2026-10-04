@@ -285,3 +285,24 @@ class LevelChip extends StatelessWidget {
     );
   }
 }
+
+/// شارة «مالك التطبيق» تظهر على حساب المالك ومنشوراته.
+class OwnerChip extends StatelessWidget {
+  final bool large;
+  const OwnerChip({super.key, this.large = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: large ? 12 : 7, vertical: large ? 5 : 2),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(colors: [Color(0xFFFFC107), Color(0xFFFF8F00)]),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        large ? '👑 مالك التطبيق' : '👑 المالك',
+        style: TextStyle(color: Colors.black, fontWeight: FontWeight.w800, fontSize: large ? 13 : 10.5),
+      ),
+    );
+  }
+}

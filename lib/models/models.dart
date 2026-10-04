@@ -378,6 +378,9 @@ class Post {
   final Profile? author;
   final bool likedByMe;
   final DateTime? editedAt;
+  final int? textColor;
+  final int? bgColor;
+  final String visibility; // public | friends | private | custom
 
   const Post({
     required this.id,
@@ -390,6 +393,9 @@ class Post {
     this.author,
     this.likedByMe = false,
     this.editedAt,
+    this.textColor,
+    this.bgColor,
+    this.visibility = 'public',
   });
 
   factory Post.fromMap(Map<String, dynamic> m, {bool liked = false}) => Post(
@@ -403,6 +409,9 @@ class Post {
         author: m['author'] is Map<String, dynamic> ? Profile.fromMap(m['author'] as Map<String, dynamic>) : null,
         likedByMe: liked,
         editedAt: _dt(m['edited_at']),
+        textColor: (m['text_color'] as num?)?.toInt(),
+        bgColor: (m['bg_color'] as num?)?.toInt(),
+        visibility: (m['visibility'] ?? 'public') as String,
       );
 
   Post copyWith({int? likeCount, int? commentCount, bool? likedByMe, String? content, DateTime? editedAt}) => Post(
@@ -416,6 +425,9 @@ class Post {
         createdAt: createdAt,
         author: author,
         likedByMe: likedByMe ?? this.likedByMe,
+        textColor: textColor,
+        bgColor: bgColor,
+        visibility: visibility,
       );
 }
 

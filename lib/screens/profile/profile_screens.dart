@@ -29,6 +29,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String _relation = 'none';
   String? _requestId;
   bool _blocked = false;
+  Map<String, dynamic> _counts = const {};
   List<GroupSearchResult> _common = [];
   bool _loading = true;
   late final PostsController _posts = PostsController(authorId: widget.userId);
@@ -50,6 +51,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _load() async {
     try {
       final p = await _profiles.get(widget.userId);
+      try {
+        _counts = await _contacts.counts(widget.userId);
+      } catch (_) {}
       if (!_isMe) {
         final rel = await _contacts.statusWith(widget.userId);
         final blocks = await _profiles.myBlocks();
@@ -94,7 +98,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             }
           },
           icon: const Icon(Icons.how_to_reg),
-          label: const Text('جهة اتصال'),
+          label: const Text('صديق'),
         );
       case 'pending_out':
         return OutlinedButton.icon(
@@ -114,9 +118,47 @@ class _ProfileScreenState extends State<ProfileScreen> {
           style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
           onPressed: _blocked ? null : () => _act(() => _contacts.send(widget.userId), 'تم إرسال طلب التواصل'),
           icon: const Icon(Icons.person_add_alt_1),
-          label: const Text('إضافة'),
+          label: const Text('إضافة صديق'),
         );
     }
+  }
+
+  Widget _count(String label, String? kind) {
+    final key = kind ?? 'posts';
+    final n = (_counts[key] as num?)?.toInt() ?? 0;
+    return Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: kind == null
+            ? null
+            : () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => PeopleListScreen(userId: widget.userId, kind: kind, title: label))),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Column(children: [
+            Text('$n', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+            Text(label, style: TextStyle(fontSize: 12, color: Theme.of(context).hintColor)),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _followButton() {
+    final following = _counts['i_follow'] == true;
+    return following
+        ? OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
+            onPressed: () => _act(() => _contacts.unfollow(widget.userId), 'ألغيت المتابعة'),
+            icon: const Icon(Icons.check_rounded),
+            label: const Text('تتابعه'),
+          )
+        : FilledButton.icon(
+            style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
+            onPressed: _blocked ? null : () => _act(() => _contacts.follow(widget.userId), 'أصبحت تتابعه ✅'),
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('متابعة'),
+          );
   }
 
   Future<void> _report() async {
@@ -183,12 +225,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
               ],
             ),
+            if (p.isOwner) ...[
+              const SizedBox(height: 8),
+              const Center(child: OwnerChip(large: true)),
+            ],
             Text('@${p.username}', textAlign: TextAlign.center, style: TextStyle(color: Theme.of(context).hintColor)),
             const SizedBox(height: 6),
             Text(
               p.isBanned ? 'حساب موقوف' : (online ? 'متصل الآن' : Fmt.lastSeen(p.lastSeen)),
               textAlign: TextAlign.center,
               style: TextStyle(color: p.isBanned ? Colors.redAccent : (online ? Colors.green : Theme.of(context).hintColor)),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                _count('الأصدقاء', 'friends'),
+                _count('المتابعون', 'followers'),
+                _count('يتابع', 'following'),
+                _count('المنشورات', null),
+              ],
             ),
             const SizedBox(height: 14),
             _LevelCard(profile: p),
@@ -217,6 +272,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   Expanded(child: _relationButton()),
                 ],
               ),
+            if (!_isMe) ...[
+              const SizedBox(height: 10),
+              _followButton(),
+            ],
             if (_blocked)
               const Padding(
                 padding: EdgeInsets.only(top: 12),
@@ -427,6 +486,59 @@ class _LevelCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+
+/// قائمة الأصدقاء / المتابعين / من يتابعهم.
+class PeopleListScreen extends StatefulWidget {
+  final String userId;
+  final String kind;
+  final String title;
+  const PeopleListScreen({super.key, required this.userId, required this.kind, required this.title});
+  @override
+  State<PeopleListScreen> createState() => _PeopleListScreenState();
+}
+
+class _PeopleListScreenState extends State<PeopleListScreen> {
+  List<Profile>? _list;
+
+  @override
+  void initState() {
+    super.initState();
+    ContactRepository().people(widget.userId, widget.kind).then((l) {
+      if (mounted) setState(() => _list = l);
+    }).catchError((e) {
+      if (mounted) {
+        setState(() => _list = []);
+        showSnack(context, friendlyError(e), error: true);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l = _list;
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.title)),
+      body: l == null
+          ? const Center(child: CircularProgressIndicator())
+          : l.isEmpty
+              ? const EmptyState(icon: Icons.people_outline_rounded, title: 'لا يوجد أحد بعد')
+              : ListView(
+                  children: [
+                    for (final p in l)
+                      ListTile(
+                        leading: Avatar(url: p.avatarUrl, name: p.displayName),
+                        title: NameWithBadge(p.displayName, verified: p.verified),
+                        subtitle: Text('@${p.username}'),
+                        trailing: p.isOwner ? const OwnerChip() : null,
+                        onTap: () => Navigator.push(
+                            context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: p.id))),
+                      ),
+                  ],
+                ),
     );
   }
 }

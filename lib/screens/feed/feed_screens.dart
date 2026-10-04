@@ -1,7 +1,8 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
@@ -9,12 +10,15 @@ import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../providers/providers.dart';
 import '../../repositories/post_repository.dart';
+import '../../repositories/social_repositories.dart';
 import '../../repositories/user_repositories.dart';
 import '../../services/core_services.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../admin/admin_screen.dart';
 import '../profile/profile_screens.dart';
+import 'image_editor.dart';
+import 'stories.dart';
 
 /// قائمة منشورات قابلة لإعادة الاستخدام (الصفحة الرئيسية + ملف المستخدم).
 class PostsController extends ChangeNotifier {
@@ -97,6 +101,7 @@ class FeedTab extends StatefulWidget {
 class _FeedTabState extends State<FeedTab> {
   final _ctrl = PostsController();
   final _scroll = ScrollController();
+  final _stories = GlobalKey<StoryBarState>();
 
   @override
   void initState() {
@@ -128,7 +133,10 @@ class _FeedTabState extends State<FeedTab> {
       child: ListenableBuilder(
         listenable: _ctrl,
         builder: (context, _) => RefreshIndicator(
-          onRefresh: _ctrl.refresh,
+          onRefresh: () async {
+            _stories.currentState?.reload();
+            await _ctrl.refresh();
+          },
           child: CustomScrollView(
             controller: _scroll,
             cacheExtent: 1200,
@@ -156,6 +164,7 @@ class _FeedTabState extends State<FeedTab> {
                   ),
                 ),
               ),
+              SliverToBoxAdapter(child: StoryBar(key: _stories)),
               SliverToBoxAdapter(
                 child: Card(
                   margin: const EdgeInsets.fromLTRB(12, 6, 12, 8),
@@ -242,12 +251,15 @@ class PostCard extends StatelessWidget {
                         verified: a?.verified ?? false, style: const TextStyle(fontWeight: FontWeight.w800)),
                   ),
                   const SizedBox(width: 6),
-                  if (a != null) LevelChip(a.level),
+                  if (a?.isOwner ?? false) const OwnerChip() else if (a != null) LevelChip(a.level),
                 ],
               ),
             ),
-            subtitle: Text('${Fmt.chatListTime(post.createdAt)}${post.editedAt != null ? ' · معدّل' : ''}',
-                style: const TextStyle(fontSize: 12)),
+            subtitle: Row(children: [
+              Text('${Fmt.chatListTime(post.createdAt)}${post.editedAt != null ? ' · معدّل' : ''} · ',
+                  style: const TextStyle(fontSize: 12)),
+              Icon(kVisibility[post.visibility]?.$1 ?? Icons.public_rounded, size: 13),
+            ]),
             trailing: PopupMenuButton<String>(
               icon: const Icon(Icons.more_horiz),
               onSelected: (v) => _menu(context, v),
@@ -258,10 +270,32 @@ class PostCard extends StatelessWidget {
               ],
             ),
           ),
-          if (post.content.isNotEmpty)
+          if (post.content.isNotEmpty && post.bgColor != null && post.imageUrl == null)
+            Container(
+              constraints: const BoxConstraints(minHeight: 220),
+              margin: const EdgeInsets.fromLTRB(10, 4, 10, 8),
+              padding: const EdgeInsets.all(22),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(color: Color(post.bgColor!), borderRadius: BorderRadius.circular(14)),
+              child: Text.rich(
+                _mentions(post.content),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: post.content.length > 120 ? 18 : 24,
+                  fontWeight: FontWeight.w800,
+                  height: 1.4,
+                  color: post.textColor != null ? Color(post.textColor!) : Colors.white,
+                ),
+              ),
+            )
+          else if (post.content.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 4, 14, 10),
-              child: Text.rich(_mentions(post.content), style: const TextStyle(fontSize: 15.5, height: 1.5)),
+              child: Text.rich(_mentions(post.content),
+                  style: TextStyle(
+                      fontSize: 15.5,
+                      height: 1.5,
+                      color: post.textColor != null ? Color(post.textColor!) : null)),
             ),
           if (post.imageUrl != null)
             GestureDetector(
@@ -321,10 +355,11 @@ class PostCard extends StatelessWidget {
     try {
       switch (v) {
         case 'edit':
-          final t = await promptText(context, 'تعديل المنشور', initial: post.content, maxLines: 6);
-          if (t == null) return;
-          await controller.repo.edit(post.id, t);
-          controller.replace(post.copyWith(content: t, editedAt: DateTime.now()));
+          final ok = await Navigator.push<bool>(
+              context, MaterialPageRoute(builder: (_) => ComposePostScreen(editing: post)));
+          if (ok != true) return;
+          final fresh = await controller.repo.one(post.id);
+          if (fresh != null) controller.replace(fresh);
         case 'delete':
           if (!await confirmDialog(context, 'حذف المنشور', 'هل تريد حذف هذا المنشور؟', ok: 'حذف', danger: true)) return;
           await controller.repo.delete(post.id);
@@ -362,27 +397,113 @@ class _NetImageViewer extends StatelessWidget {
       );
 }
 
+/// ألوان الكتابة والخلفية المتاحة للمنشورات.
+const kPostTextColors = <int>[
+  0xFFFFFFFF, 0xFF111111, 0xFFE53935, 0xFFFF9800, 0xFFFFEB3B,
+  0xFF43A047, 0xFF1E88E5, 0xFF8E24AA, 0xFFEC407A, 0xFF00BCD4,
+];
+const kPostBgColors = <int>[
+  0xFF7C4DFF, 0xFF1565C0, 0xFF00897B, 0xFFD81B60, 0xFFF4511E,
+  0xFF2E7D32, 0xFF212121, 0xFF6D4C41, 0xFFFFB300, 0xFF5E35B1,
+];
+
+const kVisibility = <String, (IconData, String)>{
+  'public': (Icons.public_rounded, 'عام'),
+  'friends': (Icons.group_rounded, 'الأصدقاء'),
+  'private': (Icons.lock_rounded, 'أنا فقط'),
+  'custom': (Icons.tune_rounded, 'مخصص'),
+};
+
+/// إنشاء منشور أو تعديله: نص بلون، خلفية ملونة، صورة (تبديل/قص/تدوير)، وخصوصية.
 class ComposePostScreen extends StatefulWidget {
-  const ComposePostScreen({super.key});
+  final Post? editing;
+  const ComposePostScreen({super.key, this.editing});
   @override
   State<ComposePostScreen> createState() => _ComposePostScreenState();
 }
 
 class _ComposePostScreenState extends State<ComposePostScreen> {
-  final _text = TextEditingController();
-  File? _image;
+  late final _text = TextEditingController(text: widget.editing?.content ?? '');
+  Uint8List? _newImage; // صورة جديدة (بعد الضغط/التعديل)
+  late String? _imageUrl = widget.editing?.imageUrl; // الصورة الحالية للمنشور
+  late int? _textColor = widget.editing?.textColor;
+  late int? _bgColor = widget.editing?.bgColor;
+  late String _visibility = widget.editing?.visibility ?? 'public';
+  List<String> _audience = [];
   bool _busy = false;
 
+  bool get _hasImage => _newImage != null || _imageUrl != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final e = widget.editing;
+    if (e != null && e.visibility == 'custom') {
+      PostRepository().audience(e.id).then((a) {
+        if (mounted) setState(() => _audience = a);
+      }).catchError((_) {});
+    }
+  }
+
   Future<void> _pick() async {
-    final x = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 70, maxWidth: 1280, maxHeight: 1280);
-    if (x != null) setState(() => _image = File(x.path));
+    final x = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (x == null) return;
+    final raw = await x.readAsBytes();
+    final c = await compressImage(raw);
+    if (mounted) {
+      setState(() {
+        _newImage = c;
+        _bgColor = null;
+      });
+    }
+  }
+
+  Future<void> _editImage() async {
+    Uint8List? src = _newImage;
+    if (src == null && _imageUrl != null) {
+      setState(() => _busy = true);
+      try {
+        final r = await http.get(Uri.parse(_imageUrl!));
+        src = r.bodyBytes;
+      } catch (_) {}
+      if (mounted) setState(() => _busy = false);
+    }
+    if (src == null || !mounted) return;
+    final out = await ImageEditorScreen.open(context, src);
+    if (out != null && mounted) setState(() => _newImage = out);
+  }
+
+  Future<void> _chooseAudience() async {
+    final res = await Navigator.push<List<String>>(
+      context,
+      MaterialPageRoute(builder: (_) => _AudiencePicker(selected: _audience)),
+    );
+    if (res != null && mounted) {
+      setState(() {
+        _audience = res;
+        _visibility = res.isEmpty ? _visibility : 'custom';
+      });
+    }
   }
 
   Future<void> _publish() async {
-    if (_text.text.trim().isEmpty && _image == null) return;
+    if (_text.text.trim().isEmpty && !_hasImage) return;
+    if (_visibility == 'custom' && _audience.isEmpty) {
+      showSnack(context, 'اختر الأشخاص الذين يرون المنشور', error: true);
+      return;
+    }
     setState(() => _busy = true);
     try {
-      await PostRepository().create(content: _text.text, image: _image);
+      await PostRepository().save(
+        id: widget.editing?.id,
+        content: _text.text,
+        newImage: _newImage,
+        keepImageUrl: _newImage == null ? _imageUrl : null,
+        textColor: _textColor,
+        bgColor: _hasImage ? null : _bgColor,
+        visibility: _visibility,
+        audience: _audience,
+      );
       if (mounted) {
         context.read<SessionProvider>().refresh();
         Navigator.pop(context, true);
@@ -394,12 +515,49 @@ class _ComposePostScreenState extends State<ComposePostScreen> {
     }
   }
 
+  Widget _colorRow(List<int> colors, int? selected, ValueChanged<int?> onPick, {bool allowNone = true}) {
+    return SizedBox(
+      height: 40,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          if (allowNone)
+            _dot(null, selected == null, () => onPick(null)),
+          for (final c in colors) _dot(c, selected == c, () => onPick(c)),
+        ],
+      ),
+    );
+  }
+
+  Widget _dot(int? c, bool sel, VoidCallback onTap) => Padding(
+        padding: const EdgeInsetsDirectional.only(end: 8),
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const CircleBorder(),
+          child: Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: c == null ? Colors.transparent : Color(c),
+              border: Border.all(
+                  color: sel ? Theme.of(context).colorScheme.primary : Colors.grey.withValues(alpha: 0.5),
+                  width: sel ? 3 : 1.2),
+            ),
+            child: c == null ? const Icon(Icons.format_color_reset_rounded, size: 18) : null,
+          ),
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
     final me = context.watch<SessionProvider>().profile;
+    final editing = widget.editing != null;
+    final bg = !_hasImage && _bgColor != null ? Color(_bgColor!) : null;
+    final txtColor = _textColor != null ? Color(_textColor!) : (bg != null ? Colors.white : null);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('منشور جديد'),
+        title: Text(editing ? 'تعديل المنشور' : 'منشور جديد'),
         actions: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -408,7 +566,7 @@ class _ComposePostScreenState extends State<ComposePostScreen> {
               onPressed: _busy ? null : _publish,
               child: _busy
                   ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('نشر'),
+                  : Text(editing ? 'حفظ' : 'نشر'),
             ),
           ),
         ],
@@ -419,34 +577,181 @@ class _ComposePostScreenState extends State<ComposePostScreen> {
           Row(children: [
             Avatar(url: me?.avatarUrl, name: me?.displayName ?? '', size: 44),
             const SizedBox(width: 10),
-            NameWithBadge(me?.displayName ?? '', verified: me?.verified ?? false,
-                style: const TextStyle(fontWeight: FontWeight.w800)),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  NameWithBadge(me?.displayName ?? '', verified: me?.verified ?? false,
+                      style: const TextStyle(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 4),
+                  PopupMenuButton<String>(
+                    onSelected: (v) {
+                      if (v == 'custom') {
+                        _chooseAudience();
+                      } else {
+                        setState(() => _visibility = v);
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      for (final e in kVisibility.entries)
+                        PopupMenuItem(
+                          value: e.key,
+                          child: Row(children: [Icon(e.value.$1, size: 20), const SizedBox(width: 10), Text(e.value.$2)]),
+                        ),
+                    ],
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(kVisibility[_visibility]!.$1, size: 16),
+                        const SizedBox(width: 6),
+                        Text(_visibility == 'custom'
+                            ? 'مخصص (${_audience.length})'
+                            : kVisibility[_visibility]!.$2),
+                        const Icon(Icons.arrow_drop_down, size: 18),
+                      ]),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ]),
           const SizedBox(height: 12),
-          TextField(
-            controller: _text,
-            autofocus: true,
-            maxLines: null,
-            minLines: 5,
-            maxLength: 3000,
-            decoration: const InputDecoration(
-                hintText: 'اكتب شيئًا... ولإشارة شخص اكتب @ ثم اسم المستخدم', border: InputBorder.none, filled: false),
+          Container(
+            decoration: bg == null ? null : BoxDecoration(color: bg, borderRadius: BorderRadius.circular(14)),
+            constraints: BoxConstraints(minHeight: bg == null ? 0 : 220),
+            alignment: Alignment.center,
+            padding: bg == null ? EdgeInsets.zero : const EdgeInsets.all(18),
+            child: TextField(
+              controller: _text,
+              autofocus: !editing,
+              maxLines: null,
+              minLines: bg == null ? 5 : 2,
+              maxLength: 3000,
+              textAlign: bg == null ? TextAlign.start : TextAlign.center,
+              style: TextStyle(
+                color: txtColor,
+                fontSize: bg == null ? 16 : 24,
+                fontWeight: bg == null ? FontWeight.normal : FontWeight.w800,
+              ),
+              decoration: InputDecoration(
+                hintText: 'اكتب شيئًا... ولإشارة شخص اكتب @ ثم اسم المستخدم',
+                hintStyle: TextStyle(color: bg != null ? Colors.white70 : null),
+                border: InputBorder.none,
+                filled: false,
+                counterText: bg != null ? '' : null,
+              ),
+            ),
           ),
-          if (_image != null)
+          const SizedBox(height: 8),
+          const Text('لون الكتابة', style: TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          _colorRow(kPostTextColors, _textColor, (c) => setState(() => _textColor = c)),
+          if (!_hasImage) ...[
+            const SizedBox(height: 12),
+            const Text('خلفية ملونة (للمنشور النصي)', style: TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            _colorRow(kPostBgColors, _bgColor, (c) => setState(() => _bgColor = c)),
+          ],
+          const SizedBox(height: 14),
+          if (_hasImage)
             Stack(
               children: [
-                ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.file(_image!)),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: _newImage != null
+                      ? Image.memory(_newImage!)
+                      : CachedNetworkImage(imageUrl: _imageUrl!),
+                ),
                 PositionedDirectional(
                   top: 8,
                   end: 8,
-                  child: IconButton.filled(onPressed: () => setState(() => _image = null), icon: const Icon(Icons.close)),
+                  child: IconButton.filled(
+                    tooltip: 'إزالة الصورة',
+                    onPressed: () => setState(() {
+                      _newImage = null;
+                      _imageUrl = null;
+                    }),
+                    icon: const Icon(Icons.close),
+                  ),
                 ),
               ],
             ),
           const SizedBox(height: 12),
-          OutlinedButton.icon(onPressed: _pick, icon: const Icon(Icons.photo_library_rounded), label: const Text('إضافة صورة')),
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _pick,
+                icon: const Icon(Icons.photo_library_rounded),
+                label: Text(_hasImage ? 'تبديل الصورة' : 'إضافة صورة'),
+              ),
+              if (_hasImage)
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _editImage,
+                  icon: const Icon(Icons.crop_rotate_rounded),
+                  label: const Text('قص وتعديل'),
+                ),
+            ],
+          ),
         ],
       ),
+    );
+  }
+}
+
+/// اختيار الأصدقاء الذين يرون المنشور (خصوصية «مخصص»).
+class _AudiencePicker extends StatefulWidget {
+  final List<String> selected;
+  const _AudiencePicker({required this.selected});
+  @override
+  State<_AudiencePicker> createState() => _AudiencePickerState();
+}
+
+class _AudiencePickerState extends State<_AudiencePicker> {
+  late final Set<String> _sel = {...widget.selected};
+  List<Profile> _friends = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    ContactRepository().load().then((r) {
+      if (mounted) setState(() => _friends = r.contacts);
+    }).whenComplete(() {
+      if (mounted) setState(() => _loading = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('من يرى المنشور؟'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, _sel.toList()), child: Text('تم (${_sel.length})')),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _friends.isEmpty
+              ? const EmptyState(icon: Icons.group_off_rounded, title: 'لا يوجد أصدقاء بعد')
+              : ListView(
+                  children: [
+                    for (final f in _friends)
+                      CheckboxListTile(
+                        value: _sel.contains(f.id),
+                        onChanged: (v) => setState(() => v == true ? _sel.add(f.id) : _sel.remove(f.id)),
+                        secondary: Avatar(url: f.avatarUrl, name: f.displayName),
+                        title: Text(f.displayName),
+                        subtitle: Text('@${f.username}'),
+                      ),
+                  ],
+                ),
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -68,6 +69,44 @@ class PostRepository {
       'content': content.trim(),
       'image_url': url,
     });
+  }
+
+  /// إنشاء أو تعديل منشور (النص، الصورة، الألوان، والخصوصية).
+  Future<String> save({
+    String? id,
+    required String content,
+    Uint8List? newImage,
+    String? keepImageUrl,
+    int? textColor,
+    int? bgColor,
+    String visibility = 'public',
+    List<String> audience = const [],
+  }) async {
+    var url = keepImageUrl;
+    if (newImage != null) {
+      final path = '${myId!}/${const Uuid().v4()}.jpg';
+      await supa.storage.from('posts').uploadBinary(
+            path,
+            newImage,
+            fileOptions: const FileOptions(contentType: 'image/jpeg'),
+          );
+      url = supa.storage.from('posts').getPublicUrl(path);
+    }
+    final r = await supa.rpc('save_post', params: {
+      'pid': id,
+      'p_content': content.trim(),
+      'p_image': url,
+      'p_text_color': textColor,
+      'p_bg_color': bgColor,
+      'p_visibility': visibility,
+      'p_audience': visibility == 'custom' ? audience : null,
+    });
+    return r as String;
+  }
+
+  Future<List<String>> audience(String postId) async {
+    final r = await supa.from('post_audience').select('user_id').eq('post_id', postId);
+    return r.map((e) => e['user_id'] as String).toList();
   }
 
   Future<void> like(String postId) =>

@@ -44,6 +44,45 @@ class ContactRepository {
       supa.rpc('respond_contact_request', params: {'req': requestId, 'accept': accept});
 
   Future<void> remove(String userId) => supa.rpc('remove_contact', params: {'target': userId});
+
+  // ---- المتابعة ----
+  Future<void> follow(String userId) => supa.from('follows').insert({'follower_id': myId!, 'followee_id': userId});
+
+  Future<void> unfollow(String userId) =>
+      supa.from('follows').delete().eq('follower_id', myId!).eq('followee_id', userId);
+
+  /// أعداد الملف الشخصي: friends, followers, following, posts, i_follow
+  Future<Map<String, dynamic>> counts(String userId) async {
+    final r = await supa.rpc('profile_counts', params: {'uid': userId});
+    return Map<String, dynamic>.from(r as Map);
+  }
+
+  /// قائمة: friends | followers | following
+  Future<List<Profile>> people(String userId, String kind) async {
+    if (kind == 'friends') {
+      final r = await supa
+          .from('contact_requests')
+          .select('sender:profiles!contact_requests_sender_id_fkey(*), receiver:profiles!contact_requests_receiver_id_fkey(*)')
+          .eq('status', 'accepted')
+          .or('sender_id.eq.$userId,receiver_id.eq.$userId')
+          .limit(500);
+      return r.map((m) {
+        final s = m['sender'] as Map<String, dynamic>;
+        final rc = m['receiver'] as Map<String, dynamic>;
+        return Profile.fromMap(s['id'] == userId ? rc : s);
+      }).toList();
+    }
+    final followers = kind == 'followers';
+    final r = await supa
+        .from('follows')
+        .select(followers
+            ? 'p:profiles!follows_follower_id_fkey(*)'
+            : 'p:profiles!follows_followee_id_fkey(*)')
+        .eq(followers ? 'followee_id' : 'follower_id', userId)
+        .order('created_at', ascending: false)
+        .limit(500);
+    return r.map((m) => Profile.fromMap(m['p'] as Map<String, dynamic>)).toList();
+  }
 }
 
 class NotificationRepository {
