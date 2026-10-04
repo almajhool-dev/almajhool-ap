@@ -3125,5 +3125,30 @@ begin
 end $$;
 grant execute on function public.live_preview(uuid) to authenticated;
 
+-- =====================================================================
+--  الإصدار 21: إيقاف النسخ القديمة ما يمنع النسخ الحديثة من إرسال الرسائل
+--  (كان can_send يعتمد على app_enabled اللي يتعطل مع إيقاف النسخ القديمة)
+-- =====================================================================
+create or replace function public.can_send(conv uuid) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare
+  t text;
+  other uuid;
+begin
+  if not is_member(conv) or is_banned() then return false; end if;
+  if not coalesce((select service_enabled from app_settings where id = 1), true) and not is_admin() then
+    return false;
+  end if;
+  select type into t from conversations where id = conv;
+  if t = 'direct' then
+    select user_id into other from conversation_members
+      where conversation_id = conv and user_id <> auth.uid() limit 1;
+    if other is not null and is_blocked_between(auth.uid(), other) then
+      return false;
+    end if;
+  end if;
+  return true;
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

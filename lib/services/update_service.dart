@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:ota_update/ota_update.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import 'core_services.dart';
 
 /// تحديث التطبيق من داخل التطبيق: يتحقق من آخر إصدار على GitHub،
 /// ينزّله ويفتح شاشة التثبيت مباشرة (بدون متصفح).
@@ -83,12 +86,42 @@ class _UpdateDialog extends StatefulWidget {
 
 class _UpdateDialogState extends State<_UpdateDialog> {
   bool _working = false;
+  bool _failed = false;
+  int _tries = 0;
   double? _progress;
   String? _msg;
 
+  void _fail(String why) {
+    // نعيد المحاولة تلقائيًا مرة وحدة، وبعدها نعرض طرق بديلة للتحميل
+    try {
+      supa.rpc('client_log', params: {'p_info': 'b${UpdateService.currentBuild} update_fail: $why'}).catchError((_) => null);
+    } catch (_) {}
+    if (_tries < 2 && mounted) {
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) _start();
+      });
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      _failed = true;
+      _progress = null;
+      _msg = 'ما گدرنا ننزّل التحديث داخل التطبيق ($why).\nنزّله من المتصفح أو من قناة التلكرام 👇';
+    });
+  }
+
+  Future<void> _openExternal(String url) async {
+    try {
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
+
   void _start() {
+    _tries++;
     setState(() {
       _working = true;
+      _failed = false;
       _progress = 0;
       _msg = 'جارٍ التنزيل...';
     });
@@ -113,25 +146,14 @@ class _UpdateDialogState extends State<_UpdateDialog> {
                 _working = false;
                 break;
               default:
-                _msg = 'تعذّر التحديث، تأكد من الإنترنت وحاول مجددًا';
-                _working = false;
+                Future.microtask(() => _fail('${e.status.name} ${e.value ?? ''}'.trim()));
             }
           });
         },
-        onError: (_) {
-          if (mounted) {
-            setState(() {
-              _working = false;
-              _msg = 'تعذّر التحديث، حاول مجددًا';
-            });
-          }
-        },
+        onError: (e) => _fail('$e'.split('\n').first),
       );
-    } catch (_) {
-      setState(() {
-        _working = false;
-        _msg = 'تعذّر التحديث، حاول مجددًا';
-      });
+    } catch (e) {
+      _fail('$e'.split('\n').first);
     }
   }
 
@@ -157,6 +179,18 @@ class _UpdateDialogState extends State<_UpdateDialog> {
         ],
       ),
       actions: [
+        if (_failed) ...[
+          TextButton.icon(
+            onPressed: () => _openExternal(widget.url),
+            icon: const Icon(Icons.open_in_browser_rounded),
+            label: const Text('من المتصفح'),
+          ),
+          TextButton.icon(
+            onPressed: () => _openExternal('https://t.me/ikd5n'),
+            icon: const Icon(Icons.telegram),
+            label: const Text('تلكرام'),
+          ),
+        ],
         if (!_working)
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('لاحقًا')),
         FilledButton(
