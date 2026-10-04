@@ -1,0 +1,58 @@
+name: Signing rotation test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tool/rotation-test/**'
+      - 'tool/sign_rotate.sh'
+      - '.github/workflows/rotation-test.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Prepare APKs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          URL=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | python3 -c "import json,sys;print([a['browser_download_url'] for a in json.load(sys.stdin)['assets'] if a['name'].endswith('.apk')][0])")
+          curl -sL "$URL" -o old.apk
+          bash tool/sign_rotate.sh old.apk rotated.apk
+          BT="$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)"
+          P=$(grep '^storePassword=' signing/signing.properties | cut -d= -f2-)
+          K=$(grep '^keyPassword=' signing/signing.properties | cut -d= -f2-)
+          A=$(grep '^keyAlias=' signing/signing.properties | cut -d= -f2-)
+          OLD_STORE="$P" OLD_KEY="$K" "$BT/apksigner" sign --ks signing/almajhool.jks --ks-key-alias "$A" \
+            --ks-pass env:OLD_STORE --key-pass env:OLD_KEY --out fake.apk old.apk
+          ls -la *.apk
+      - name: Emulator upgrade test (Android 11)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          script: bash tool/rotation-test/run.sh 2>&1 | tee rot.log
+      - name: Save result
+        if: always()
+        run: |
+          mkdir -p /tmp/logs; [ -f rot.log ] && cp rot.log /tmp/logs/rotation.log || echo "no log" > /tmp/logs/rotation.log
+          cd /tmp/logs && git init -q -b ci-rotation && git config user.name ci && git config user.email ci@users.noreply.github.com
+          git add -A && git commit -qm "rotation test" && git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-rotation
