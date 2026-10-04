@@ -6,7 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:permission_handler/permission_handler.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:uuid/uuid.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/theme.dart';
@@ -19,6 +21,7 @@ import '../../services/core_services.dart';
 import '../../services/filter_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
+import '../feed/image_editor.dart';
 import '../profile/profile_screens.dart';
 
 String _compact(int n) {
@@ -229,6 +232,10 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   bool _camOn = true;
   bool _front = true;
   String _filter = 'none';
+  String? _cover;
+  Map<String, String> _guests = {};
+  bool _amGuest = false;
+  bool get _publishing => widget.isHost || _amGuest;
 
   final List<LiveComment> _comments = [];
   final Map<String, Profile> _people = {};
@@ -253,6 +260,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
       _title = (info['title'] ?? widget.title) as String;
       _likes = ((info['like_count'] ?? 0) as num).toInt();
       _isMod = info['is_mod'] == true;
+      _cover = info['cover_url'] as String?;
 
       _host = await _profile(_hostId!);
       await _connectRealtime();
@@ -262,50 +270,8 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
           await Permission.bluetoothConnect.request();
         } catch (_) {}
       }
-      final room = lk.Room(
-        roomOptions: lk.RoomOptions(
-          adaptiveStream: true,
-          dynacast: true,
-          // صورة واضحة: 720p بجودة عالية، مع طبقات أقل للمشاهدين أصحاب النت الضعيف (تختار تلقائيًا)
-          defaultCameraCaptureOptions: lk.CameraCaptureOptions(
-            params: const lk.VideoParameters(
-              dimensions: lk.VideoDimensions(1280, 720),
-              encoding: lk.VideoEncoding(maxBitrate: 2500000, maxFramerate: 30),
-            ),
-          ),
-          defaultVideoPublishOptions: const lk.VideoPublishOptions(
-            simulcast: true,
-            videoEncoding: lk.VideoEncoding(maxBitrate: 2500000, maxFramerate: 30),
-            videoSimulcastLayers: [lk.VideoParametersPresets.h360_169, lk.VideoParametersPresets.h540_169],
-            degradationPreference: lk.DegradationPreference.maintainResolution,
-          ),
-        ),
-      );
-      _room = room;
-      _listener = room.createListener()
-        ..on<lk.ParticipantConnectedEvent>((_) => _refreshCount())
-        ..on<lk.ParticipantDisconnectedEvent>((e) {
-          _refreshCount();
-          if (!widget.isHost && e.participant.identity == _hostId) {
-            Future.delayed(const Duration(seconds: 15), () {
-              if (mounted && _hostVideo() == null && _endedMsg == null) _ended('انتهى البث');
-            });
-          }
-        })
-        ..on<lk.TrackSubscribedEvent>((_) => mounted ? setState(() {}) : null)
-        ..on<lk.TrackUnsubscribedEvent>((_) => mounted ? setState(() {}) : null)
-        ..on<lk.LocalTrackPublishedEvent>((_) {
-          _applyFilter();
-          if (mounted) setState(() {});
-        })
-        ..on<lk.RoomDisconnectedEvent>((_) {
-          if (mounted && _endedMsg == null) _ended(widget.isHost ? 'انقطع البث' : 'انتهى البث');
-        });
-
-      await room.connect(info['url'] as String, info['token'] as String);
+      await _connectRoom(info['url'] as String, info['token'] as String, publish: widget.isHost);
       if (widget.isHost) {
-        await room.localParticipant?.setCameraEnabled(true);
-        await room.localParticipant?.setMicrophoneEnabled(true);
         _beat = Timer.periodic(const Duration(seconds: 10), (_) => _heartbeat());
         _heartbeat();
       }
@@ -318,6 +284,212 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
           _error = friendlyError(e);
         });
       }
+    }
+  }
+
+  bool _reconnecting = false;
+
+  /// الاتصال بغرفة البث. publish=true لصاحب البث أو الضيف (كاميرا ومايك).
+  Future<void> _connectRoom(String url, String token, {required bool publish}) async {
+    final old = _room;
+    if (old != null) {
+      _reconnecting = true;
+      _listener?.dispose();
+      await old.disconnect();
+      await old.dispose();
+    }
+    final room = lk.Room(
+      roomOptions: lk.RoomOptions(
+        adaptiveStream: true,
+        dynacast: true,
+        // صورة واضحة: 720p بجودة عالية، مع طبقات أقل للمشاهدين أصحاب النت الضعيف (تختار تلقائيًا)
+        defaultCameraCaptureOptions: lk.CameraCaptureOptions(
+          params: const lk.VideoParameters(
+            dimensions: lk.VideoDimensions(1280, 720),
+            encoding: lk.VideoEncoding(maxBitrate: 2500000, maxFramerate: 30),
+          ),
+        ),
+        defaultVideoPublishOptions: const lk.VideoPublishOptions(
+          simulcast: true,
+          videoEncoding: lk.VideoEncoding(maxBitrate: 2500000, maxFramerate: 30),
+          videoSimulcastLayers: [lk.VideoParametersPresets.h360_169, lk.VideoParametersPresets.h540_169],
+          degradationPreference: lk.DegradationPreference.maintainResolution,
+        ),
+      ),
+    );
+    _room = room;
+    void refresh() {
+      if (mounted) setState(() {});
+    }
+
+    _listener = room.createListener()
+      ..on<lk.ParticipantConnectedEvent>((_) => _refreshCount())
+      ..on<lk.ParticipantDisconnectedEvent>((e) {
+        _refreshCount();
+        if (!widget.isHost && e.participant.identity == _hostId) {
+          Future.delayed(const Duration(seconds: 20), () {
+            final back = _room?.remoteParticipants.values.any((p) => p.identity == _hostId) ?? false;
+            if (mounted && !back && _endedMsg == null) _ended('انتهى البث');
+          });
+        }
+      })
+      ..on<lk.TrackSubscribedEvent>((_) => refresh())
+      ..on<lk.TrackUnsubscribedEvent>((_) => refresh())
+      ..on<lk.TrackMutedEvent>((_) => refresh())
+      ..on<lk.TrackUnmutedEvent>((_) => refresh())
+      ..on<lk.ActiveSpeakersChangedEvent>((_) => refresh())
+      ..on<lk.LocalTrackPublishedEvent>((_) {
+        _applyFilter();
+        refresh();
+      })
+      ..on<lk.LocalTrackUnpublishedEvent>((_) => refresh())
+      ..on<lk.RoomDisconnectedEvent>((_) {
+        if (_reconnecting) return;
+        if (mounted && _endedMsg == null) _ended(widget.isHost ? 'انقطع البث' : 'انتهى البث');
+      });
+    await room.connect(url, token);
+    _reconnecting = false;
+    if (publish) {
+      await room.localParticipant?.setCameraEnabled(true);
+      await room.localParticipant?.setMicrophoneEnabled(true);
+      _camOn = true;
+      _micOn = true;
+    }
+    _refreshCount();
+  }
+
+  // ---------- الضيوف ----------
+  Future<void> _onGuestsChanged() async {
+    if (_liveId == null) return;
+    try {
+      final rows = await _repo.guests(_liveId!);
+      _guests = {for (final r in rows) r['user_id'] as String: r['status'] as String};
+      await _loadPeople(_guests.keys);
+    } catch (_) {}
+    final mine = _guests[myId];
+    // تمت الموافقة على صعودي: نعيد الاتصال كمذيع ضيف
+    if (!widget.isHost && mine == 'accepted' && !_amGuest) {
+      _amGuest = true;
+      try {
+        final t = await _repo.guestToken(_liveId!);
+        await _connectRoom(t['url'] as String, t['token'] as String, publish: true);
+        if (mounted) showSnack(context, 'صعدت للبث 🎙');
+      } catch (e) {
+        _amGuest = false;
+        if (mounted) showSnack(context, friendlyError(e), error: true);
+      }
+    } else if (!widget.isHost && _amGuest && mine != 'accepted') {
+      _amGuest = false;
+      try {
+        await _room?.localParticipant?.setCameraEnabled(false);
+        await _room?.localParticipant?.setMicrophoneEnabled(false);
+        final info = await _repo.join(_liveId!);
+        await _connectRoom(info['url'] as String, info['token'] as String, publish: false);
+      } catch (_) {}
+      if (mounted) showSnack(context, 'نزلت من البث');
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _guestButton() async {
+    if (_liveId == null) return;
+    final mine = _guests[myId];
+    try {
+      if (_amGuest) {
+        await _repo.guestLeave(_liveId!, myId!);
+      } else if (mine == 'pending') {
+        showSnack(context, 'طلبك بانتظار موافقة صاحب البث');
+      } else {
+        await _repo.guestRequest(_liveId!);
+        if (mounted) showSnack(context, 'تم إرسال طلب الصعود 🙋');
+      }
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    }
+  }
+
+  Future<void> _guestsSheet() async {
+    await _onGuestsChanged();
+    if (!mounted) return;
+    await showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (c) => StatefulBuilder(builder: (c, set) {
+        final pending = _guests.entries.where((e) => e.value == 'pending').map((e) => e.key).toList();
+        final active = _guests.entries.where((e) => e.value == 'accepted').map((e) => e.key).toList();
+        Future<void> act(Future<void> Function() f) async {
+          try {
+            await f();
+            await _onGuestsChanged();
+            set(() {});
+          } catch (e) {
+            if (mounted) showSnack(context, friendlyError(e), error: true);
+          }
+        }
+
+        return SafeArea(
+          child: SizedBox(
+            height: 420,
+            child: ListView(children: [
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text('على البث الآن (${active.length}/3)', style: const TextStyle(fontWeight: FontWeight.w800)),
+              ),
+              for (final id in active)
+                ListTile(
+                  leading: Avatar(url: _people[id]?.avatarUrl, name: _people[id]?.displayName ?? ''),
+                  title: Text(_people[id]?.displayName ?? 'مستخدم'),
+                  trailing: TextButton(
+                    onPressed: () => act(() => _repo.guestLeave(_liveId!, id)),
+                    child: const Text('إنزال', style: TextStyle(color: Colors.redAccent)),
+                  ),
+                ),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text('طلبات الصعود (${pending.length})', style: const TextStyle(fontWeight: FontWeight.w800)),
+              ),
+              if (pending.isEmpty) const Padding(padding: EdgeInsets.all(12), child: Text('لا توجد طلبات')),
+              for (final id in pending)
+                ListTile(
+                  leading: Avatar(url: _people[id]?.avatarUrl, name: _people[id]?.displayName ?? ''),
+                  title: Text(_people[id]?.displayName ?? 'مستخدم'),
+                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, color: Colors.redAccent),
+                      onPressed: () => act(() => _repo.guestRespond(_liveId!, id, false)),
+                    ),
+                    FilledButton(
+                      style: FilledButton.styleFrom(minimumSize: const Size(70, 36)),
+                      onPressed: () => act(() => _repo.guestRespond(_liveId!, id, true)),
+                      child: const Text('قبول'),
+                    ),
+                  ]),
+                ),
+            ]),
+          ),
+        );
+      }),
+    );
+  }
+
+  // ---------- صورة البث (ثابتة أو متحركة GIF) ----------
+  Future<void> _pickCover() async {
+    if (_liveId == null) return;
+    final x = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (x == null) return;
+    try {
+      final bytes = await x.readAsBytes();
+      final gif = x.name.toLowerCase().endsWith('.gif') || (bytes.length > 3 && bytes[0] == 0x47 && bytes[1] == 0x49);
+      final data = gif ? bytes : await compressImage(bytes);
+      final path = '${myId!}/live/${const Uuid().v4()}.${gif ? 'gif' : 'jpg'}';
+      if (mounted) showSnack(context, 'جارٍ رفع الصورة...');
+      await supa.storage.from('posts').uploadBinary(path, data,
+          fileOptions: FileOptions(contentType: gif ? 'image/gif' : 'image/jpeg'));
+      final url = supa.storage.from('posts').getPublicUrl(path);
+      await _repo.setCover(_liveId!, url);
+      if (mounted) setState(() => _cover = url);
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
     }
   }
 
@@ -364,6 +536,8 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
           callback: (p) {
             final t = p.newRecord['title'];
             if (t is String && t != _title && mounted) setState(() => _title = t);
+            final cv = p.newRecord['cover_url'];
+            if (cv != _cover && mounted) setState(() => _cover = cv as String?);
             final st = p.newRecord['status'];
             if (st == 'ended' && mounted && _endedMsg == null) {
               final reason = p.newRecord['ended_reason'];
@@ -371,8 +545,16 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
             }
           },
         )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'live_guests',
+          filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'live_id', value: id),
+          callback: (_) => _onGuestsChanged(),
+        )
         .subscribe();
     _toBottom();
+    _onGuestsChanged();
   }
 
   Future<Profile?> _profile(String id) async {
@@ -491,23 +673,37 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     super.dispose();
   }
 
-  lk.VideoTrack? _hostVideo() {
+  lk.VideoTrack? _hostVideo() => _videoOf(_hostId ?? '');
+
+  /// فيديو مشارك معيّن (أنا أو غيري) إذا كانت كاميرته شغالة.
+  lk.VideoTrack? _videoOf(String identity) {
     final r = _room;
     if (r == null) return null;
-    if (widget.isHost) {
+    if (identity == myId) {
       for (final p in r.localParticipant?.videoTrackPublications ?? <lk.LocalTrackPublication>[]) {
-        if (p.track != null) return p.track as lk.VideoTrack;
+        if (p.track != null && !p.muted) return p.track as lk.VideoTrack;
       }
       return null;
     }
     for (final part in r.remoteParticipants.values) {
-      if (part.identity != _hostId) continue;
+      if (part.identity != identity) continue;
       for (final p in part.videoTrackPublications) {
         if (p.track != null && !p.muted) return p.track as lk.VideoTrack;
       }
     }
     return null;
   }
+
+  bool _speaking(String identity) {
+    final r = _room;
+    if (r == null) return false;
+    if (identity == myId) return r.localParticipant?.isSpeaking ?? false;
+    for (final p in r.remoteParticipants.values) {
+      if (p.identity == identity) return p.isSpeaking;
+    }
+    return false;
+  }
+
 
   Future<void> _personMenu(String userId) async {
     if (_liveId == null) return;
@@ -624,7 +820,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   }
 
   Future<void> _switchCamera() async {
-    final t = _hostVideo();
+    final t = _videoOf(myId ?? '');
     if (t is! lk.LocalVideoTrack) return;
     _front = !_front;
     try {
@@ -636,8 +832,8 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   }
 
   Future<void> _applyFilter() async {
-    final t = _hostVideo();
-    if (!widget.isHost || t is! lk.LocalVideoTrack) return;
+    final t = _videoOf(myId ?? '');
+    if (!_publishing || t is! lk.LocalVideoTrack) return;
     final id = t.mediaStreamTrack.id;
     if (id == null) return;
     await FilterService.apply(id, _filter);
@@ -741,6 +937,27 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
             },
           ),
           ListTile(
+            leading: const Icon(Icons.image_rounded),
+            title: const Text('صورة للبث (ثابتة أو متحركة)'),
+            subtitle: const Text('تظهر للمشاهدين عند إغلاق الكاميرا'),
+            onTap: () {
+              Navigator.pop(c);
+              _pickCover();
+            },
+          ),
+          if (_cover != null)
+            ListTile(
+              leading: const Icon(Icons.hide_image_rounded),
+              title: const Text('إزالة صورة البث'),
+              onTap: () async {
+                Navigator.pop(c);
+                try {
+                  await _repo.setCover(_liveId!, null);
+                  if (mounted) setState(() => _cover = null);
+                } catch (_) {}
+              },
+            ),
+          ListTile(
             leading: const Icon(Icons.push_pin_rounded),
             title: const Text('تعديل الرسالة المثبتة'),
             onTap: () {
@@ -792,30 +1009,51 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                       fit: lk.VideoViewFit.cover,
                       mirrorMode: widget.isHost && _front ? lk.VideoViewMirrorMode.mirror : lk.VideoViewMirrorMode.off,
                     )
-                  : Container(
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                            colors: [Color(0xFF1A1036), AppColors.darkBg],
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter),
-                      ),
-                      child: Center(
-                        child: _error != null
-                            ? Padding(
-                                padding: const EdgeInsets.all(24),
-                                child: Text(_error!,
-                                    textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 16)),
-                              )
-                            : _connecting
-                                ? const CircularProgressIndicator(color: Colors.white)
-                                : Column(mainAxisSize: MainAxisSize.min, children: [
-                                    if (host != null) Avatar(url: host.avatarUrl, name: host.displayName, size: 110),
-                                    const SizedBox(height: 14),
-                                    const Text('📷 الكاميرا مغلقة', style: TextStyle(color: Colors.white70, fontSize: 16)),
-                                  ]),
-                      ),
-                    ),
+                  : _error != null
+                      ? Container(
+                          color: const Color(0xFF1A1036),
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.all(24),
+                          child: Text(_error!,
+                              textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 16)),
+                        )
+                      : _connecting
+                          ? Container(
+                              color: const Color(0xFF1A1036),
+                              alignment: Alignment.center,
+                              child: const CircularProgressIndicator(color: Colors.white),
+                            )
+                          : _CameraOffView(
+                              cover: _cover,
+                              avatarUrl: host?.avatarUrl,
+                              name: host?.displayName ?? '',
+                              speaking: _speaking(_hostId ?? ''),
+                            ),
             ),
+            // الضيوف على البث
+            if (_guests.values.any((v) => v == 'accepted'))
+              PositionedDirectional(
+                top: 110,
+                start: 10,
+                child: SafeArea(
+                  child: Column(children: [
+                    for (final g in _guests.entries.where((e) => e.value == 'accepted'))
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: GestureDetector(
+                          onTap: () => widget.isHost ? _guestsSheet() : _personMenu(g.key),
+                          child: _GuestTile(
+                            video: _videoOf(g.key),
+                            mirror: g.key == myId && _front,
+                            name: _people[g.key]?.displayName ?? '',
+                            avatarUrl: _people[g.key]?.avatarUrl,
+                            speaking: _speaking(g.key),
+                          ),
+                        ),
+                      ),
+                  ]),
+                ),
+              ),
             // القلوب المتطايرة
             IgnorePointer(
               child: Stack(children: [
@@ -915,25 +1153,6 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                       height: 220,
                       width: MediaQuery.of(context).size.width * 0.8,
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      // الرسالة المثبتة: بحجم التعليق وثابتة أعلى التعليقات
-                      if (_title.isNotEmpty)
-                        GestureDetector(
-                          onTap: _editPin,
-                          child: Container(
-                            margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                            decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(14)),
-                            child: Text.rich(
-                              TextSpan(children: [
-                                const TextSpan(text: '📌 '),
-                                TextSpan(text: _title, style: const TextStyle(color: Colors.amberAccent, fontWeight: FontWeight.w700)),
-                              ]),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 13),
-                            ),
-                          ),
-                        ),
                       Expanded(child: ShaderMask(
                         shaderCallback: (r) => const LinearGradient(
                           begin: Alignment.topCenter,
@@ -982,6 +1201,25 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                         ),
                       ),
                       ),
+                      // الرسالة المثبتة: بحجم التعليق، ثابتة أسفل التعليقات
+                      if (_title.isNotEmpty)
+                        GestureDetector(
+                          onTap: _editPin,
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                            decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(14)),
+                            child: Text.rich(
+                              TextSpan(children: [
+                                const TextSpan(text: '📌 '),
+                                TextSpan(text: _title, style: const TextStyle(color: Colors.amberAccent, fontWeight: FontWeight.w700)),
+                              ]),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          ),
+                        ),
                       ]),
                     ),
                     Padding(
@@ -1011,9 +1249,25 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                           const SizedBox(width: 6),
                           if (widget.isHost) ...[
                             _RoundIcon(icon: Icons.auto_awesome_rounded, color: Colors.pinkAccent, onTap: _filtersSheet),
+                            _RoundIcon(
+                              icon: Icons.group_add_rounded,
+                              color: _guests.values.any((v) => v == 'pending') ? Colors.amberAccent : Colors.white,
+                              onTap: _guestsSheet,
+                            ),
                             _RoundIcon(icon: Icons.more_horiz_rounded, onTap: _hostMenu),
-                          ] else
+                          ] else ...[
+                            if (_amGuest) ...[
+                              _RoundIcon(icon: Icons.auto_awesome_rounded, color: Colors.pinkAccent, onTap: _filtersSheet),
+                              _RoundIcon(icon: _micOn ? Icons.mic_rounded : Icons.mic_off_rounded, onTap: _toggleMic),
+                              _RoundIcon(icon: Icons.call_end_rounded, color: Colors.redAccent, onTap: _guestButton),
+                            ] else
+                              _RoundIcon(
+                                icon: _guests[myId] == 'pending' ? Icons.hourglass_top_rounded : Icons.back_hand_rounded,
+                                color: Colors.amberAccent,
+                                onTap: _guestButton,
+                              ),
                             _RoundIcon(icon: Icons.favorite_rounded, color: Colors.pinkAccent, onTap: _tap),
+                          ],
                         ],
                       ),
                     ),
@@ -1164,6 +1418,176 @@ class _MyLivesScreenState extends State<MyLivesScreen> {
                       ),
                   ],
                 ),
+    );
+  }
+}
+
+
+/// عند إغلاق الكاميرا: خلفية (صورة البث أو تدرّج) + صورة الشخص + موجات الصوت عند الكلام.
+class _CameraOffView extends StatelessWidget {
+  final String? cover;
+  final String? avatarUrl;
+  final String name;
+  final bool speaking;
+  const _CameraOffView({required this.cover, required this.avatarUrl, required this.name, required this.speaking});
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(fit: StackFit.expand, children: [
+      if (cover != null)
+        Image.network(cover!, fit: BoxFit.cover, gaplessPlayback: true, errorBuilder: (_, __, ___) => const _LiveGradient())
+      else
+        const _LiveGradient(),
+      Container(color: Colors.black.withValues(alpha: cover != null ? 0.25 : 0)),
+      Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          _SpeakingAvatar(avatarUrl: avatarUrl, name: name, speaking: speaking, size: 104),
+          const SizedBox(height: 14),
+          _SoundWave(active: speaking),
+        ]),
+      ),
+    ]);
+  }
+}
+
+class _LiveGradient extends StatelessWidget {
+  const _LiveGradient();
+  @override
+  Widget build(BuildContext context) => Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF3A1C71), Color(0xFFD76D77), Color(0xFFFFAF7B)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+      );
+}
+
+/// صورة دائرية تنبض بحلقات عندما يتكلم صاحبها.
+class _SpeakingAvatar extends StatelessWidget {
+  final String? avatarUrl;
+  final String name;
+  final bool speaking;
+  final double size;
+  const _SpeakingAvatar({required this.avatarUrl, required this.name, required this.speaking, required this.size});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size + 40,
+      height: size + 40,
+      child: Stack(alignment: Alignment.center, children: [
+        if (speaking)
+          TweenAnimationBuilder<double>(
+            key: const ValueKey('ring'),
+            tween: Tween(begin: 0, end: 1),
+            duration: const Duration(milliseconds: 900),
+            builder: (_, v, __) => Container(
+              width: size + 36 * v,
+              height: size + 36 * v,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white.withValues(alpha: 0.8 * (1 - v)), width: 4),
+              ),
+            ),
+          ),
+        Container(
+          padding: const EdgeInsets.all(3),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: speaking ? Colors.greenAccent : Colors.white54, width: 3),
+          ),
+          child: Avatar(url: avatarUrl, name: name, size: size),
+        ),
+      ]),
+    );
+  }
+}
+
+/// موجات صوت متحركة (مثل تيك توك) تظهر عند الكلام.
+class _SoundWave extends StatefulWidget {
+  final bool active;
+  const _SoundWave({required this.active});
+  @override
+  State<_SoundWave> createState() => _SoundWaveState();
+}
+
+class _SoundWaveState extends State<_SoundWave> with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 700))..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 34,
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (_, __) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < 7; i++)
+              Container(
+                width: 5,
+                height: widget.active ? 8 + 24 * ((sin((_c.value * pi * 2) + i * 0.9) + 1) / 2) : 5,
+                margin: const EdgeInsets.symmetric(horizontal: 2.5),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(3)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// مربع ضيف على البث: فيديو أو صورته مع مؤشر الكلام.
+class _GuestTile extends StatelessWidget {
+  final lk.VideoTrack? video;
+  final bool mirror;
+  final String name;
+  final String? avatarUrl;
+  final bool speaking;
+  const _GuestTile({required this.video, required this.mirror, required this.name, this.avatarUrl, required this.speaking});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 104,
+      height: 146,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: speaking ? Colors.greenAccent : Colors.white38, width: 2),
+        color: const Color(0xFF2A1B4D),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(fit: StackFit.expand, children: [
+        if (video != null)
+          lk.VideoTrackRenderer(video!,
+              fit: lk.VideoViewFit.cover,
+              mirrorMode: mirror ? lk.VideoViewMirrorMode.mirror : lk.VideoViewMirrorMode.off)
+        else
+          Center(child: _SpeakingAvatar(avatarUrl: avatarUrl, name: name, speaking: speaking, size: 52)),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: Container(
+            color: Colors.black45,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            child: Text(name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+          ),
+        ),
+      ]),
     );
   }
 }

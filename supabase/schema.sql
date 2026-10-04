@@ -2722,7 +2722,7 @@ begin
   end if;
   return jsonb_build_object('url', _lk_url(),
     'token', _lk_token(auth.uid()::text, me.display_name, p_live::text, l.host_id = auth.uid()),
-    'host_id', l.host_id, 'title', l.title, 'like_count', l.like_count,
+    'host_id', l.host_id, 'title', l.title, 'like_count', l.like_count, 'cover_url', l.cover_url,
     'is_mod', exists(select 1 from live_mods where host_id = l.host_id and mod_id = auth.uid()));
 end $$;
 
@@ -2955,6 +2955,87 @@ end $$;
 grant execute on function public.live_set_title(uuid, text) to authenticated;
 grant execute on function public.my_lives() to authenticated;
 grant execute on function public.live_delete(uuid) to authenticated;
+
+-- =====================================================================
+--  الإصدار 16: صورة/خلفية البث، والضيوف (الصعود للبث بطلب وموافقة)
+-- =====================================================================
+alter table public.lives add column if not exists cover_url text;
+
+create or replace function public.live_set_cover(p_live uuid, p_url text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  update lives set cover_url = nullif(trim(p_url), '') where id = p_live and host_id = auth.uid();
+  if not found then raise exception 'غير مسموح'; end if;
+end $$;
+
+create table if not exists public.live_guests (
+  live_id uuid not null references public.lives(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  status text not null default 'pending' check (status in ('pending', 'accepted', 'rejected', 'left')),
+  updated_at timestamptz not null default now(),
+  primary key (live_id, user_id)
+);
+alter table public.live_guests enable row level security;
+drop policy if exists live_guests_select on public.live_guests;
+create policy live_guests_select on public.live_guests for select to authenticated using (true);
+do $$ begin
+  begin execute 'alter publication supabase_realtime add table public.live_guests'; exception when others then null; end;
+end $$;
+
+create or replace function public.live_guest_request(p_live uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare l lives;
+begin
+  select * into l from lives where id = p_live;
+  if l.id is null or l.status <> 'live' then raise exception 'انتهى البث'; end if;
+  if l.host_id = auth.uid() then raise exception 'أنت صاحب البث'; end if;
+  if is_banned() or exists(select 1 from live_bans where host_id = l.host_id and user_id = auth.uid()) then
+    raise exception 'غير مسموح';
+  end if;
+  insert into live_guests(live_id, user_id, status) values (p_live, auth.uid(), 'pending')
+    on conflict (live_id, user_id) do update set status = 'pending', updated_at = now()
+    where live_guests.status <> 'accepted';
+end $$;
+
+create or replace function public.live_guest_respond(p_live uuid, p_user uuid, p_accept boolean) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not exists(select 1 from lives where id = p_live and host_id = auth.uid()) then raise exception 'غير مسموح'; end if;
+  if p_accept and (select count(*) from live_guests where live_id = p_live and status = 'accepted') >= 3 then
+    raise exception 'الحد الأقصى 3 ضيوف في نفس الوقت';
+  end if;
+  update live_guests set status = case when p_accept then 'accepted' else 'rejected' end, updated_at = now()
+    where live_id = p_live and user_id = p_user;
+end $$;
+
+-- إنزال ضيف (من صاحب البث) أو نزول الضيف بنفسه
+create or replace function public.live_guest_leave(p_live uuid, p_user uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not (p_user = auth.uid() or exists(select 1 from lives where id = p_live and host_id = auth.uid())) then
+    raise exception 'غير مسموح';
+  end if;
+  update live_guests set status = 'left', updated_at = now() where live_id = p_live and user_id = p_user;
+  perform _lk_api('UpdateParticipant', p_live::text, jsonb_build_object('room', p_live::text, 'identity', p_user::text,
+    'permission', jsonb_build_object('canPublish', false, 'canSubscribe', true, 'canPublishData', true)));
+end $$;
+
+create or replace function public.live_guest_token(p_live uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare me profiles;
+begin
+  if not exists(select 1 from live_guests where live_id = p_live and user_id = auth.uid() and status = 'accepted') then
+    raise exception 'لم تتم الموافقة بعد';
+  end if;
+  select * into me from profiles where id = auth.uid();
+  return jsonb_build_object('url', _lk_url(), 'token', _lk_token(auth.uid()::text, me.display_name, p_live::text, true));
+end $$;
+
+grant execute on function public.live_set_cover(uuid, text) to authenticated;
+grant execute on function public.live_guest_request(uuid) to authenticated;
+grant execute on function public.live_guest_respond(uuid, uuid, boolean) to authenticated;
+grant execute on function public.live_guest_leave(uuid, uuid) to authenticated;
+grant execute on function public.live_guest_token(uuid) to authenticated;
 
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

@@ -81,6 +81,23 @@ class LiveRepository {
 
   Future<void> delete(String liveId) => supa.rpc('live_delete', params: {'p_live': liveId});
 
+  Future<void> setCover(String liveId, String? url) =>
+      supa.rpc('live_set_cover', params: {'p_live': liveId, 'p_url': url ?? ''});
+
+  Future<void> guestRequest(String liveId) => supa.rpc('live_guest_request', params: {'p_live': liveId});
+
+  Future<void> guestRespond(String liveId, String userId, bool accept) =>
+      supa.rpc('live_guest_respond', params: {'p_live': liveId, 'p_user': userId, 'p_accept': accept});
+
+  Future<void> guestLeave(String liveId, String userId) =>
+      supa.rpc('live_guest_leave', params: {'p_live': liveId, 'p_user': userId});
+
+  Future<Map<String, dynamic>> guestToken(String liveId) async =>
+      Map<String, dynamic>.from(await supa.rpc('live_guest_token', params: {'p_live': liveId}) as Map);
+
+  Future<List<Map<String, dynamic>>> guests(String liveId) async =>
+      (await supa.from('live_guests').select().eq('live_id', liveId)).map((e) => Map<String, dynamic>.from(e)).toList();
+
   // ---- المدير ----
   Future<void> configure(String url, String key, String secret) =>
       supa.rpc('admin_set_live', params: {'p_url': url, 'p_key': key, 'p_secret': secret});
