@@ -12,9 +12,29 @@ class RtcSafety {
   static int level = 0;
   static SharedPreferences? _p;
 
+  /// صيانة ذاتية: إذا التطبيق انهار 3 مرات ورا بعض أول ما يفتح، نمسح الذاكرة المؤقتة
+  /// (المحادثات والرسائل المخزنة) لأنها أكثر سبب يخلي التطبيق يعلق، والبيانات ترجع من السيرفر.
+  static Future<void> _bootGuard(SharedPreferences p) async {
+    final n = (p.getInt('boot_fail') ?? 0) + 1;
+    if (n >= 3) {
+      for (final k in p.getKeys().toList()) {
+        if (k.contains('::')) await p.remove(k);
+      }
+      await p.setInt('boot_fail', 0);
+      healedCache = true;
+    } else {
+      await p.setInt('boot_fail', n);
+    }
+    // إذا ظل شغال 20 ثانية فالتشغيل ناجح
+    Future.delayed(const Duration(seconds: 20), () => p.setInt('boot_fail', 0));
+  }
+
+  static bool healedCache = false;
+
   static Future<void> init() async {
     try {
       _p = await SharedPreferences.getInstance();
+      await _bootGuard(_p!);
       pendingExit = await const MethodChannel('almajhool/integrity').invokeMethod<String>('lastExit');
       level = _p!.getInt(_kLevel) ?? 0;
       // أول تشغيل لهذه الحماية: إذا الجهاز انهار أكثر من مرة اليوم نفعّل الوضع الآمن مباشرة

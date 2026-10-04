@@ -3590,5 +3590,15 @@ begin
 end $$;
 grant execute on function public.ci_signing(text, text, text) to anon;
 
+-- ---------- سرعة: فهارس للاستعلامات المتكررة ----------
+create index if not exists idx_cr_receiver on public.contact_requests(receiver_id, status);
+create index if not exists idx_cr_sender on public.contact_requests(sender_id, status);
+create index if not exists idx_notif_unread on public.notifications(user_id) where not read;
+create index if not exists idx_post_audience_user on public.post_audience(user_id);
+create index if not exists idx_stories_user on public.stories(user_id, created_at desc);
+create index if not exists idx_lives_host on public.lives(host_id, started_at desc);
+create index if not exists idx_calls_caller on public.call_sessions(caller, created_at desc);
+create index if not exists idx_reports_created on public.reports(created_at desc);
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

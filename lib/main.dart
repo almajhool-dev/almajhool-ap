@@ -25,9 +25,8 @@ Future<void> main() async {
   await initializeDateFormatting('ar');
   await CacheService.init();
   await RtcSafety.init();
-  await AppConfig.load();
-  await PushService.init();
-  await IntegrityService.check();
+  // بالتوازي حتى يفتح التطبيق أسرع
+  await Future.wait([AppConfig.load(), PushService.init(), IntegrityService.check()]);
   runApp(const RootApp());
 }
 
