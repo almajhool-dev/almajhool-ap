@@ -53,10 +53,16 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
-          script: bash tool/rotation-test/run.sh --no-incremental 2>&1 | tee rot.log
+          script: bash tool/rotation-test/run.sh > rot.log 2>&1; cat rot.log; grep -q RESULT=PASS rot.log
       - name: Save result
         if: always()
         run: |
-          mkdir -p /tmp/logs; [ -f rot.log ] && cp rot.log /tmp/logs/rotation-${{ matrix.api }}.log || echo "no log" > /tmp/logs/rotation.log
-          cd /tmp/logs && git init -q -b ci-rotation && git config user.name ci && git config user.email ci@users.noreply.github.com
-          git add -A && git commit -qm "rotation test" && git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-rotation-${{ matrix.api }}
+          mkdir -p /tmp/logs
+          cp rot.log /tmp/logs/rotation.log 2>/dev/null || echo "no log" > /tmp/logs/rotation.log
+          cd /tmp/logs
+          git init -q -b r
+          git config user.name ci
+          git config user.email ci@users.noreply.github.com
+          git add -A
+          git commit -qm "rotation test"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "r:ci-rotation-${{ matrix.api }}" || true
