@@ -10,12 +10,14 @@ import '../services/media_service.dart';
 import '../utils/helpers.dart';
 import '../screens/live/live_screens.dart';
 import 'common.dart';
+import 'sticker_sheet.dart';
 
 enum ReceiptState { none, pending, failed, sent, delivered, read }
 
 class MessageBubble extends StatelessWidget {
   final Message message;
   final bool mine;
+  final bool premium; // صاحب الرسالة موثّق: فقاعة ذهبية
   final bool showSender;
   final String? senderName;
   final Message? repliedTo;
@@ -29,6 +31,7 @@ class MessageBubble extends StatelessWidget {
     super.key,
     required this.message,
     required this.mine,
+    this.premium = false,
     this.showSender = false,
     this.senderName,
     this.repliedTo,
@@ -54,12 +57,13 @@ class MessageBubble extends StatelessWidget {
         ),
       );
     }
+    if (message.type == 'sticker' && !message.deleted) return _sticker(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
-    final bg = mine
+    final bg = mine || premium
         ? null
         : (isDark ? AppColors.darkCard : Colors.white);
-    final fg = mine ? Colors.white : scheme.onSurface;
+    final fg = mine || premium ? Colors.white : scheme.onSurface;
     final maxW = MediaQuery.sizeOf(context).width * 0.78;
 
     final bubble = Container(
@@ -68,9 +72,14 @@ class MessageBubble extends StatelessWidget {
       padding: EdgeInsets.all(message.type == 'image' && !message.deleted ? 4 : 10),
       decoration: BoxDecoration(
         color: bg,
-        gradient: mine
-            ? const LinearGradient(colors: [Color(0xFF6C3CF0), Color(0xFF0097B2)], begin: Alignment.topRight, end: Alignment.bottomLeft)
-            : null,
+        gradient: premium
+            ? const LinearGradient(
+                colors: [Color(0xFFB8860B), Color(0xFFE6B422), Color(0xFF8E44AD)],
+                begin: Alignment.topRight,
+                end: Alignment.bottomLeft)
+            : mine
+                ? const LinearGradient(colors: [Color(0xFF6C3CF0), Color(0xFF0097B2)], begin: Alignment.topRight, end: Alignment.bottomLeft)
+                : null,
         borderRadius: BorderRadiusDirectional.only(
           topStart: const Radius.circular(18),
           topEnd: const Radius.circular(18),
@@ -124,6 +133,41 @@ class MessageBubble extends StatelessWidget {
           if ((d.primaryVelocity ?? 0).abs() > 300 && !message.deleted) onSwipeReply?.call();
         },
         child: bubble,
+      ),
+    );
+  }
+
+  /// الملصق: بدون فقاعة، صورة كبيرة متحركة والوقت تحتها.
+  Widget _sticker(BuildContext context) {
+    final url = message.fileName ?? '';
+    return Align(
+      alignment: mine ? AlignmentDirectional.centerEnd : AlignmentDirectional.centerStart,
+      child: GestureDetector(
+        onLongPress: onLongPress,
+        onTap: message.state == SendState.failed ? onRetry : null,
+        onHorizontalDragEnd: (d) {
+          if ((d.primaryVelocity ?? 0).abs() > 300) onSwipeReply?.call();
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          child: Column(
+            crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (showSender && senderName != null && !mine)
+                Text(senderName!, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Theme.of(context).colorScheme.primary)),
+              StickerImage(url: url, fallback: message.content ?? '🎨', size: 140),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.45), borderRadius: BorderRadius.circular(10)),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text(Fmt.time(message.createdAt), style: const TextStyle(fontSize: 10.5, color: Colors.white)),
+                  if (mine) ...[const SizedBox(width: 4), _receiptIcon()],
+                ]),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -282,6 +282,12 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
   Future<void> _start() async {
     try {
       final info = widget.isHost ? await _repo.start(widget.title) : await _repo.join(widget.liveId!);
+      if (!mounted) {
+        // المستخدم طلع قبل ما يكتمل الاتصال: لا نخلي بث مخفي شغال
+        final id = info['live_id'] as String?;
+        if (widget.isHost && id != null) _repo.end(id).catchError((_) {});
+        return;
+      }
       _liveId = (info['live_id'] ?? widget.liveId) as String;
       _hostId = (info['host_id'] ?? myId) as String;
       _title = (info['title'] ?? widget.title) as String;
@@ -292,14 +298,18 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
       _cover = info['cover_url'] as String?;
 
       _host = await _profile(_hostId!);
+      if (await _gone()) return;
       await _connectRealtime();
+      if (await _gone()) return;
 
       if (Platform.isAndroid) {
         try {
           await Permission.bluetoothConnect.request();
         } catch (_) {}
       }
+      if (await _gone()) return;
       await _connectRoom(info['url'] as String, info['token'] as String, publish: widget.isHost);
+      if (await _gone()) return;
       if (widget.isHost) {
         _beat = Timer.periodic(const Duration(seconds: 10), (_) => _heartbeat());
         _heartbeat();
@@ -315,6 +325,29 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
         });
       }
     }
+  }
+
+  /// إذا انسدت الشاشة أثناء الاتصال ننظف كل شي (بث، غرفة، قنوات).
+  Future<bool> _gone() async {
+    if (mounted) return false;
+    if (widget.isHost && _liveId != null) _repo.end(_liveId!).catchError((_) {});
+    final r = _room;
+    _room = null;
+    _listener?.dispose();
+    if (r != null) {
+      try {
+        await r.disconnect();
+      } catch (_) {}
+      try {
+        await r.dispose();
+      } catch (_) {}
+    }
+    RtcSafety.active(false);
+    if (_ch != null) supa.removeChannel(_ch!);
+    if (_db != null) supa.removeChannel(_db!);
+    _ch = null;
+    _db = null;
+    return true;
   }
 
   bool _reconnecting = false;

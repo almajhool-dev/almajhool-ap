@@ -1,3 +1,4 @@
+import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestException;
 import 'package:uuid/uuid.dart';
 
 import '../core/config.dart';
@@ -241,8 +242,11 @@ class Outbox {
           );
           await remove(m['client_id'] as String);
           sent++;
+        } on PostgrestException catch (_) {
+          // رفض دائم من الخادم (حظر/خروج من المجموعة): نشيلها حتى ما توقف باقي الرسائل
+          await remove(m['client_id'] as String);
         } catch (_) {
-          break;
+          break; // انقطاع إنترنت: نحاول لاحقًا
         }
       }
     } finally {

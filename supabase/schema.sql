@@ -3150,5 +3150,134 @@ begin
   return true;
 end $$;
 
+-- =====================================================================
+--  الإصدار 22: سد ثغرات + ملصقات ومزايا الحسابات الموثقة
+-- =====================================================================
+
+-- (1) غير العضو بالمجموعة كان يگدر يعدّل/يحذف/يضيف أعضاء (NULL يعدّي الشرط)
+create or replace function public.member_role(conv uuid) returns text
+language sql stable security definer set search_path = public as $$
+  select coalesce((select role from conversation_members
+    where conversation_id = conv and user_id = auth.uid()), '');
+$$;
+
+create or replace function public.leave_conversation(conv uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare r text; next_owner uuid;
+begin
+  r := member_role(conv);
+  if coalesce(r, '') = '' then return; end if;
+  insert into messages(conversation_id, sender_id, type, content)
+    select conv, auth.uid(), 'system', 'غادر ' || display_name from profiles where id = auth.uid();
+  delete from conversation_members where conversation_id = conv and user_id = auth.uid();
+  if r = 'owner' then
+    select user_id into next_owner from conversation_members where conversation_id = conv
+      order by (role = 'admin') desc, joined_at asc limit 1;
+    if next_owner is null then
+      delete from conversations where id = conv;
+    else
+      update conversation_members set role = 'owner' where conversation_id = conv and user_id = next_owner;
+    end if;
+  end if;
+end $$;
+
+-- (2) دوال داخلية ما لازم أحد يستدعيها مباشرة
+do $$ begin
+  revoke execute on function public._live_close(uuid, text) from public, anon, authenticated;
+  revoke execute on function public._live_ban_message(uuid) from public, anon, authenticated;
+  revoke execute on function public._push_cleanup() from public, anon, authenticated;
+exception when others then raise notice 'revoke: %', sqlerrm;
+end $$;
+
+-- (3) إعدادات خادم المكالمات للمدير فقط (كانت مفتوحة للزوار)
+create or replace function public.admin_set_turn(turn_user text, turn_pass text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  if char_length(coalesce(turn_user, '')) < 5 or char_length(coalesce(turn_pass, '')) < 5 then
+    raise exception 'بيانات غير صالحة';
+  end if;
+  insert into private_settings(key, value) values ('turn_user', trim(turn_user))
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  insert into private_settings(key, value) values ('turn_pass', trim(turn_pass))
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+end $$;
+revoke execute on function public.admin_set_turn(text, text) from anon;
+
+-- (4) إشعارات ونقاط المتابعة كانت تفشل بصمت (عمود ناقص)
+alter table public.xp_daily add column if not exists follow_xp int not null default 0;
+
+-- (5) قائمة أصدقاء أي شخص (كانت تطلع فارغة لغيرك)
+create or replace function public.friends_of(uid uuid) returns setof public.profiles
+language sql stable security definer set search_path = public as $$
+  select p.* from contact_requests c
+  join profiles p on p.id = case when c.sender_id = uid then c.receiver_id else c.sender_id end
+  where c.status = 'accepted' and (c.sender_id = uid or c.receiver_id = uid)
+    and not is_blocked_between(auth.uid(), p.id)
+  order by p.display_name limit 500;
+$$;
+grant execute on function public.friends_of(uuid) to authenticated;
+
+-- (6) بث صاحبه انقطع (التطبيق انهار) يتسكر تلقائيًا بدل ما يبقى «مباشر» للأبد
+create or replace function public._live_cleanup() returns void
+language plpgsql security definer set search_path = public as $$
+declare r record;
+begin
+  for r in select id from lives where status = 'live' and last_beat < now() - interval '90 seconds' limit 50 loop
+    perform _live_close(r.id, 'timeout');
+  end loop;
+end $$;
+revoke execute on function public._live_cleanup() from public, anon, authenticated;
+do $$ begin
+  perform cron.schedule('almajhool-live-cleanup', '* * * * *', 'select public._live_cleanup()');
+exception when others then raise notice 'live cleanup not scheduled: %', sqlerrm;
+end $$;
+
+-- (7) طرد/كتم مستخدم بدون اسم كان يفشل
+-- (يُعالج بالتطبيق؛ الاسم الافتراضي «مستخدم»)
+
+-- ---------- مزايا الحسابات الموثقة: الملصقات ----------
+create or replace function public.is_verified_me() returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select is_verified or is_owner or is_admin from profiles where id = auth.uid()), false);
+$$;
+grant execute on function public.is_verified_me() to authenticated;
+
+do $$ begin
+  alter table public.messages drop constraint if exists messages_type_check;
+  alter table public.messages add constraint messages_type_check
+    check (type in ('text','image','video','file','audio','system','sticker'));
+exception when others then raise notice 'messages type: %', sqlerrm;
+end $$;
+
+create or replace function public.sticker_url_ok(u text) returns boolean
+language sql immutable as $$
+  select u like 'https://fonts.gstatic.com/s/e/notoemoji/%'
+      or u like 'https://smjkxsqvdpywumghvnfv.supabase.co/storage/v1/object/public/posts/%';
+$$;
+
+drop policy if exists messages_insert on public.messages;
+create policy messages_insert on public.messages for insert to authenticated
+  with check (sender_id = auth.uid() and type <> 'system' and can_send(conversation_id)
+    and (type <> 'sticker' or (is_verified_me() and sticker_url_ok(file_name))));
+
+create table if not exists public.user_stickers (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  url text not null check (char_length(url) <= 600),
+  animated boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index if not exists user_stickers_user_idx on public.user_stickers(user_id, created_at desc);
+alter table public.user_stickers enable row level security;
+drop policy if exists user_stickers_select on public.user_stickers;
+create policy user_stickers_select on public.user_stickers for select to authenticated using (user_id = auth.uid());
+drop policy if exists user_stickers_insert on public.user_stickers;
+create policy user_stickers_insert on public.user_stickers for insert to authenticated
+  with check (user_id = auth.uid() and is_verified_me() and sticker_url_ok(url)
+    and (select count(*) from user_stickers where user_id = auth.uid()) < 100);
+drop policy if exists user_stickers_delete on public.user_stickers;
+create policy user_stickers_delete on public.user_stickers for delete to authenticated using (user_id = auth.uid());
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

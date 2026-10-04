@@ -198,6 +198,8 @@ class Message {
         return '🎤 رسالة صوتية';
       case 'file':
         return '📎 ${fileName ?? 'ملف'}';
+      case 'sticker':
+        return '${content ?? ''} ملصق';
       default:
         return content ?? '';
     }

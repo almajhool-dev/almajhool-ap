@@ -227,6 +227,8 @@ class ChatHub extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> stop() async {
+    _convDebounce?.cancel();
+    _contactsDebounce?.cancel();
     if (!_started) return;
     _started = false;
     WidgetsBinding.instance.removeObserver(this);

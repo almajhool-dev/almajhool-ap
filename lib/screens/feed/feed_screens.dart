@@ -748,7 +748,7 @@ class _AudiencePickerState extends State<_AudiencePicker> {
     super.initState();
     ContactRepository().load().then((r) {
       if (mounted) setState(() => _friends = r.contacts);
-    }).whenComplete(() {
+    }).catchError((_) {}).whenComplete(() {
       if (mounted) setState(() => _loading = false);
     });
   }

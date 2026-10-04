@@ -79,6 +79,14 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
     _timeout?.cancel();
     _poll?.cancel();
     SoundService.stopRingtone();
+    // رجوع بزر الهاتف بدون رد ولا رفض: نعتبره رفض حتى ما تبقى حالة «مشغول» عالقة
+    if (!_accepting) {
+      CallService.instance.inCall = false;
+      if (!_closed) {
+        _closed = true;
+        unawaited(CallSignal.update(widget.callId, status: 'rejected').catchError((_) {}));
+      }
+    }
     if (CallService.instance.currentIncoming == widget.callId) {
       CallService.instance.currentIncoming = null;
       CallService.instance.incomingAccept = null;

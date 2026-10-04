@@ -20,6 +20,7 @@ import '../../services/media_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../../widgets/message_bubble.dart';
+import '../../widgets/sticker_sheet.dart';
 import '../groups/group_screens.dart';
 import '../profile/profile_screens.dart';
 
@@ -345,14 +346,16 @@ class _ChatScreenState extends State<ChatScreen> {
       final sent = await _repo.send(
         conversationId: _id,
         clientId: local.clientId!,
+        type: local.type,
         content: local.content,
+        fileName: local.type == 'sticker' ? local.fileName : null,
         replyTo: local.replyTo,
       );
       await Outbox.remove(local.clientId!);
       SoundService.messageSent();
       _upsert(sent);
     } catch (e) {
-      final offline = !_hub.connectivity.online || friendlyError(e).contains('اتصال');
+      final offline = local.type == 'text' && (!_hub.connectivity.online || friendlyError(e).contains('اتصال'));
       if (offline) {
         await Outbox.add({
           'conversation_id': _id,
@@ -376,6 +379,51 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  bool get _meVerified {
+    final me = context.read<SessionProvider>().profile;
+    return (me?.verified ?? false) || (me?.isAdmin ?? false);
+  }
+
+  Future<void> _stickers() async {
+    FocusScope.of(context).unfocus();
+    final s = await showStickerSheet(context, verified: _meVerified);
+    if (s == null || !mounted) return;
+    final clientId = _repo.newClientId();
+    final reply = _replyTo;
+    final local = Message(
+      id: 'local-$clientId',
+      clientId: clientId,
+      conversationId: _id,
+      senderId: myId,
+      type: 'sticker',
+      content: s.emoji,
+      fileName: s.url,
+      replyTo: reply?.id,
+      createdAt: DateTime.now(),
+      state: SendState.pending,
+    );
+    setState(() {
+      _replyTo = null;
+      _messages.insert(0, local);
+    });
+    _jumpToBottom();
+    try {
+      final sent = await _repo.send(
+        conversationId: _id,
+        clientId: clientId,
+        type: 'sticker',
+        content: s.emoji,
+        fileName: s.url,
+        replyTo: reply?.id,
+      );
+      SoundService.messageSent();
+      _upsert(sent);
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+      _replace(local.copyWith(state: SendState.failed));
+    }
+  }
+
   Future<void> _sendMedia(PickedMedia? media) async {
     if (media == null) return;
     setState(() => _uploading++);
@@ -390,8 +438,9 @@ class _ChatScreenState extends State<ChatScreen> {
         fileSize: media.size,
         replyTo: _replyTo?.id,
       );
-      setState(() => _replyTo = null);
       SoundService.messageSent();
+      if (!mounted) return;
+      setState(() => _replyTo = null);
       _upsert(sent);
       _jumpToBottom();
     } catch (e) {
@@ -743,6 +792,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
           PopupMenuButton<String>(
             onSelected: (v) async {
+              try {
               switch (v) {
                 case 'search':
                   Navigator.push(
@@ -763,6 +813,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   await _toggleBlock();
                 case 'report':
                   await _report(userId: c?.otherUserId);
+              }
+              } catch (e) {
+                if (mounted) showSnack(context, friendlyError(e), error: true);
               }
             },
             itemBuilder: (_) => [
@@ -866,6 +919,9 @@ class _ChatScreenState extends State<ChatScreen> {
               key: ValueKey(m.id),
               message: m,
               mine: m.senderId == myId,
+              premium: (_profileOf(m.senderId)?.verified ?? false) ||
+                  (m.senderId == myId && _meVerified) ||
+                  (!(_conv?.isGroup ?? true) && m.senderId != myId && (_conv?.otherVerified ?? false)),
               showSender: showSender,
               senderName: _profileOf(m.senderId)?.displayName,
               repliedTo: replied,
@@ -976,6 +1032,11 @@ class _ChatScreenState extends State<ChatScreen> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   IconButton(onPressed: _attachSheet, icon: Icon(Icons.add_circle_rounded, color: scheme.primary, size: 28)),
+                  IconButton(
+                    tooltip: 'ملصقات',
+                    onPressed: _stickers,
+                    icon: Icon(Icons.emoji_emotions_rounded, color: scheme.primary, size: 26),
+                  ),
                   Expanded(
                     child: TextField(
                       controller: _text,

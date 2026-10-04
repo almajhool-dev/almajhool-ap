@@ -60,17 +60,8 @@ class ContactRepository {
   /// قائمة: friends | followers | following
   Future<List<Profile>> people(String userId, String kind) async {
     if (kind == 'friends') {
-      final r = await supa
-          .from('contact_requests')
-          .select('sender:profiles!contact_requests_sender_id_fkey(*), receiver:profiles!contact_requests_receiver_id_fkey(*)')
-          .eq('status', 'accepted')
-          .or('sender_id.eq.$userId,receiver_id.eq.$userId')
-          .limit(500);
-      return r.map((m) {
-        final s = m['sender'] as Map<String, dynamic>;
-        final rc = m['receiver'] as Map<String, dynamic>;
-        return Profile.fromMap(s['id'] == userId ? rc : s);
-      }).toList();
+      final r = await supa.rpc('friends_of', params: {'uid': userId}) as List;
+      return r.map((m) => Profile.fromMap(Map<String, dynamic>.from(m as Map))).toList();
     }
     final followers = kind == 'followers';
     final r = await supa
