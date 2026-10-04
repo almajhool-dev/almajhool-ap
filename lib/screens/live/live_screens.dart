@@ -266,8 +266,19 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
         roomOptions: lk.RoomOptions(
           adaptiveStream: true,
           dynacast: true,
-          defaultCameraCaptureOptions: lk.CameraCaptureOptions(params: lk.VideoParametersPresets.h720_169),
-          defaultVideoPublishOptions: lk.VideoPublishOptions(simulcast: true),
+          // صورة واضحة: 720p بجودة عالية، مع طبقات أقل للمشاهدين أصحاب النت الضعيف (تختار تلقائيًا)
+          defaultCameraCaptureOptions: lk.CameraCaptureOptions(
+            params: const lk.VideoParameters(
+              dimensions: lk.VideoDimensions(1280, 720),
+              encoding: lk.VideoEncoding(maxBitrate: 2500000, maxFramerate: 30),
+            ),
+          ),
+          defaultVideoPublishOptions: const lk.VideoPublishOptions(
+            simulcast: true,
+            videoEncoding: lk.VideoEncoding(maxBitrate: 2500000, maxFramerate: 30),
+            videoSimulcastLayers: [lk.VideoParametersPresets.h360_169, lk.VideoParametersPresets.h540_169],
+            degradationPreference: lk.DegradationPreference.maintainResolution,
+          ),
         ),
       );
       _room = room;
@@ -900,32 +911,30 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (_title.isNotEmpty || widget.isHost || _isMod)
-                      GestureDetector(
-                        onTap: _editPin,
-                        child: Container(
-                          margin: const EdgeInsets.fromLTRB(10, 0, 10, 4),
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.8),
-                          decoration: BoxDecoration(
-                            color: Colors.amber.withValues(alpha: 0.85),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Row(mainAxisSize: MainAxisSize.min, children: [
-                            const Text('📌 ', style: TextStyle(fontSize: 14)),
-                            Flexible(
-                              child: Text(
-                                _title.isEmpty ? 'اضغط لتثبيت رسالة' : _title,
-                                style: const TextStyle(color: Colors.black, fontWeight: FontWeight.w800),
-                              ),
-                            ),
-                          ]),
-                        ),
-                      ),
                     SizedBox(
                       height: 220,
                       width: MediaQuery.of(context).size.width * 0.8,
-                      child: ShaderMask(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      // الرسالة المثبتة: بحجم التعليق وثابتة أعلى التعليقات
+                      if (_title.isNotEmpty)
+                        GestureDetector(
+                          onTap: _editPin,
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                            decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(14)),
+                            child: Text.rich(
+                              TextSpan(children: [
+                                const TextSpan(text: '📌 '),
+                                TextSpan(text: _title, style: const TextStyle(color: Colors.amberAccent, fontWeight: FontWeight.w700)),
+                              ]),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          ),
+                        ),
+                      Expanded(child: ShaderMask(
                         shaderCallback: (r) => const LinearGradient(
                           begin: Alignment.topCenter,
                           end: Alignment.bottomCenter,
@@ -972,6 +981,8 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
                           },
                         ),
                       ),
+                      ),
+                      ]),
                     ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),

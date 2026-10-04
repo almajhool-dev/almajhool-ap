@@ -15,6 +15,7 @@ class FilterService {
   static const filters = [
     LiveFilter('none', 'بدون', '🚫'),
     LiveFilter('beauty', 'جمال', '✨'),
+    LiveFilter('smooth', 'تنعيم البشرة', '🫧'),
     LiveFilter('bright', 'مشرق', '☀️'),
     LiveFilter('warm', 'دافئ', '🌅'),
     LiveFilter('pink', 'وردي', '🌸'),
