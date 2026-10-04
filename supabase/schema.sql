@@ -2723,6 +2723,7 @@ begin
   return jsonb_build_object('url', _lk_url(),
     'token', _lk_token(auth.uid()::text, me.display_name, p_live::text, l.host_id = auth.uid()),
     'host_id', l.host_id, 'title', l.title, 'like_count', l.like_count, 'cover_url', l.cover_url,
+    'share_count', l.share_count,
     'is_mod', exists(select 1 from live_mods where host_id = l.host_id and mod_id = auth.uid()));
 end $$;
 
@@ -3103,6 +3104,26 @@ begin
         'canUpdateMetadata', true)));
   end if;
 end $$;
+
+-- =====================================================================
+--  الإصدار 20: مشاهدة البث من الصفحة الرئيسية (معاينة بدون رسالة «انضم»)
+-- =====================================================================
+create or replace function public.live_preview(p_live uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare l lives; me profiles;
+begin
+  select * into l from lives where id = p_live;
+  if l.id is null or l.status <> 'live' then raise exception 'انتهى هذا البث'; end if;
+  if is_banned() or is_blocked_between(auth.uid(), l.host_id)
+     or exists(select 1 from live_bans where host_id = l.host_id and user_id = auth.uid()) then
+    raise exception 'غير مسموح';
+  end if;
+  select * into me from profiles where id = auth.uid();
+  return jsonb_build_object('url', _lk_url(),
+    'token', _lk_token(auth.uid()::text, me.display_name, p_live::text, false),
+    'host_id', l.host_id, 'title', l.title, 'cover_url', l.cover_url);
+end $$;
+grant execute on function public.live_preview(uuid) to authenticated;
 
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

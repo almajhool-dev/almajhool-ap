@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -9,6 +10,7 @@ import 'package:provider/provider.dart';
 import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../providers/providers.dart';
+import '../../repositories/live_repository.dart';
 import '../../repositories/post_repository.dart';
 import '../../repositories/social_repositories.dart';
 import '../../repositories/user_repositories.dart';
@@ -103,10 +105,23 @@ class _FeedTabState extends State<FeedTab> {
   final _ctrl = PostsController();
   final _scroll = ScrollController();
   final _stories = GlobalKey<StoryBarState>();
+  LiveSummary? _live;
+  Timer? _liveTimer;
+
+  Future<void> _loadLive() async {
+    try {
+      final myId = supa.auth.currentUser?.id;
+      final all = await LiveRepository().active();
+      final l = all.where((e) => e.host.id != myId).toList();
+      if (mounted) setState(() => _live = l.isEmpty ? null : l.first);
+    } catch (_) {}
+  }
 
   @override
   void initState() {
     super.initState();
+    _loadLive();
+    _liveTimer = Timer.periodic(const Duration(seconds: 30), (_) => _loadLive());
     _scroll.addListener(() {
       if (_scroll.position.pixels > _scroll.position.maxScrollExtent - 600) _ctrl.loadMore();
     });
@@ -114,6 +129,7 @@ class _FeedTabState extends State<FeedTab> {
 
   @override
   void dispose() {
+    _liveTimer?.cancel();
     _ctrl.dispose();
     _scroll.dispose();
     super.dispose();
@@ -136,6 +152,7 @@ class _FeedTabState extends State<FeedTab> {
         builder: (context, _) => RefreshIndicator(
           onRefresh: () async {
             _stories.currentState?.reload();
+            _loadLive();
             await _ctrl.refresh();
           },
           child: CustomScrollView(
@@ -172,6 +189,8 @@ class _FeedTabState extends State<FeedTab> {
                 ),
               ),
               SliverToBoxAdapter(child: StoryBar(key: _stories)),
+              if (_live != null)
+                SliverToBoxAdapter(child: LivePreviewCard(key: ValueKey(_live!.id), live: _live!)),
               SliverToBoxAdapter(
                 child: Card(
                   margin: const EdgeInsets.fromLTRB(12, 6, 12, 8),

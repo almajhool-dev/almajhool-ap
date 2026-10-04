@@ -108,6 +108,9 @@ class LiveRepository {
     return r == null ? null : Map<String, dynamic>.from(r as Map);
   }
 
+  Future<Map<String, dynamic>> preview(String liveId) async =>
+      Map<String, dynamic>.from(await supa.rpc('live_preview', params: {'p_live': liveId}) as Map);
+
   // ---- المدير ----
   Future<void> configure(String url, String key, String secret) =>
       supa.rpc('admin_set_live', params: {'p_url': url, 'p_key': key, 'p_secret': secret});

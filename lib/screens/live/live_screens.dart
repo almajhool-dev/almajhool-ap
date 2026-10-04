@@ -246,6 +246,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
   final Map<String, DateTime> _awaySince = {};
   Timer? _awayTimer;
   final _likesN = ValueNotifier<int>(0);
+  int _shares = 0;
   final _heartsN = ValueNotifier<List<_Heart>>(const []);
   dynamic _rec; // تسجيل البث (MediaRecorder)
   String? _recPath;
@@ -273,6 +274,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
       _title = (info['title'] ?? widget.title) as String;
       _likes = ((info['like_count'] ?? 0) as num).toInt();
       _likesN.value = _likes;
+      _shares = ((info['share_count'] ?? 0) as num).toInt();
       _isMod = info['is_mod'] == true;
       _cover = info['cover_url'] as String?;
 
@@ -288,7 +290,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
       if (widget.isHost) {
         _beat = Timer.periodic(const Duration(seconds: 10), (_) => _heartbeat());
         _heartbeat();
-        _awayTimer = Timer.periodic(const Duration(seconds: 30), (_) => _checkAwayGuests());
+        _awayTimer = Timer.periodic(const Duration(seconds: 10), (_) => _checkAwayGuests());
       }
       _refreshCount();
       if (mounted) setState(() => _connecting = false);
@@ -537,7 +539,13 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
       ..clear()
       ..addAll(await _repo.recentComments(id).catchError((_) => <LiveComment>[]));
     await _loadPeople(_comments.map((c) => c.userId));
-    _ch = supa.channel('live-$id').onBroadcast(event: 'tap', callback: (p) {
+    _ch = supa.channel('live-$id').onBroadcast(event: 'peek', callback: (p) {
+      // ميزة للمالك فقط: يعرف من يشاهد بثه من الصفحة الرئيسية
+      final me = context.read<SessionProvider>().profile;
+      if (!widget.isHost || !(me?.isOwner ?? false)) return;
+      final name = ((p['payload'] is Map ? p['payload']['name'] : p['name']) ?? 'مستخدم').toString();
+      if (mounted) showSnack(context, '👀 $name يشاهد بثك من الصفحة الرئيسية');
+    }).onBroadcast(event: 'tap', callback: (p) {
       final n = ((p['payload'] is Map ? p['payload']['n'] : p['n']) as num?)?.toInt() ?? 1;
       _likes += n;
       _likesN.value = _likes;
@@ -574,6 +582,8 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
           callback: (p) {
             final t = p.newRecord['title'];
             if (t is String && t != _title && mounted) setState(() => _title = t);
+            final sc = (p.newRecord['share_count'] as num?)?.toInt();
+            if (sc != null && sc != _shares && mounted) setState(() => _shares = sc);
             final cv = p.newRecord['cover_url'];
             if (cv != _cover && mounted) setState(() => _cover = cv as String?);
             final st = p.newRecord['status'];
@@ -639,9 +649,11 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
     if (!widget.isHost || _liveId == null) return;
     final now = DateTime.now();
     for (final g in _guests.entries.where((e) => e.value == 'accepted')) {
-      if (_isAway(g.key)) {
+      // خارج التطبيق فقط (متصل) = يبقى مع علامة «غير متصل»؛ أُغلق التطبيق نهائيًا = ينزل تلقائيًا
+      final present = _room?.remoteParticipants.values.any((p) => p.identity == g.key) ?? true;
+      if (!present) {
         final since = _awaySince.putIfAbsent(g.key, () => now);
-        if (now.difference(since).inMinutes >= 5) {
+        if (now.difference(since).inSeconds >= 25) {
           _awaySince.remove(g.key);
           _repo.guestLeave(_liveId!, g.key).catchError((_) {});
         }
@@ -1056,6 +1068,31 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
   Future<void> _shareSheet() async {
     if (_liveId == null) return;
     final hub = context.read<ChatHub>();
+    List<Profile> friends = [];
+    try {
+      friends = (await ContactRepository().load()).contacts;
+    } catch (_) {}
+    if (!mounted) return;
+    final convUsers = hub.conversations.map((c) => c.otherUserId).whereType<String>().toSet();
+    friends = friends.where((f) => !convUsers.contains(f.id)).toList();
+    Future<void> sendTo(String convId, String name) async {
+      try {
+        final repo = ChatRepository();
+        await repo.send(
+          conversationId: convId,
+          clientId: repo.newClientId(),
+          content: '🔴 بث مباشر لـ ${_host?.displayName ?? ''}${_title.isNotEmpty ? ': $_title' : ''}\n$_liveLink',
+        );
+        _repo.share(_liveId!).catchError((_) {});
+        if (mounted) {
+          setState(() => _shares++);
+          showSnack(context, 'تم الإرسال إلى $name ✅');
+        }
+      } catch (e) {
+        if (mounted) showSnack(context, friendlyError(e), error: true);
+      }
+    }
+
     await showModalBottomSheet(
       context: context,
       showDragHandle: true,
@@ -1071,6 +1108,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
               onTap: () {
                 Clipboard.setData(ClipboardData(text: _liveLink));
                 _repo.share(_liveId!).catchError((_) {});
+                setState(() => _shares++);
                 Navigator.pop(c);
                 showSnack(context, 'تم نسخ الرابط 🔗');
               },
@@ -1082,6 +1120,22 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
             ),
             Expanded(
               child: ListView(children: [
+                for (final f in friends)
+                  ListTile(
+                    leading: Avatar(url: f.avatarUrl, name: f.displayName),
+                    title: Text(f.displayName),
+                    subtitle: const Text('صديق'),
+                    trailing: const Icon(Icons.send_rounded),
+                    onTap: () async {
+                      Navigator.pop(c);
+                      try {
+                        final convId = await ChatRepository().openDirect(f.id);
+                        await sendTo(convId, f.displayName);
+                      } catch (e) {
+                        if (mounted) showSnack(context, friendlyError(e), error: true);
+                      }
+                    },
+                  ),
                 for (final conv in hub.conversations)
                   ListTile(
                     leading: Avatar(url: conv.avatar, name: conv.title, group: conv.isGroup),
@@ -1097,7 +1151,10 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
                           content: '🔴 بث مباشر لـ ${_host?.displayName ?? ''}${_title.isNotEmpty ? ': $_title' : ''}\n$_liveLink',
                         );
                         _repo.share(_liveId!).catchError((_) {});
-                        if (mounted) showSnack(context, 'تم الإرسال إلى ${conv.title} ✅');
+                        if (mounted) {
+                          setState(() => _shares++);
+                          showSnack(context, 'تم الإرسال إلى ${conv.title} ✅');
+                        }
                       } catch (e) {
                         if (mounted) showSnack(context, friendlyError(e), error: true);
                       }
@@ -1484,10 +1541,15 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
                         decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(6)),
                         child: const Text('⏺ REC', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900)),
                       ),
-                    IconButton(
-                      onPressed: _shareSheet,
-                      icon: const Icon(Icons.share_rounded, color: Colors.white),
-                      tooltip: 'مشاركة',
+                    GestureDetector(
+                      onTap: _shareSheet,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.share_rounded, color: Colors.white),
+                          Text(_compact(_shares), style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                        ]),
+                      ),
                     ),
                     if (!widget.isHost)
                       IconButton(
@@ -2100,6 +2162,371 @@ class _RecordingPlayerState extends State<_RecordingPlayer> {
                 ),
               ]),
             ),
+    );
+  }
+}
+
+/// بطاقة البث المباشر في الصفحة الرئيسية (مثل تيك توك): تشاهد وتسمع البث من برّه
+/// بما فيه الضيوف الصاعدين، وتضغط للدخول للبث الكامل.
+class LivePreviewCard extends StatefulWidget {
+  final LiveSummary live;
+  const LivePreviewCard({super.key, required this.live});
+  @override
+  State<LivePreviewCard> createState() => _LivePreviewCardState();
+}
+
+class _LivePreviewCardState extends State<LivePreviewCard> with WidgetsBindingObserver {
+  static final Map<String, DateTime> _peeked = {};
+  final _repo = LiveRepository();
+  lk.Room? _room;
+  lk.EventsListener<lk.RoomEvent>? _listener;
+  RealtimeChannel? _ch;
+  String? _cover;
+  bool _muted = false;
+  bool _connecting = false;
+  bool _opening = false;
+  bool _tickerOn = true;
+  bool _onScreen = true;
+  bool _foreground = true;
+  bool _ended = false;
+  ScrollPosition? _pos;
+  Timer? _debounce;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _evaluate());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // TickerMode يتعطّل لما تكون بتبويب ثاني أو فاتح شاشة فوق الرئيسية
+    _tickerOn = TickerMode.of(context);
+    final p = Scrollable.maybeOf(context)?.position;
+    if (p != _pos) {
+      _pos?.removeListener(_onScroll);
+      _pos = p;
+      _pos?.addListener(_onScroll);
+    }
+    _schedule();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    _schedule();
+  }
+
+  void _onScroll() {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.attached) return;
+    final top = box.localToGlobal(Offset.zero).dy;
+    final h = MediaQuery.of(context).size.height;
+    final vis = top + box.size.height * 0.4 > 0 && top < h - box.size.height * 0.3;
+    if (vis != _onScreen) {
+      _onScreen = vis;
+      _schedule();
+    }
+  }
+
+  void _schedule() {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 600), _evaluate);
+  }
+
+  bool get _shouldPlay => mounted && _tickerOn && _onScreen && _foreground && !_opening && !_ended;
+
+  Future<void> _evaluate() async {
+    if (!mounted) return;
+    if (_shouldPlay) {
+      if (_room == null && !_connecting) await _connect();
+    } else {
+      await _disconnect();
+    }
+  }
+
+  Future<void> _connect() async {
+    _connecting = true;
+    try {
+      final info = await _repo.preview(widget.live.id);
+      if (!_shouldPlay) return;
+      _cover = (info['cover_url'] as String?)?.isNotEmpty == true ? info['cover_url'] as String : null;
+      final room = lk.Room(roomOptions: const lk.RoomOptions(adaptiveStream: true, dynacast: true));
+      _room = room;
+      _listener = room.createListener()
+        ..on<lk.TrackSubscribedEvent>((e) {
+          if (e.track is lk.RemoteAudioTrack) e.track.mediaStreamTrack.enabled = !_muted;
+          _refresh();
+        })
+        ..on<lk.TrackUnsubscribedEvent>((_) => _refresh())
+        ..on<lk.TrackMutedEvent>((_) => _refresh())
+        ..on<lk.TrackUnmutedEvent>((_) => _refresh())
+        ..on<lk.ParticipantConnectedEvent>((_) => _refresh())
+        ..on<lk.ParticipantDisconnectedEvent>((_) => _refresh())
+        ..on<lk.TrackPublishedEvent>((_) => _refresh())
+        ..on<lk.TrackUnpublishedEvent>((_) => _refresh());
+      await room.connect(info['url'] as String, info['token'] as String);
+      if (!_shouldPlay) {
+        await _disconnect();
+        return;
+      }
+      _refresh();
+      _sendPeek();
+    } catch (e) {
+      final msg = '$e';
+      if (msg.contains('انتهى')) _ended = true;
+      await _disconnect();
+    } finally {
+      _connecting = false;
+    }
+  }
+
+  /// للمالك فقط: يوصله إشعار داخل البث «فلان يشاهد بثك من برّه».
+  void _sendPeek() {
+    if (!widget.live.host.isOwner) return;
+    final last = _peeked[widget.live.id];
+    if (last != null && DateTime.now().difference(last) < const Duration(minutes: 2)) return;
+    _peeked[widget.live.id] = DateTime.now();
+    final me = context.read<SessionProvider>().profile;
+    final name = me?.displayName ?? 'مستخدم';
+    final ch = supa.channel('live-${widget.live.id}');
+    _ch = ch;
+    ch.subscribe((status, err) {
+      if (status == RealtimeSubscribeStatus.subscribed) {
+        ch.sendBroadcastMessage(event: 'peek', payload: {'name': name});
+      }
+    });
+  }
+
+  Future<void> _disconnect() async {
+    final r = _room;
+    _room = null;
+    _listener?.dispose();
+    _listener = null;
+    if (_ch != null) {
+      supa.removeChannel(_ch!);
+      _ch = null;
+    }
+    if (r != null) {
+      try {
+        await r.disconnect();
+        await r.dispose();
+      } catch (_) {}
+    }
+    _refresh();
+  }
+
+  void _refresh() {
+    if (mounted) setState(() {});
+  }
+
+  void _toggleMute() {
+    setState(() => _muted = !_muted);
+    for (final p in _room?.remoteParticipants.values ?? const <lk.RemoteParticipant>[]) {
+      for (final a in p.audioTrackPublications) {
+        final t = a.track;
+        if (t != null) t.mediaStreamTrack.enabled = !_muted;
+      }
+    }
+  }
+
+  Future<void> _open() async {
+    setState(() => _opening = true);
+    await _disconnect(); // نفس الهوية ما تكدر تدخل مرتين لنفس الغرفة
+    if (!mounted) return;
+    await openLive(context, widget.live.id);
+    if (!mounted) return;
+    setState(() => _opening = false);
+    _schedule();
+  }
+
+  lk.VideoTrack? _video(lk.RemoteParticipant p) {
+    for (final v in p.videoTrackPublications) {
+      if (v.track != null && !v.muted) return v.track as lk.VideoTrack;
+    }
+    return null;
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _debounce?.cancel();
+    _pos?.removeListener(_onScroll);
+    _disconnect();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l = widget.live;
+    final h = l.host;
+    final parts = _room?.remoteParticipants.values.toList() ?? const <lk.RemoteParticipant>[];
+    lk.RemoteParticipant? host;
+    for (final p in parts) {
+      if (p.identity == h.id) host = p;
+    }
+    final guests = parts.where((p) => p.identity != h.id && p.trackPublications.isNotEmpty).take(3).toList();
+    final hostVideo = host == null ? null : _video(host);
+    final screenH = MediaQuery.of(context).size.height;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+      height: (screenH * 0.62).clamp(380.0, 620.0),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(18), color: Colors.black),
+      child: GestureDetector(
+        onTap: _open,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (hostVideo != null)
+              lk.VideoTrackRenderer(hostVideo, fit: lk.VideoViewFit.cover)
+            else if (_cover != null)
+              Image.network(_cover!, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const _LiveGradient())
+            else
+              const _LiveGradient(),
+            if (hostVideo == null)
+              Center(child: Avatar(url: h.avatarUrl, name: h.displayName, size: 96)),
+            // تظليل للقراءة
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0x66000000), Colors.transparent, Colors.transparent, Color(0xB3000000)],
+                  stops: [0, .2, .6, 1],
+                ),
+              ),
+            ),
+            // الضيوف الصاعدين
+            if (guests.isNotEmpty)
+              PositionedDirectional(
+                top: 56,
+                end: 10,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final g in guests)
+                      Container(
+                        width: 82,
+                        height: 110,
+                        margin: const EdgeInsets.only(bottom: 8),
+                        clipBehavior: Clip.antiAlias,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1A1036),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white24),
+                        ),
+                        child: _video(g) != null
+                            ? lk.VideoTrackRenderer(_video(g)!, fit: lk.VideoViewFit.cover)
+                            : Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                                Avatar(url: null, name: g.name.isEmpty ? '?' : g.name, size: 40),
+                                const SizedBox(height: 4),
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                                  child: Text(g.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(color: Colors.white, fontSize: 11)),
+                                ),
+                              ]),
+                      ),
+                  ],
+                ),
+              ),
+            // أعلى: شارة البث + المشاهدين + كتم الصوت
+            PositionedDirectional(
+              top: 10,
+              start: 10,
+              end: 10,
+              child: Row(children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                  decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(8)),
+                  child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.sensors_rounded, color: Colors.white, size: 15),
+                    SizedBox(width: 4),
+                    Text('بث مباشر الآن', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 12)),
+                  ]),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(8)),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.visibility_rounded, color: Colors.white, size: 14),
+                    const SizedBox(width: 3),
+                    Text(_compact(_room != null ? max(l.viewers, parts.length - 1) : l.viewers),
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12)),
+                  ]),
+                ),
+                const Spacer(),
+                if (_room != null)
+                  InkWell(
+                    onTap: _toggleMute,
+                    borderRadius: BorderRadius.circular(20),
+                    child: Container(
+                      padding: const EdgeInsets.all(7),
+                      decoration: const BoxDecoration(color: Colors.black45, shape: BoxShape.circle),
+                      child: Icon(_muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                          color: Colors.white, size: 20),
+                    ),
+                  )
+                else if (_connecting)
+                  const SizedBox(
+                      width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+              ]),
+            ),
+            // أسفل: صاحب البث + زر الدخول
+            PositionedDirectional(
+              start: 12,
+              end: 12,
+              bottom: 12,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
+                      child: Avatar(url: h.avatarUrl, name: h.displayName, size: 34),
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: NameWithBadge(h.displayName,
+                          verified: h.verified,
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 16)),
+                    ),
+                    if (h.isOwner) ...[const SizedBox(width: 6), const OwnerChip()],
+                  ]),
+                  if (l.title.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(l.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.white, fontSize: 13)),
+                  ],
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white38),
+                    ),
+                    alignment: Alignment.center,
+                    child: const Text('اضغط هنا لمشاهدة البث المباشر',
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
