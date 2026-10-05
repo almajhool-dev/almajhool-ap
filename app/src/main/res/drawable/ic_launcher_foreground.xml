@@ -1,0 +1,15 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- radar rings -->
+    <path android:strokeColor="#2235F0A2" android:strokeWidth="1.6" android:fillColor="#00000000"
+        android:pathData="M54,24a30,30 0,1 1,-0.01 0z"/>
+    <path android:strokeColor="#4435F0A2" android:strokeWidth="1.6" android:fillColor="#00000000"
+        android:pathData="M54,34a20,20 0,1 1,-0.01 0z"/>
+    <path android:strokeColor="#8835F0A2" android:strokeWidth="1.6" android:fillColor="#00000000"
+        android:pathData="M54,44a10,10 0,1 1,-0.01 0z"/>
+    <!-- sweep -->
+    <path android:fillColor="#5535F0A2" android:pathData="M54,54 L54,24 A30,30 0 0,1 79.98,39 Z"/>
+    <!-- aircraft -->
+    <path android:fillColor="#35F0A2"
+        android:pathData="M68,33 l2.2,0 l0.8,7.5 l7,4.2 l0,2.4 l-7,-2 l-0.6,6 l2.4,2 l0,1.8 l-3.8,-1.1 l-3.8,1.1 l0,-1.8 l2.4,-2 l-0.6,-6 l-7,2 l0,-2.4 l7,-4.2 z"/>
+</vector>

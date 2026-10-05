@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.SkyMonitor" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/radar_bg</item>
+        <item name="android:statusBarColor">@color/radar_bg</item>
+        <item name="android:navigationBarColor">@color/radar_bg</item>
+    </style>
+</resources>
