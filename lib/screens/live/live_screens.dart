@@ -511,10 +511,15 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
         Future<void> act(Future<void> Function() f) async {
           try {
             await f();
-            await _onGuestsChanged();
-            set(() {});
           } catch (e) {
             if (mounted) showSnack(context, friendlyError(e), error: true);
+            return;
+          }
+          await _onGuestsChanged();
+          if (c.mounted) {
+            try {
+              set(() {});
+            } catch (_) {}
           }
         }
 

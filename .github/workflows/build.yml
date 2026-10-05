@@ -85,6 +85,22 @@ jobs:
           make_latest: true
           files: dist/almajhool-app.apk
 
+      - name: Announce release to the app server
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          N=${{ github.run_number }}
+          URL="https://github.com/${{ github.repository }}/releases/download/v1.0.$N/almajhool-app.apk"
+          python3 - "$N" "$URL" <<'PY'
+          import json, os, sys, urllib.request
+          n, url = int(sys.argv[1]), sys.argv[2]
+          req = urllib.request.Request('https://smjkxsqvdpywumghvnfv.supabase.co/rest/v1/rpc/ci_set_release',
+              data=json.dumps({'p_gh': os.environ['GH_TOKEN'], 'p_build': n, 'p_url': url, 'p_notes': ''}).encode(),
+              headers={'apikey': 'sb_publishable_xqWRKqnOIKKqKgPJrdP5TA_GA7PCSiV', 'Content-Type': 'application/json'})
+          print(urllib.request.urlopen(req, timeout=30).read().decode())
+          PY
+
       - name: Save build log
         if: always()
         run: |

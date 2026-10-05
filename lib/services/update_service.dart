@@ -22,6 +22,14 @@ class UpdateService {
 
   /// يرجع (رقم البناء، رابط التحميل، الملاحظات) لآخر إصدار، أو null.
   static Future<({int build, String url, String notes})?> latest() async {
+    // 1) من سيرفر التطبيق (سريع وما يتقيد بعدد الطلبات مثل GitHub)
+    try {
+      final r = await supa.rpc('latest_release').timeout(const Duration(seconds: 10));
+      if (r is Map && r['build'] != null && r['url'] != null) {
+        return (build: (r['build'] as num).toInt(), url: r['url'] as String, notes: (r['notes'] ?? '') as String);
+      }
+    } catch (_) {}
+    // 2) من GitHub مباشرة
     try {
       final r = await http
           .get(Uri.parse(_api), headers: {'Accept': 'application/vnd.github+json'})
@@ -54,9 +62,26 @@ class UpdateService {
       url ??= universal;
       if (url == null || build == 0) return null;
       return (build: build, url: url, notes: (j['body'] ?? '') as String);
-    } catch (_) {
-      return null;
-    }
+    } catch (_) {}
+    // 3) صفحة آخر إصدار (تحويل) — تشتغل حتى لو API مقيّد
+    try {
+      final c = http.Client();
+      final req = http.Request('GET', Uri.parse('https://github.com/almajhool-dev/almajhool-ap/releases/latest'))
+        ..followRedirects = false;
+      final res = await c.send(req).timeout(const Duration(seconds: 12));
+      final loc = res.headers['location'] ?? '';
+      c.close();
+      final m = RegExp(r'/tag/v1\.0\.(\d+)').firstMatch(loc);
+      if (m != null) {
+        final b = int.parse(m.group(1)!);
+        return (
+          build: b,
+          url: 'https://github.com/almajhool-dev/almajhool-ap/releases/download/v1.0.$b/almajhool-app.apk',
+          notes: ''
+        );
+      }
+    } catch (_) {}
+    return null;
   }
 
   /// فحص تلقائي عند فتح التطبيق (مرة واحدة لكل تشغيل).

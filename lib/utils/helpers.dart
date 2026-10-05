@@ -86,8 +86,23 @@ class Validators {
 }
 
 /// تحويل الأخطاء إلى رسائل عربية مفهومة.
+int _errLogged = 0;
+
+/// كل خطأ يظهر للمستخدم يوصل للمطوّر (بدون بيانات شخصية) حتى ينصلح تلقائيًا.
+void _logError(String raw) {
+  if (_errLogged++ > 15) return;
+  try {
+    const b = int.fromEnvironment('APP_BUILD', defaultValue: 0);
+    final t = 'b$b err: ${raw.replaceAll(RegExp(r'\s+'), ' ')}';
+    Supabase.instance.client
+        .rpc('client_log', params: {'p_info': t.length > 590 ? t.substring(0, 590) : t})
+        .catchError((_) => null);
+  } catch (_) {}
+}
+
 String friendlyError(Object e) {
   final raw = e.toString();
+  _logError('${e.runtimeType}: $raw');
   if (raw.contains('Bearer') || raw.contains('Invalid API key') || raw.contains('No API key')) {
     return 'مفتاح الخادم غير صحيح. اضغط «تغيير إعدادات الخادم» وأدخل anon public key الصحيح';
   }
@@ -114,7 +129,7 @@ String friendlyError(Object e) {
   }
   if (e is PostgrestException) {
     final m = e.message;
-    if (m.contains('rate_limited')) return 'أرسلت رسائل كثيرة بسرعة، انتظر قليلًا';
+    if (m.contains('rate_limited')) return 'تمهّل شوية وحاول بعد قليل';
     if (e.code == '23505') return 'القيمة مستخدمة مسبقًا';
     if (e.code == '42501' || m.contains('row-level security')) return 'ليست لديك صلاحية لهذا الإجراء';
     return m;

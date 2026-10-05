@@ -66,14 +66,7 @@ def patch_manifest():
             '    </application>',
             1,
         )
-    # محرك الرسم القديم (Skia): أكثر استقرارًا مع عرض الفيديو على بعض الهواتف
-    if "EnableImpeller" not in s:
-        s = s.replace(
-            "</application>",
-            '    <meta-data android:name="io.flutter.embedding.android.EnableImpeller" android:value="false"/>\n'
-            '    </application>',
-            1,
-        )
+    # محرك الرسم الحديث (Impeller) هو الافتراضي: تمرير أنعم بدون تقطيع
     # أزرار الإشعارات (رد/رفض) تعمل والتطبيق مغلق
     if "ActionBroadcastReceiver" not in s:
         s = s.replace(
@@ -289,6 +282,9 @@ class MainActivity : FlutterActivity() {
             previous?.uncaughtException(t, e)
         }
         super.onCreate(savedInstanceState)
+        // حماية: منع تصوير الشاشة وتسجيلها داخل التطبيق (تطلع سوداء)
+        window.setFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE,
+            android.view.WindowManager.LayoutParams.FLAG_SECURE)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {

@@ -3600,5 +3600,35 @@ create index if not exists idx_lives_host on public.lives(host_id, started_at de
 create index if not exists idx_calls_caller on public.call_sessions(caller, created_at desc);
 create index if not exists idx_reports_created on public.reports(created_at desc);
 
+-- =====================================================================
+--  الإصدار 24: معلومات آخر إصدار من السيرفر (بدل GitHub API اللي يتقيد بعدد الطلبات)
+-- =====================================================================
+create table if not exists public.app_release (
+  id int primary key default 1 check (id = 1),
+  build int not null,
+  url text not null,
+  notes text not null default '',
+  updated_at timestamptz not null default now()
+);
+alter table public.app_release enable row level security;
+
+create or replace function public.ci_set_release(p_gh text, p_build int, p_url text, p_notes text) returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _gh_verify(p_gh) then return false; end if;
+  if p_url not like 'https://github.com/almajhool-dev/almajhool-ap/releases/download/%' then return false; end if;
+  insert into app_release(id, build, url, notes) values (1, p_build, p_url, left(coalesce(p_notes, ''), 2000))
+    on conflict (id) do update set build = excluded.build, url = excluded.url, notes = excluded.notes, updated_at = now()
+    where app_release.build <= excluded.build;
+  return true;
+end $$;
+grant execute on function public.ci_set_release(text, int, text, text) to anon;
+
+create or replace function public.latest_release() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('build', build, 'url', url, 'notes', notes) from app_release where id = 1;
+$$;
+grant execute on function public.latest_release() to anon, authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
