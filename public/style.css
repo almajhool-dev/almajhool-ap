@@ -176,3 +176,11 @@ legend { font-weight: 700; color: var(--navy); padding: 0 8px; }
 .sw.c-f3f7f2 { background: #f3f7f2; }
 .source { background: #fbfaf6; }
 #source-status.error { color: var(--err); }
+
+/* Animated 3D campus background */
+#bg3d { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: -1; display: block; pointer-events: none; }
+html.has-3d #login { background: radial-gradient(800px 420px at 50% 40%, rgba(245,242,236,.55), rgba(245,242,236,0) 70%); }
+html.has-3d .paper, html.has-3d .hero, html.has-3d .login-card { background: rgba(255,253,249,.86); backdrop-filter: blur(10px) saturate(1.15); -webkit-backdrop-filter: blur(10px) saturate(1.15); box-shadow: 0 24px 60px -34px rgba(31,42,68,.45); }
+html.has-3d #history-list li { background: rgba(255,253,249,.9); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+html.has-3d .top { background: rgba(245,242,236,.78); }
+@media (max-width: 640px) { html.has-3d .paper, html.has-3d .hero { background: rgba(255,253,249,.92); } }

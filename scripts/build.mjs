@@ -27,4 +27,7 @@ copyFileSync("node_modules/pdfjs-dist/build/pdf.min.mjs", "public/vendor/pdf.min
 copyFileSync("node_modules/pdfjs-dist/build/pdf.worker.min.mjs", "public/vendor/pdf.worker.min.mjs");
 cpSync("node_modules/pdfjs-dist/cmaps", "public/vendor/cmaps", { recursive: true });
 copyFileSync("node_modules/mammoth/mammoth.browser.min.js", "public/vendor/mammoth.browser.min.js");
+// 4) Animated 3D campus background: bundled + minified with only the parts of three.js it uses.
+const { buildSync } = await import("esbuild");
+buildSync({ entryPoints: ["src/bg.js"], bundle: true, minify: true, format: "esm", target: "es2020", outfile: "public/bg.js", legalComments: "none" });
 console.log("build ready");
