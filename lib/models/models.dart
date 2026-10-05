@@ -440,6 +440,8 @@ class PostComment {
   final String content;
   final DateTime createdAt;
   final Profile? author;
+  final String? parentId; // رد على تعليق
+  final int replyCount;
 
   const PostComment({
     required this.id,
@@ -448,6 +450,8 @@ class PostComment {
     required this.content,
     required this.createdAt,
     this.author,
+    this.parentId,
+    this.replyCount = 0,
   });
 
   factory PostComment.fromMap(Map<String, dynamic> m) => PostComment(
@@ -457,5 +461,7 @@ class PostComment {
         content: (m['content'] ?? '') as String,
         createdAt: _dt(m['created_at']) ?? DateTime.now(),
         author: m['author'] is Map<String, dynamic> ? Profile.fromMap(m['author'] as Map<String, dynamic>) : null,
+        parentId: m['parent_id'] as String?,
+        replyCount: ((m['reply_count'] ?? 0) as num).toInt(),
       );
 }

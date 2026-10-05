@@ -607,7 +607,9 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
       final name = ((p['payload'] is Map ? p['payload']['name'] : p['name']) ?? 'مستخدم').toString();
       if (mounted) showSnack(context, '👀 $name يشاهد بثك من الصفحة الرئيسية');
     }).onBroadcast(event: 'tap', callback: (p) {
-      final n = ((p['payload'] is Map ? p['payload']['n'] : p['n']) as num?)?.toInt() ?? 1;
+      final raw = p['payload'] is Map ? p['payload']['n'] : p['n'];
+      // ما نصدق أرقام كبيرة مزوّرة: كل دفعة تكبيس حدها 30
+      final n = (raw is num ? raw.toInt() : 1).clamp(1, 30);
       _likes += n;
       _likesN.value = _likes;
       for (var i = 0; i < min(n, 6); i++) {

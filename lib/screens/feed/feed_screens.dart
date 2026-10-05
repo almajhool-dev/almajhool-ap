@@ -797,6 +797,9 @@ class _PostScreenState extends State<PostScreen> {
   List<PostComment> _comments = [];
   bool _loading = true;
   bool _sending = false;
+  PostComment? _replyTo; // التعليق اللي ديرد عليه
+  final Set<String> _expanded = {}; // تعليقات مفتوحة ردودها
+  final _focus = FocusNode();
   late final PostsController _ctrl = widget.controller ?? PostsController.local();
 
   @override
@@ -836,14 +839,101 @@ class _PostScreenState extends State<PostScreen> {
     if (t.isEmpty) return;
     setState(() => _sending = true);
     try {
-      await _repo.comment(widget.postId, t);
+      final parent = _replyTo;
+      await _repo.comment(widget.postId, t, parentId: parent?.parentId ?? parent?.id);
       _text.clear();
+      if (parent != null) _expanded.add(parent.parentId ?? parent.id);
+      if (mounted) setState(() => _replyTo = null);
       await _load();
     } catch (e) {
       if (mounted) showSnack(context, friendlyError(e), error: true);
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    _text.dispose();
+    super.dispose();
+  }
+
+  void _startReply(PostComment c) {
+    setState(() => _replyTo = c);
+    final u = c.author?.username;
+    if (c.parentId != null && u != null && u.isNotEmpty && !_text.text.contains('@$u')) {
+      _text.text = '@$u ${_text.text}';
+      _text.selection = TextSelection.collapsed(offset: _text.text.length);
+    }
+    _focus.requestFocus();
+  }
+
+  Future<void> _deleteComment(PostComment c) async {
+    if (!await confirmDialog(context, 'حذف التعليق', 'حذف هذا التعليق؟', ok: 'حذف', danger: true)) return;
+    try {
+      await _repo.deleteComment(c.id);
+      await _load();
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    }
+  }
+
+  Widget _commentTile(PostComment c, bool isAdmin, {required bool reply}) {
+    final canDelete = c.authorId == myId || _post!.authorId == myId || isAdmin;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(reply ? 0 : 12, 6, 12, 0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Avatar(url: c.author?.avatarUrl, name: c.author?.displayName ?? '', size: reply ? 30 : 38),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                GestureDetector(
+                  onLongPress: canDelete ? () => _deleteComment(c) : null,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        NameWithBadge(c.author?.displayName ?? '',
+                            verified: c.author?.verified ?? false,
+                            badgeSize: 13,
+                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5)),
+                        const SizedBox(height: 2),
+                        Text(c.content, style: const TextStyle(fontSize: 14.5)),
+                      ],
+                    ),
+                  ),
+                ),
+                Row(children: [
+                  const SizedBox(width: 10),
+                  Text(Fmt.chatListTime(c.createdAt), style: const TextStyle(fontSize: 11.5)),
+                  TextButton(
+                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact, minimumSize: const Size(40, 30)),
+                    onPressed: () => _startReply(c),
+                    child: const Text('رد', style: TextStyle(fontWeight: FontWeight.w800)),
+                  ),
+                  if (canDelete)
+                    TextButton(
+                      style: TextButton.styleFrom(visualDensity: VisualDensity.compact, minimumSize: const Size(40, 30)),
+                      onPressed: () => _deleteComment(c),
+                      child: const Text('حذف', style: TextStyle(fontSize: 12)),
+                    ),
+                ]),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -875,34 +965,53 @@ class _PostScreenState extends State<PostScreen> {
                             ),
                             if (_comments.isEmpty)
                               const Padding(padding: EdgeInsets.all(16), child: Text('لا توجد تعليقات بعد. كن أول من يعلّق!')),
-                            for (final c in _comments)
-                              ListTile(
-                                leading: Avatar(url: c.author?.avatarUrl, name: c.author?.displayName ?? '', size: 38),
-                                title: NameWithBadge(c.author?.displayName ?? '',
-                                    verified: c.author?.verified ?? false,
-                                    badgeSize: 14,
-                                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                                subtitle: Text(c.content, style: const TextStyle(fontSize: 14.5)),
-                                trailing: Text(Fmt.chatListTime(c.createdAt), style: const TextStyle(fontSize: 11)),
-                                onLongPress: (c.authorId == myId || _post!.authorId == myId || isAdmin)
-                                    ? () async {
-                                        if (!await confirmDialog(context, 'حذف التعليق', 'حذف هذا التعليق؟', ok: 'حذف', danger: true)) {
-                                          return;
-                                        }
-                                        try {
-                                          await _repo.deleteComment(c.id);
-                                          await _load();
-                                        } catch (e) {
-                                          if (context.mounted) showSnack(context, friendlyError(e), error: true);
-                                        }
-                                      }
-                                    : null,
-                              ),
+                            for (final c in _comments.where((x) => x.parentId == null)) ...[
+                              _commentTile(c, isAdmin, reply: false),
+                              Builder(builder: (_) {
+                                final replies = _comments.where((x) => x.parentId == c.id).toList();
+                                if (replies.isEmpty) return const SizedBox.shrink();
+                                final open = _expanded.contains(c.id);
+                                return Padding(
+                                  padding: const EdgeInsetsDirectional.only(start: 56),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      if (open) for (final r in replies) _commentTile(r, isAdmin, reply: true),
+                                      TextButton.icon(
+                                        style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                                        onPressed: () => setState(() => open ? _expanded.remove(c.id) : _expanded.add(c.id)),
+                                        icon: Icon(open ? Icons.expand_less_rounded : Icons.subdirectory_arrow_left_rounded, size: 18),
+                                        label: Text(open ? 'إخفاء الردود' : 'عرض ${replies.length} ${replies.length == 1 ? 'رد' : 'ردود'}',
+                                            style: const TextStyle(fontWeight: FontWeight.w700)),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }),
+                            ],
                             const SizedBox(height: 16),
                           ],
                         ),
                       ),
                     ),
+                    if (_replyTo != null)
+                      Container(
+                        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.08),
+                        padding: const EdgeInsets.fromLTRB(14, 4, 4, 4),
+                        child: Row(children: [
+                          const Icon(Icons.reply_rounded, size: 18),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text('ترد على ${_replyTo!.author?.displayName ?? ''}',
+                                maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
+                          ),
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            icon: const Icon(Icons.close, size: 18),
+                            onPressed: () => setState(() => _replyTo = null),
+                          ),
+                        ]),
+                      ),
                     SafeArea(
                       top: false,
                       child: Padding(
@@ -912,10 +1021,14 @@ class _PostScreenState extends State<PostScreen> {
                             Expanded(
                               child: TextField(
                                 controller: _text,
+                                focusNode: _focus,
                                 minLines: 1,
                                 maxLines: 4,
                                 maxLength: 1000,
-                                decoration: const InputDecoration(hintText: 'اكتب تعليقًا...', counterText: '', isDense: true),
+                                decoration: InputDecoration(
+                                    hintText: _replyTo != null ? 'اكتب ردّك...' : 'اكتب تعليقًا...',
+                                    counterText: '',
+                                    isDense: true),
                               ),
                             ),
                             const SizedBox(width: 8),

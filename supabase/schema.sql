@@ -3748,5 +3748,209 @@ revoke execute on function public._follows_dedup() from public, anon, authentica
 drop trigger if exists aa_follows_dedup on public.follows;
 create trigger aa_follows_dedup before insert on public.follows for each row execute function public._follows_dedup();
 
+-- =====================================================================
+--  الإصدار 29: الرد على التعليقات + سد ثغرات + سرعة
+-- =====================================================================
+
+-- ---------- الردود على التعليقات (مستوى واحد مثل فيسبوك) ----------
+alter table public.post_comments add column if not exists parent_id uuid references public.post_comments(id) on delete cascade;
+alter table public.post_comments add column if not exists reply_count int not null default 0;
+create index if not exists idx_comments_parent on public.post_comments(parent_id, created_at) where parent_id is not null;
+create index if not exists idx_comments_author_created on public.post_comments(author_id, created_at desc);
+
+create or replace function public.before_comment_insert() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare pp uuid; ppar uuid;
+begin
+  if new.parent_id is not null then
+    select post_id, parent_id into pp, ppar from post_comments where id = new.parent_id;
+    if pp is null or pp <> new.post_id then raise exception 'تعليق غير صالح'; end if;
+    -- الرد على رد ينضاف تحت التعليق الأصلي
+    if ppar is not null then new.parent_id := ppar; end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_comment_before on public.post_comments;
+create trigger trg_comment_before before insert on public.post_comments
+  for each row execute function public.before_comment_insert();
+
+create or replace function public.on_comment_change() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare author uuid; n text; pauthor uuid;
+begin
+  if tg_op = 'INSERT' then
+    if (select count(*) from post_comments where author_id = new.author_id
+        and created_at > now() - interval '30 seconds') > 5 then
+      raise exception 'rate_limited: تعليقات كثيرة بسرعة';
+    end if;
+    update posts set comment_count = comment_count + 1 where id = new.post_id returning author_id into author;
+    perform add_capped_xp(new.author_id, 'comment_xp', 3, 30);
+    select display_name into n from profiles where id = new.author_id;
+    if new.parent_id is not null then
+      update post_comments set reply_count = reply_count + 1 where id = new.parent_id returning author_id into pauthor;
+      if pauthor is not null and pauthor <> new.author_id then
+        perform notify_user(pauthor, 'comment_reply', 'رد على تعليقك',
+          coalesce(n, '') || ': ' || left(new.content, 80),
+          jsonb_build_object('post_id', new.post_id, 'comment_id', new.parent_id));
+      end if;
+    end if;
+    if author is not null and author <> new.author_id and author is distinct from pauthor then
+      perform add_capped_xp(author, 'recv_comment_xp', 2, 30);
+      perform notify_user(author, 'post_comment', 'تعليق جديد',
+        coalesce(n, '') || ': ' || left(new.content, 80), jsonb_build_object('post_id', new.post_id));
+    end if;
+    return new;
+  else
+    update posts set comment_count = greatest(0, comment_count - 1) where id = old.post_id;
+    if old.parent_id is not null then
+      update post_comments set reply_count = greatest(0, reply_count - 1) where id = old.parent_id;
+    end if;
+    return old;
+  end if;
+end $$;
+
+-- ---------- ثغرات ----------
+-- الضيف المطرود ما ياخذ رمز بث جديد
+create or replace function public.live_guest_token(p_live uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare me profiles;
+begin
+  if not exists(select 1 from live_guests where live_id = p_live and user_id = auth.uid() and status = 'accepted')
+     or not exists(select 1 from lives where id = p_live and status = 'live')
+     or exists(select 1 from live_bans b join lives l on l.host_id = b.host_id where l.id = p_live and b.user_id = auth.uid()) then
+    raise exception 'لم تتم الموافقة بعد';
+  end if;
+  select * into me from profiles where id = auth.uid();
+  return jsonb_build_object('url', _lk_url(), 'token', _lk_token(auth.uid()::text, me.display_name, p_live::text, true));
+end $$;
+grant execute on function public.live_guest_token(uuid) to authenticated;
+
+create or replace function public._live_ban_guest() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  update live_guests g set status = 'left', updated_at = now()
+    from lives l where l.id = g.live_id and l.host_id = new.host_id and g.user_id = new.user_id and g.status <> 'left';
+  return new;
+end $$;
+drop trigger if exists trg_live_ban_guest on public.live_bans;
+create trigger trg_live_ban_guest after insert on public.live_bans for each row execute function public._live_ban_guest();
+
+-- إضافة أعضاء للمجموعات: حد وإغراق
+create or replace function public._members_guard() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is not null and new.user_id <> auth.uid() and not is_admin() then
+    perform _rate('group_add', 100, 3600);
+    if (select count(*) from conversation_members where conversation_id = new.conversation_id) >= 500 then
+      raise exception 'المجموعة ممتلئة (500 عضو)';
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_members_guard on public.conversation_members;
+create trigger trg_members_guard before insert on public.conversation_members
+  for each row execute function public._members_guard();
+
+-- رسالة «انضم» بالبث مرة وحدة كل 10 دقايق لكل شخص
+create or replace function public._live_join_dedupe() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.kind = 'join' and exists(select 1 from live_comments where live_id = new.live_id and user_id = new.user_id
+       and kind = 'join' and created_at > now() - interval '10 minutes') then
+    return null;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_live_join_dedupe on public.live_comments;
+create trigger trg_live_join_dedupe before insert on public.live_comments
+  for each row execute function public._live_join_dedupe();
+create index if not exists live_comments_user_created_idx on public.live_comments(user_id, created_at desc);
+
+-- تعديل الرسائل وتثبيتها
+create or replace function public.edit_message(mid uuid, new_content text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update messages set content = new_content, edited_at = now()
+  where id = mid and sender_id = auth.uid() and type = 'text' and not deleted and can_send(conversation_id);
+  if not found then raise exception 'لا يمكن تعديل هذه الرسالة'; end if;
+end $$;
+
+create or replace function public.toggle_pin(mid uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare conv uuid;
+begin
+  select conversation_id into conv from messages where id = mid;
+  if not is_member(conv) or ((select type from conversations where id = conv) = 'group'
+       and member_role(conv) not in ('owner','admin')) then
+    raise exception 'غير مسموح';
+  end if;
+  update messages set pinned = not pinned where id = mid and not deleted;
+end $$;
+
+-- روابط الصور لازم تكون من سيرفر التطبيق (تمنع تتبّع عناوين المستخدمين)
+do $$
+declare pfx text := 'https://smjkxsqvdpywumghvnfv.supabase.co/storage/v1/object/public/%';
+begin
+  begin alter table public.profiles add constraint avatar_url_chk check (avatar_url is null or avatar_url like pfx) not valid;
+  exception when duplicate_object then null; when others then raise notice 'avatar chk: %', sqlerrm; end;
+  begin alter table public.posts add constraint image_url_chk check (image_url is null or image_url like pfx) not valid;
+  exception when duplicate_object then null; when others then raise notice 'post chk: %', sqlerrm; end;
+  begin alter table public.stories add constraint media_url_chk check (media_url is null or media_url like pfx) not valid;
+  exception when duplicate_object then null; when others then raise notice 'story chk: %', sqlerrm; end;
+  begin alter table public.lives add constraint cover_url_chk check (cover_url is null or cover_url like pfx) not valid;
+  exception when duplicate_object then null; when others then raise notice 'live chk: %', sqlerrm; end;
+  begin alter table public.live_guests add constraint guest_cover_chk check (cover_url is null or cover_url like pfx) not valid;
+  exception when duplicate_object then null; when others then raise notice 'guest chk: %', sqlerrm; end;
+end $$;
+
+-- أنواع الملفات المسموحة بالتخزين العام
+update storage.buckets set allowed_mime_types =
+  array['image/jpeg','image/png','image/gif','image/webp','video/mp4'] where id = 'posts';
+update storage.buckets set allowed_mime_types =
+  array['image/jpeg','image/png','image/gif','image/webp'] where id = 'avatars';
+
+-- ---------- سرعة ----------
+create or replace function public.mark_all_delivered()
+returns void language sql security definer set search_path = public as $$
+  update conversation_members m set last_delivered_at = now() from conversations c
+   where m.user_id = auth.uid() and c.id = m.conversation_id and m.last_delivered_at < c.last_message_at;
+  update profiles set last_seen = now() where id = auth.uid() and last_seen < now() - interval '30 seconds';
+$$;
+
+create index if not exists idx_messages_reply_to on public.messages(reply_to) where reply_to is not null;
+create index if not exists idx_messages_pinned on public.messages(conversation_id, created_at desc) where pinned and not deleted;
+create index if not exists idx_notif_like_dedupe on public.notifications(user_id, (data->>'post_id'), (data->>'by')) where type = 'post_like';
+create index if not exists idx_profiles_last_seen on public.profiles(last_seen desc);
+do $$ begin
+  create extension if not exists pg_trgm with schema extensions;
+  create index if not exists idx_profiles_username_trgm on public.profiles using gin (username extensions.gin_trgm_ops);
+  create index if not exists idx_profiles_dname_trgm on public.profiles using gin (display_name extensions.gin_trgm_ops);
+exception when others then raise notice 'trgm: %', sqlerrm;
+end $$;
+
+-- محاولات رمز الاسترداد الغلط تنحسب (قبل كانت تنمسح مع الخطأ فالتخمين بلا حد)
+create or replace function public.reset_password_with_code(p_username text, p_code text, p_new_password text)
+returns text language plpgsql security definer set search_path = public, extensions, auth as $$
+declare un text := lower(trim(coalesce(p_username, ''))); uid uuid; h text; em text;
+  code text := upper(regexp_replace(coalesce(p_code, ''), '[^A-Za-z0-9]', '', 'g'));
+begin
+  if char_length(coalesce(p_new_password, '')) < 8 then raise exception 'كلمة المرور 8 أحرف على الأقل'; end if;
+  delete from recovery_attempts where at < now() - interval '1 day';
+  if (select count(*) from recovery_attempts where username = un and at > now() - interval '1 hour') >= 5 then
+    raise exception 'rate_limited: محاولات كثيرة، حاول بعد ساعة';
+  end if;
+  insert into recovery_attempts(username) values (un);
+  select p.id into uid from profiles p where p.username = un and not p.is_banned;
+  select code_hash into h from recovery_codes where user_id = uid;
+  if uid is null or h is null or crypt(code, h) <> h then
+    return null; -- بدون خطأ حتى تنحفظ المحاولة
+  end if;
+  update auth.users set encrypted_password = crypt(p_new_password, gen_salt('bf')), updated_at = now()
+    where id = uid returning email into em;
+  delete from recovery_codes where user_id = uid;
+  perform _kill_sessions(uid);
+  return em;
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

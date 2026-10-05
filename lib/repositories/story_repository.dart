@@ -65,15 +65,15 @@ class StoryRepository {
         .from('stories')
         .select('*, $_author')
         .gt('expires_at', DateTime.now().toUtc().toIso8601String())
-        .order('created_at')
+        .order('created_at', ascending: false)
         .limit(300);
-    final stories = rows.map(Story.fromMap).toList();
+    final stories = rows.map(Story.fromMap).toList().reversed.toList();
     if (stories.isEmpty) return [];
     final seen = await supa
         .from('story_views')
         .select('story_id')
         .eq('viewer_id', myId!)
-        .inFilter('story_id', stories.map((s) => s.id).toList());
+        .gte('viewed_at', DateTime.now().toUtc().subtract(const Duration(hours: 25)).toIso8601String());
     final seenIds = seen.map((e) => e['story_id'] as String).toSet();
     final groups = <String, StoryGroup>{};
     for (final s in stories) {

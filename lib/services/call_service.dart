@@ -62,7 +62,7 @@ class CallService {
     if (_inbox != null) return;
     _inbox = supa
         .channel(inboxTopic(uid))
-        .onBroadcast(event: 'invite', callback: (p) => _onInvite(unwrapBroadcast(p)))
+        .onBroadcast(event: 'invite', callback: (p) => _verifiedInvite(unwrapBroadcast(p)))
         .subscribe();
     // مسار ثانٍ: إشعار من قاعدة البيانات عند إنشاء مكالمة لي (إذا ضاعت الدعوة الفورية)
     _dbInbox = supa
@@ -76,7 +76,7 @@ class CallService {
         )
         .subscribe();
     // مسار ثالث: فحص دوري خفيف للمكالمات الواردة
-    _pendingTimer = Timer.periodic(const Duration(seconds: 6), (_) => checkPending());
+    _pendingTimer = Timer.periodic(const Duration(seconds: 15), (_) => checkPending());
     checkPending();
   }
 
@@ -130,6 +130,24 @@ class CallService {
       await Future<void>.delayed(const Duration(milliseconds: 600));
     } finally {
       await supa.removeChannel(ch);
+    }
+  }
+
+  /// الدعوة الفورية ممكن أي أحد يزوّرها، فما نصدّقها: نتأكد من قاعدة البيانات (المحمية) قبل الرنين.
+  Future<void> _verifiedInvite(Map<String, dynamic> p) async {
+    final id = p['call_id'];
+    if (id is! String || _seen.contains(id) || currentIncoming == id) return;
+    for (var i = 0; i < 3; i++) {
+      try {
+        final row = await supa.from('call_sessions').select().eq('id', id).maybeSingle();
+        if (row != null) {
+          if (row['status'] == 'ringing' && row['callee'] == myId && !_seen.contains(id)) {
+            await _onDbCall(Map<String, dynamic>.from(row));
+          }
+          return;
+        }
+      } catch (_) {}
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
     }
   }
 

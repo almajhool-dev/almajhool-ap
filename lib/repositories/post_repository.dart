@@ -123,14 +123,15 @@ class PostRepository {
         .select('*, $_commentAuthor')
         .eq('post_id', postId)
         .order('created_at')
-        .limit(200);
+        .limit(500);
     return r.map(PostComment.fromMap).toList();
   }
 
-  Future<void> comment(String postId, String content) => supa.from('post_comments').insert({
+  Future<void> comment(String postId, String content, {String? parentId}) => supa.from('post_comments').insert({
         'post_id': postId,
         'author_id': myId!,
         'content': content.trim(),
+        if (parentId != null) 'parent_id': parentId,
       });
 
   Future<void> deleteComment(String id) => supa.rpc('delete_comment', params: {'cid': id});

@@ -53,7 +53,8 @@ class AuthRepository {
       'p_code': code.trim(),
       'p_new_password': newPassword,
     });
-    await signIn(email as String, newPassword);
+    if (email is! String) throw Exception('اسم المستخدم أو رمز الاسترداد غير صحيح');
+    await signIn(email, newPassword);
   }
 
   Future<String> createRecoveryCode() async => (await supa.rpc('create_recovery_code')) as String;

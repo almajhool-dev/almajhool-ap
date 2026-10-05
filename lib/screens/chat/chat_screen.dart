@@ -226,7 +226,8 @@ class _ChatScreenState extends State<ChatScreen> {
           event: 'typing',
           callback: (raw) {
             final payload = unwrapBroadcast(raw);
-            final uid = payload['user_id'] as String?;
+            final v = payload['user_id'];
+            final uid = v is String ? v : null;
             if (uid == null || uid == myId || !mounted) return;
             _typing[uid]?.cancel();
             _typing[uid] = Timer(const Duration(seconds: 3), () {
