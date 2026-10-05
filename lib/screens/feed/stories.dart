@@ -1,6 +1,12 @@
 import 'dart:async';
 
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart';
+import 'package:image/image.dart' as img;
+import 'package:video_player/video_player.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -48,7 +54,7 @@ class StoryBarState extends State<StoryBar> {
   }
 
   Future<void> _add() async {
-    final ok = await showModalBottomSheet<bool>(
+    final choice = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
       builder: (c) => SafeArea(
@@ -58,30 +64,45 @@ class StoryBarState extends State<StoryBar> {
             ListTile(
               leading: const Icon(Icons.photo_library_rounded),
               title: const Text('صورة من المعرض'),
-              onTap: () => Navigator.pop(c, true),
+              onTap: () => Navigator.pop(c, 'gallery'),
             ),
             ListTile(
               leading: const Icon(Icons.photo_camera_rounded),
               title: const Text('التقاط صورة'),
-              onTap: () => Navigator.pop(c, false),
+              onTap: () => Navigator.pop(c, 'camera'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.video_library_rounded),
+              title: const Text('مقطع فيديو من المعرض'),
+              subtitle: const Text('لحد دقيقة'),
+              onTap: () => Navigator.pop(c, 'video'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.videocam_rounded),
+              title: const Text('تصوير فيديو'),
+              onTap: () => Navigator.pop(c, 'video_cam'),
             ),
             ListTile(
               leading: const Icon(Icons.text_fields_rounded),
               title: const Text('قصة نصية'),
-              onTap: () => Navigator.pop(c, null),
+              onTap: () => Navigator.pop(c, 'text'),
             ),
           ],
         ),
       ),
     );
-    if (!mounted) return;
+    if (!mounted || choice == null) return;
     try {
-      if (ok == null) {
+      if (choice == 'text') {
         final done = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => const _TextStoryComposer()));
         if (done == true) await reload();
         return;
       }
-      final x = await ImagePicker().pickImage(source: ok ? ImageSource.gallery : ImageSource.camera);
+      if (choice == 'video' || choice == 'video_cam') {
+        await _addVideo(choice == 'video' ? ImageSource.gallery : ImageSource.camera);
+        return;
+      }
+      final x = await ImagePicker().pickImage(source: choice == 'gallery' ? ImageSource.gallery : ImageSource.camera);
       if (x == null || !mounted) return;
       final raw = await compressImage(await x.readAsBytes());
       if (!mounted) return;
@@ -94,6 +115,36 @@ class StoryBarState extends State<StoryBar> {
     } catch (e) {
       if (mounted) showSnack(context, friendlyError(e), error: true);
     }
+  }
+
+  Future<void> _addVideo(ImageSource src) async {
+    final x = await ImagePicker().pickVideo(source: src, maxDuration: const Duration(seconds: 60));
+    if (x == null || !mounted) return;
+    final f = File(x.path);
+    final size = await f.length();
+    if (size > 50 * 1024 * 1024) {
+      if (mounted) showSnack(context, 'المقطع كبير، لازم يكون أقل من 50 ميگا', error: true);
+      return;
+    }
+    // نعرف طول المقطع
+    final c = VideoPlayerController.file(f);
+    var ms = 0;
+    try {
+      await c.initialize();
+      ms = c.value.duration.inMilliseconds;
+    } catch (_) {}
+    await c.dispose();
+    if (ms > 61000) {
+      if (mounted) showSnack(context, 'المقطع أطول من دقيقة، اختار مقطع أقصر', error: true);
+      return;
+    }
+    if (ms <= 0) ms = 15000;
+    if (!mounted) return;
+    showSnack(context, 'جارٍ رفع المقطع... 🎬');
+    final poster = await compute(_videoPoster, 0);
+    await _repo.addVideo(f, ms, poster);
+    if (mounted) showSnack(context, 'تم نشر قصتك ✅ (تبقى 24 ساعة)');
+    await reload();
   }
 
   Future<void> _open(int index) async {
@@ -262,6 +313,7 @@ class _StoryViewerState extends State<StoryViewer> with SingleTickerProviderStat
           if (st == AnimationStatus.completed) _next();
         });
 
+  final _paused = ValueNotifier<bool>(false);
   StoryGroup get _group => widget.groups[_g];
   Story get _story => _group.stories[_s];
   bool get _mine => _group.user.id == myId;
@@ -278,12 +330,21 @@ class _StoryViewerState extends State<StoryViewer> with SingleTickerProviderStat
   @override
   void dispose() {
     _anim.dispose();
+    _paused.dispose();
     super.dispose();
   }
 
   void _show() {
-    _anim.forward(from: 0);
     final st = _story;
+    if (st.videoUrl != null) {
+      // الفيديو يبدأ العد من يشتغل فعلًا
+      _anim.duration = Duration(milliseconds: st.durationMs ?? 15000);
+      _anim.value = 0;
+      _anim.stop();
+    } else {
+      _anim.duration = const Duration(seconds: 6);
+      _anim.forward(from: 0);
+    }
     if (!st.seen && !_mine) {
       st.seen = true;
       _repo.markSeen(st.id).catchError((_) {});
@@ -316,6 +377,7 @@ class _StoryViewerState extends State<StoryViewer> with SingleTickerProviderStat
 
   Future<void> _viewers() async {
     _anim.stop();
+    _paused.value = true;
     final list = await _repo.viewers(_story.id).catchError((_) => <Profile>[]);
     if (!mounted) return;
     await showModalBottomSheet(
@@ -337,6 +399,7 @@ class _StoryViewerState extends State<StoryViewer> with SingleTickerProviderStat
         ),
       ),
     );
+    _paused.value = false;
     if (mounted) _anim.forward();
   }
 
@@ -368,8 +431,14 @@ class _StoryViewerState extends State<StoryViewer> with SingleTickerProviderStat
     return Scaffold(
       backgroundColor: Colors.black,
       body: GestureDetector(
-        onLongPressStart: (_) => _anim.stop(),
-        onLongPressEnd: (_) => _anim.forward(),
+        onLongPressStart: (_) {
+          _anim.stop();
+          _paused.value = true;
+        },
+        onLongPressEnd: (_) {
+          _paused.value = false;
+          _anim.forward();
+        },
         onVerticalDragEnd: (d) {
           if ((d.primaryVelocity ?? 0) > 300) Navigator.pop(context);
         },
@@ -393,6 +462,16 @@ class _StoryViewerState extends State<StoryViewer> with SingleTickerProviderStat
                 child: Text(st.content ?? '',
                     textAlign: TextAlign.center,
                     style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w800, height: 1.4)),
+              )
+            else if (st.videoUrl != null)
+              _StoryVideo(
+                key: ValueKey(st.id),
+                url: st.videoUrl!,
+                poster: st.mediaUrl,
+                paused: _paused,
+                onReady: () {
+                  if (mounted && !_paused.value) _anim.forward();
+                },
               )
             else
               Center(
@@ -570,4 +649,85 @@ class _TextStoryComposerState extends State<_TextStoryComposer> {
       ),
     );
   }
+}
+
+
+/// مشغّل فيديو القصة: يشتغل تلقائيًا بالصوت، ويوقف مع الضغط المطوّل.
+class _StoryVideo extends StatefulWidget {
+  final String url;
+  final String? poster;
+  final ValueNotifier<bool> paused;
+  final VoidCallback onReady;
+  const _StoryVideo({super.key, required this.url, this.poster, required this.paused, required this.onReady});
+  @override
+  State<_StoryVideo> createState() => _StoryVideoState();
+}
+
+class _StoryVideoState extends State<_StoryVideo> {
+  late final VideoPlayerController _c = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+  bool _ready = false;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.paused.addListener(_onPause);
+    _c.initialize().then((_) {
+      if (!mounted) return;
+      setState(() => _ready = true);
+      if (!widget.paused.value) _c.play();
+      widget.onReady();
+    }).catchError((_) {
+      if (mounted) setState(() => _failed = true);
+      widget.onReady();
+    });
+  }
+
+  void _onPause() {
+    if (!_ready) return;
+    widget.paused.value ? _c.pause() : _c.play();
+  }
+
+  @override
+  void dispose() {
+    widget.paused.removeListener(_onPause);
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_ready) {
+      return Center(child: AspectRatio(aspectRatio: _c.value.aspectRatio, child: VideoPlayer(_c)));
+    }
+    return Stack(fit: StackFit.expand, children: [
+      if (widget.poster != null) CachedNetworkImage(imageUrl: widget.poster!, fit: BoxFit.contain),
+      Center(
+        child: _failed
+            ? const Text('تعذّر تشغيل المقطع', style: TextStyle(color: Colors.white))
+            : const CircularProgressIndicator(color: Colors.white),
+      ),
+    ]);
+  }
+}
+
+/// صورة غلاف بسيطة لقصة الفيديو (تظهر بالنسخ القديمة اللي ما تشغّل فيديو).
+Uint8List _videoPoster(int _) {
+  final im = img.Image(width: 540, height: 960);
+  for (var y = 0; y < im.height; y++) {
+    final t = y / im.height;
+    final r = (108 + (0 - 108) * t).round(), g = (60 + (151 - 60) * t).round(), b = (240 + (178 - 240) * t).round();
+    for (var x = 0; x < im.width; x++) {
+      im.setPixelRgb(x, y, r, g, b);
+    }
+  }
+  img.fillCircle(im, x: 270, y: 480, radius: 90, color: img.ColorRgba8(255, 255, 255, 230));
+  // مثلث التشغيل
+  for (var y = 430; y <= 530; y++) {
+    final half = 50 - (y - 480).abs();
+    for (var x = 245; x <= 245 + half * 1.6; x++) {
+      im.setPixelRgb(x.round(), y, 108, 60, 240);
+    }
+  }
+  return Uint8List.fromList(img.encodeJpg(im, quality: 80));
 }

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -13,6 +14,8 @@ class Story {
   final String? mediaUrl;
   final String? content;
   final int? bgColor;
+  final String? videoUrl; // قصة فيديو
+  final int? durationMs;
   final DateTime createdAt;
   final Profile? author;
   bool seen;
@@ -24,6 +27,8 @@ class Story {
     this.mediaUrl,
     this.content,
     this.bgColor,
+    this.videoUrl,
+    this.durationMs,
     required this.createdAt,
     this.author,
     this.seen = false,
@@ -36,6 +41,8 @@ class Story {
         mediaUrl: m['media_url'] as String?,
         content: m['content'] as String?,
         bgColor: (m['bg_color'] as num?)?.toInt(),
+        videoUrl: m['video_url'] as String?,
+        durationMs: (m['duration_ms'] as num?)?.toInt(),
         createdAt: DateTime.tryParse('${m['created_at']}')?.toLocal() ?? DateTime.now(),
         author: m['author'] is Map<String, dynamic> ? Profile.fromMap(m['author'] as Map<String, dynamic>) : null,
       );
@@ -91,6 +98,22 @@ class StoryRepository {
         fileOptions: const FileOptions(contentType: 'image/jpeg'));
     final url = supa.storage.from('posts').getPublicUrl(path);
     await supa.from('stories').insert({'user_id': myId!, 'kind': 'image', 'media_url': url});
+  }
+
+  /// قصة فيديو: الفيديو + صورة غلاف (تظهر للنسخ القديمة من التطبيق).
+  Future<void> addVideo(File video, int durationMs, Uint8List poster) async {
+    final id = const Uuid().v4();
+    final vPath = '${myId!}/stories/$id.mp4';
+    final pPath = '${myId!}/stories/$id.jpg';
+    await supa.storage.from('posts').upload(vPath, video, fileOptions: const FileOptions(contentType: 'video/mp4'));
+    await supa.storage.from('posts').uploadBinary(pPath, poster, fileOptions: const FileOptions(contentType: 'image/jpeg'));
+    await supa.from('stories').insert({
+      'user_id': myId!,
+      'kind': 'image',
+      'media_url': supa.storage.from('posts').getPublicUrl(pPath),
+      'video_url': supa.storage.from('posts').getPublicUrl(vPath),
+      'duration_ms': durationMs.clamp(500, 61000),
+    });
   }
 
   Future<void> addText(String text, int bg) =>

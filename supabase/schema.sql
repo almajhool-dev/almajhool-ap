@@ -1151,8 +1151,8 @@ end $$;
 
 -- صورة المنشورات: bucket عام، الكتابة في مجلد المستخدم فقط
 insert into storage.buckets (id, name, public, file_size_limit)
-  values ('posts', 'posts', true, 10485760)
-  on conflict (id) do update set public = true, file_size_limit = 10485760;
+  values ('posts', 'posts', true, 52428800)
+  on conflict (id) do update set public = true, file_size_limit = greatest(coalesce(storage.buckets.file_size_limit, 0), 52428800);
 drop policy if exists posts_read on storage.objects;
 create policy posts_read on storage.objects for select using (bucket_id = 'posts');
 drop policy if exists posts_write on storage.objects;
@@ -3651,6 +3651,23 @@ begin
   return true;
 end $$;
 grant execute on function public.ci_release_pause(text, boolean) to anon;
+
+-- =====================================================================
+--  الإصدار 26: قصص فيديو
+--  media_url يبقى صورة (للنسخ القديمة تشوف صورة بدل ما تخرب)، والفيديو بـ video_url
+-- =====================================================================
+alter table public.stories add column if not exists video_url text;
+alter table public.stories add column if not exists duration_ms int;
+do $$ begin
+  alter table public.stories drop constraint if exists stories_video_url_check;
+  alter table public.stories add constraint stories_video_url_check check (
+    video_url is null or video_url like 'https://smjkxsqvdpywumghvnfv.supabase.co/storage/v1/object/public/posts/%');
+  alter table public.stories drop constraint if exists stories_duration_check;
+  alter table public.stories add constraint stories_duration_check check (duration_ms is null or duration_ms between 500 and 61000);
+exception when others then raise notice 'stories video: %', sqlerrm;
+end $$;
+-- مقاطع القصص لحد 50 ميگا
+update storage.buckets set file_size_limit = 52428800 where id = 'posts' and coalesce(file_size_limit, 0) < 52428800;
 
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
