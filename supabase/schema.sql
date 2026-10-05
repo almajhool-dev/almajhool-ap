@@ -3630,5 +3630,27 @@ language sql stable security definer set search_path = public as $$
 $$;
 grant execute on function public.latest_release() to anon, authenticated;
 
+-- =====================================================================
+--  الإصدار 25: التحديثات ما تطلع للمستخدمين إلا لمن صاحب التطبيق يقرر
+-- =====================================================================
+alter table public.app_release add column if not exists paused boolean not null default true;
+
+create or replace function public.latest_release() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select case when paused then null
+    else jsonb_build_object('build', build, 'url', url, 'notes', notes) end
+  from app_release where id = 1;
+$$;
+grant execute on function public.latest_release() to anon, authenticated;
+
+create or replace function public.ci_release_pause(p_gh text, p_paused boolean) returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _gh_verify(p_gh) then return false; end if;
+  update app_release set paused = coalesce(p_paused, true), updated_at = now() where id = 1;
+  return true;
+end $$;
+grant execute on function public.ci_release_pause(text, boolean) to anon;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
