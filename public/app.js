@@ -114,7 +114,7 @@ function readForm() {
   const data = {
     title: v("title"), lang: form.lang.value, pages: Number(form.pages.value), format: radio("format"),
     students, supervisor: v("supervisor"), university: v("university"), college: v("college"), department: v("department"),
-    mode: radio("mode"), topicColor: radio("topicColor"), images: form.images.checked,
+    mode: radio("mode"), topicColor: radio("topicColor"),
   };
   if (data.mode === "advanced") {
     Object.assign(data, { palette: radio("palette"), border: radio("border"), background: radio("background") });

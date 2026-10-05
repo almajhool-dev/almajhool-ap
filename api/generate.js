@@ -2,7 +2,8 @@
 import { route, json, requireUser, requireSameOrigin, rateLimit, clientIp, HttpError, sql } from "./_lib.js";
 import { setOidcToken } from "./_ai.js";
 import { buildContent, LANGS } from "./_content.js";
-import { buildDocx, buildPdf, buildPptx, buildXlsx } from "./_build.js";
+import { buildDocx, buildPdf, buildPptx, buildXlsx, chapterLabel } from "./_build.js";
+import { ensureImages } from "./_diagram.js";
 import { removeBackground } from "./_logo.js";
 import { ensureTable } from "./style.js";
 
@@ -90,7 +91,6 @@ export const POST = route(async (request) => {
     college: clean(body.college, 160, { label: "الكلية" }),
     department: clean(body.department, 120, { label: "القسم" }),
     lang, format, pages, mode, theme, style,
-    images: body.images !== false,
     fmt: style?.format || null,
   };
   const logo = await processLogo(body.logo);
@@ -104,6 +104,8 @@ export const POST = route(async (request) => {
     return json({ error: "خدمة الكتابة مزدحمة الآن، حاول مرة أخرى بعد دقيقة.", detail: (e.details || [e.message]).slice(-6) }, 503);
   }
   report.logo = logo;
+  // Images are mandatory: any chapter without a suitable photo gets a drawn diagram.
+  try { await ensureImages(report, (i) => chapterLabel(report, i)); } catch (e) { console.error("diagram", e); }
   const file = await FORMATS[format].build(report);
   await sql`INSERT INTO reports (user_id, title, lang, format, pages) VALUES (${user.id}, ${input.title}, ${lang}, ${format}, ${pages})`;
 
@@ -113,7 +115,7 @@ export const POST = route(async (request) => {
       "Content-Type": FORMATS[format].mime,
       "Content-Disposition": `attachment; filename="report.${format}"; filename*=UTF-8''${encodeURIComponent(name)}`,
       "Cache-Control": "no-store",
-      "X-Gen-Stats": JSON.stringify({ ms: report.stats.ms, fail: report.stats.fail.length, refs: report.references.length, images: report.chapters.filter((c) => c.image).length }).slice(0, 900),
+      "X-Gen-Stats": JSON.stringify({ ms: report.stats.ms, fail: report.stats.fail.length, refs: report.references.length, images: report.chapters.filter((c) => c.image).length, diagrams: report.chapters.filter((c) => c.image?.diagram).length }).slice(0, 900),
     },
   });
 });

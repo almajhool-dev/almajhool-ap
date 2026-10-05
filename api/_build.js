@@ -11,6 +11,7 @@ import {
 import PptxGenJS from "pptxgenjs";
 import ExcelJS from "exceljs";
 import { PDFDocument, rgb } from "pdf-lib";
+import { launchBrowser, lockedPage } from "./_browser.js";
 
 const INK = "111111";
 const GREY = "5B6475";
@@ -23,7 +24,7 @@ export function academicYear() {
   const y = d.getUTCFullYear();
   return d.getUTCMonth() >= 8 ? `${y}–${y + 1}` : `${y - 1}–${y}`;
 }
-const chapterLabel = (r, i) => {
+export const chapterLabel = (r, i) => {
   const word = r.chapterWord || r.L.chapter;
   return r.lang === "ar" ? `${word} ${AR_ORD[i]}` : `${word} ${i + 1}`;
 };
@@ -104,19 +105,22 @@ export async function buildDocx(r) {
   // ---- Body ----
   const main = [h1(r.L.intro), ...r.intro.map(body)];
   let fig = 0;
+  const pushFigure = (c) => {
+    fig++;
+    const w = 520, h = Math.min(330, Math.round((c.image.height / c.image.width) * w));
+    main.push(new Paragraph({ alignment: center, spacing: { before: 160, after: 40 }, keepNext: true, children: [new ImageRun({ type: "jpg", data: c.image.data, transformation: { width: Math.round(h * c.image.width / c.image.height), height: h } })] }));
+    main.push(para(`${figLabel(r, fig)}: ${c.title}`, { align: center, size: baseSize - 4, color: GREY, after: 20, line: 260 }));
+    main.push(para(c.image.credit, { rtl: !!c.image.diagram && rtl, align: center, size: 16, color: GREY, after: 200, line: 240 }));
+  };
   r.chapters.forEach((c, ci) => {
     main.push(h1(`${chapterLabel(r, ci)}: ${c.title}`));
+    const early = c.image && !(c.sections[0]?.paragraphs || []).length;
+    if (early) pushFigure(c);
     c.sections.forEach((s, si) => {
       main.push(h2(`${secNum(ci, si)} ${s.title}`));
       (s.paragraphs || []).forEach((t, pi) => {
         main.push(body(t));
-        if (si === 0 && pi === 0 && c.image) {
-          fig++;
-          const w = 520, h = Math.min(330, Math.round((c.image.height / c.image.width) * w));
-          main.push(new Paragraph({ alignment: center, spacing: { before: 160, after: 40 }, keepNext: true, children: [new ImageRun({ type: "jpg", data: c.image.data, transformation: { width: Math.round(h * c.image.width / c.image.height), height: h } })] }));
-          main.push(para(`${figLabel(r, fig)}: ${c.title}`, { align: center, size: baseSize - 4, color: GREY, after: 20, line: 260 }));
-          main.push(para(c.image.credit, { rtl: false, align: center, size: 16, color: GREY, after: 200, line: 240 }));
-        }
+        if (si === 0 && pi === 0 && c.image && !early) pushFigure(c);
       });
     });
   });
@@ -159,7 +163,7 @@ const readFont = (file) => {
   throw new Error("font missing: " + file);
 };
 let fontCss;
-function fonts() {
+export function fontFaces() {
   if (fontCss) return fontCss;
   const f = (file) => `url(data:font/woff2;base64,${readFont(file).toString("base64")}) format("woff2")`;
   fontCss = [
@@ -180,7 +184,7 @@ function pdfCss(r) {
   const body = r.rtl ? `"Amiri", serif` : `"Times New Roman", "Amiri", serif`;
   const size = f.sizePt ? `${f.sizePt + (r.rtl ? 1.5 : 0)}pt` : r.rtl ? "15pt" : "12pt";
   const lh = f.lineSpacing ? Math.max(1.3, f.lineSpacing * 1.2) : r.rtl ? 1.75 : 1.6;
-  return `${fonts()}
+  return `${fontFaces()}
   @page { size: A4; margin: ${mc(m.top)} ${mc(m.right)} ${mc(m.bottom)} ${mc(m.left)}; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
@@ -194,6 +198,7 @@ function pdfCss(r) {
   figure img { max-width: 100%; max-height: 9cm; border-radius: 2pt; }
   figcaption { font-size: 10.5pt; color: #${GREY}; line-height: 1.4; margin-top: 4pt; }
   figcaption small { display: block; font-size: 8pt; direction: ltr; }
+  figcaption small.d { direction: inherit; }
   .refs p { text-indent: 0; text-align: start; font-size: ${r.rtl ? "13pt" : "11pt"}; padding-inline-start: 1cm; text-indent: -1cm; word-break: break-word; }
   .refs p.ltr { direction: ltr; text-align: left; font-family: "Times New Roman", "Amiri", serif; }
   .toc div { margin: 3pt 0; }
@@ -237,15 +242,10 @@ function bodyHtml(r) {
   let fig = 0;
   r.chapters.forEach((c, ci) => {
     toc += `<div class="c">${esc(chapterLabel(r, ci))}: ${esc(c.title)}</div>` + c.sections.map((s, si) => `<div class="s">${secNum(ci, si)}&nbsp;&nbsp;${esc(s.title)}</div>`).join("");
-    main += `<h1>${esc(chapterLabel(r, ci))}: ${esc(c.title)}</h1>` + c.sections.map((s, si) => {
-      const paras = (s.paragraphs || []).map((t, pi) => {
-        let html = `<p>${esc(t)}</p>`;
-        if (si === 0 && pi === 0 && c.image) {
-          fig++;
-          html += `<figure><img src="data:image/jpeg;base64,${c.image.data.toString("base64")}" alt=""><figcaption>${esc(figLabel(r, fig))}: ${esc(c.title)}<small>${esc(c.image.credit)}</small></figcaption></figure>`;
-        }
-        return html;
-      }).join("");
+    const figure = () => { fig++; return `<figure><img src="data:image/jpeg;base64,${c.image.data.toString("base64")}" alt=""><figcaption>${esc(figLabel(r, fig))}: ${esc(c.title)}<small${c.image.diagram ? ' class="d"' : ""}>${esc(c.image.credit)}</small></figcaption></figure>`; };
+    const early = c.image && !(c.sections[0]?.paragraphs || []).length;
+    main += `<h1>${esc(chapterLabel(r, ci))}: ${esc(c.title)}</h1>${early ? figure() : ""}` + c.sections.map((s, si) => {
+      const paras = (s.paragraphs || []).map((t, pi) => `<p>${esc(t)}</p>${si === 0 && pi === 0 && c.image && !early ? figure() : ""}`).join("");
       return `<h2>${secNum(ci, si)} ${esc(s.title)}</h2>${paras}`;
     }).join("");
   });
@@ -256,19 +256,10 @@ function bodyHtml(r) {
   <h1 class="first">${esc(r.L.toc)}</h1><div class="toc">${toc}</div>${main}</body></html>`;
 }
 
-export async function buildPdf(r, { browserFactory } = {}) {
-  let browser;
-  if (browserFactory) browser = await browserFactory();
-  else {
-    const chromium = (await import("@sparticuz/chromium")).default;
-    const puppeteer = (await import("puppeteer-core")).default;
-    browser = await puppeteer.launch({ args: chromium.args, executablePath: await chromium.executablePath(), headless: true });
-  }
+export async function buildPdf(r) {
+  const browser = await launchBrowser();
   try {
-    const page = await browser.newPage();
-    await page.setJavaScriptEnabled(false); // generated content is static; no scripts may run
-    await page.setRequestInterception(true);
-    page.on("request", (req) => (req.url().startsWith("data:") || req.url() === "about:blank" ? req.continue() : req.abort()));
+    const page = await lockedPage(browser); // generated content is static; no scripts or network
     const render = async (html, footer) => {
       await page.setContent(html, { waitUntil: "load" });
       await page.evaluateHandle("document.fonts.ready").catch(() => {});
@@ -427,9 +418,19 @@ export async function buildXlsx(r) {
   const estHeight = (t) => Math.min(409, Math.max(22, Math.ceil(String(t).length / 95) * 21));
   const block = (num, heading, paras) => paras.forEach((t, i) => { const rw = add([i ? "" : num, i ? "" : heading, t]); rw.height = estHeight(t); rw.getCell(2).font = { name: font, size: 14, bold: true, color: { argb: "FF" + th.primary } }; });
   block("—", r.L.intro, r.intro);
+  let fig = 0;
   r.chapters.forEach((c, ci) => {
     const ch = add([String(ci + 1), `${chapterLabel(r, ci)}: ${c.title}`, ""], { bold: true, size: 15, color: "FF" + th.primary, fill: { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8EBF2" } } });
     ws.mergeCells(ch.number, 2, ch.number, 3);
+    if (c.image) {
+      // Illustration under the chapter heading (column C), with its caption and credit.
+      const h = 260, w = Math.round((c.image.width / c.image.height) * h);
+      const holder = add(["", "", ""]);
+      holder.height = h * 0.78;
+      const id = wb.addImage({ buffer: c.image.data, extension: "jpeg" });
+      ws.addImage(id, { tl: { col: 2.05, row: holder.number - 1 + 0.05 }, ext: { width: w, height: h }, editAs: "oneCell" });
+      add(["", "", `${figLabel(r, ++fig)}: ${c.title} — ${c.image.credit}`], { size: 11, color: "FF" + GREY });
+    }
     c.sections.forEach((s, si) => block(secNum(ci, si), s.title, s.paragraphs || []));
   });
   block("—", r.L.conclusion, r.conclusion);

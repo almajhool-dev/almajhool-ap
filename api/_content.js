@@ -57,7 +57,7 @@ function plan(pages, format, lang, images = false) {
 export async function buildContent(input) {
   const { title, lang, pages, format, department, mode, style } = input;
   const L = { ...LANGS[lang] };
-  const p = plan(pages, format, lang, !!input.images);
+  const p = plan(pages, format, lang, true); // every report carries illustrations
   const learned = mode === "advanced" && style ? style : null;
   if (learned?.avgParaWords && format !== "pptx") p.paraWords = Math.max(60, Math.min(220, learned.avgParaWords));
   const sys = { role: "system", content: STYLE(L.name) + styleInstructions(learned) };
@@ -107,7 +107,7 @@ Do not repeat the section title, do not write an introduction to the whole repor
       ? `Write 4 concise conclusion bullet points (12-22 words each) for a presentation titled "${title}". One per line, no symbols.`
       : `Write the conclusion of the university report "${title}" with this outline:\n${outlineText}\nAbout ${p.conclWords} words in 2-3 paragraphs: main findings and a few practical recommendations. Do not write a heading.` }], { maxTokens: 1600, script, stats }),
     findReferences({ title, lang, keywordsAr: String(outline.keywords_ar || ""), keywordsEn: String(outline.keywords_en || ""), stats }),
-    format === "xlsx" || !input.images ? Promise.resolve([]) : findImages(chapters.map((c) => c.imageQuery || outline.keywords_en || "")),
+    findImages(chapters.map((c) => c.imageQuery || ""), [String(outline.keywords_en || ""), String(department || "")]),
   ]);
   // Await both together so a failure in either is handled (no unhandled rejection).
   const [[intro, conclusion, refs, images]] = await Promise.all([rest, sectionsDone]);

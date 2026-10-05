@@ -45,12 +45,16 @@ async function download(c) {
   } catch { return null; } finally { clearTimeout(t); }
 }
 
-/** Finds one image per query (English keywords). Returns an array aligned with queries (null where none fits). */
-export async function findImages(queries) {
+/**
+ * Finds one image per query (English keywords), falling back to broader topic keywords.
+ * Returns an array aligned with queries (null where nothing fits; callers then draw a diagram).
+ */
+export async function findImages(queries, fallbacks = []) {
   const used = new Set();
+  const short = (q) => q.split(/\s+/).slice(0, 2).join(" ");
   return Promise.all(queries.map(async (q) => {
-    if (!q) return null;
-    for (const query of [q, q.split(/\s+/).slice(0, 2).join(" ")]) {
+    const tries = [...new Set([q, q && short(q), ...fallbacks.flatMap((f) => [f, f && short(f)])].filter(Boolean))].slice(0, 5);
+    for (const query of tries) {
       const cands = (await search(query)).filter((c) => !used.has(c.url));
       for (const c of cands.slice(0, 3)) {
         used.add(c.url);
