@@ -3,6 +3,7 @@ package com.skymonitor.iraq.data
 /** Where a record came from. Both are public, community-fed ADS-B/MLAT networks. */
 enum class DataSource(val label: String, val site: String) {
     ADSB_FI("adsb.fi Open Data", "https://adsb.fi"),
+    ADSB_LOL("adsb.lol", "https://adsb.lol"),
     OPENSKY("OpenSky Network", "https://opensky-network.org"),
 }
 

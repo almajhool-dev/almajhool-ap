@@ -6,6 +6,7 @@ import android.net.NetworkCapabilities
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.skymonitor.iraq.data.AdsbFi
+import com.skymonitor.iraq.data.AdsbLol
 import com.skymonitor.iraq.data.Aircraft
 import com.skymonitor.iraq.data.Category
 import com.skymonitor.iraq.data.DataSource
@@ -62,6 +63,7 @@ data class UiState(
     val lastRefreshMs: Long? = null,
     val statuses: List<SourceStatus> = listOf(
         SourceStatus(DataSource.ADSB_FI, "/api/v3/lat/{lat}/lon/{lon}/dist/{nm} · /api/v2/mil · /api/v2/callsign · /api/v2/registration"),
+        SourceStatus(DataSource.ADSB_LOL, "/v2/point/{lat}/{lon}/{nm} · /v2/mil · /v2/callsign"),
         SourceStatus(DataSource.OPENSKY, "/api/states/all?lamin&lomin&lamax&lomax"),
     ),
     val searchResults: List<Aircraft>? = null,
@@ -80,6 +82,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val byHex = LinkedHashMap<String, Aircraft>()
     /** Last worldwide list of publicly flagged aircraft (used for World view and type search). */
     private var flaggedWorldwide: List<Aircraft> = emptyList()
+    private var flaggedFi: List<Aircraft> = emptyList()
+    private var flaggedLol: List<Aircraft> = emptyList()
+    private fun combineFlagged() { flaggedWorldwide = (flaggedFi + flaggedLol).distinctBy { it.hex } }
     private var viewport: Viewport? = null
     private var lastOpenSkyMs = 0L
     private val adsbLock = Mutex()
@@ -159,12 +164,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     adsbLock.withLock {
                         if (WatchedType.fromQuery(q) != null) {
                             // Watched types only ever appear in public data among flagged aircraft.
-                            flaggedWorldwide = AdsbFi.publiclyFlagged().aircraft
+                            flaggedFi = AdsbFi.publiclyFlagged().aircraft
+                            runCatching { flaggedLol = AdsbLol.publiclyFlagged().aircraft }
+                            combineFlagged()
                             flaggedWorldwide.filter { it.matchesQuery(q) }.forEach { found.putIfAbsent(it.hex, it) }
                         } else if (q.length in 2..10 && q.none { it.isWhitespace() }) {
                             AdsbFi.byCallsign(q).aircraft.forEach { found.putIfAbsent(it.hex, it) }
                             delay(ADSB_GAP_MS)
                             AdsbFi.byRegistration(q).aircraft.forEach { found.putIfAbsent(it.hex, it) }
+                            runCatching { AdsbLol.byCallsign(q).aircraft.forEach { found.putIfAbsent(it.hex, it) } }
                         }
                     }
                 } catch (e: SourceException) {
@@ -212,12 +220,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     results += AdsbFi.around(v?.centerLat ?: 25.0, v?.centerLon ?: 30.0, 250); delay(ADSB_GAP_MS)
                 }
                 val flagged = AdsbFi.publiclyFlagged()
-                flaggedWorldwide = flagged.aircraft
+                flaggedFi = flagged.aircraft
+                combineFlagged()
                 results += flagged
                 val all = results.flatMap { it.aircraft }
                 received += all
                 Triple(all, results.maxOf { it.sourceTimeMs }, null as String?)
             }
+        }
+
+        // 1b) adsb.lol — a second independent receiver network; fills gaps in coverage.
+        runSource(DataSource.ADSB_LOL) {
+            val results = ArrayList<FetchResult>()
+            if (region == Region.IRAQ) {
+                results += AdsbLol.around(35.6, 43.3, 250)
+                results += AdsbLol.around(31.2, 45.9, 250)
+            } else {
+                val v = viewport
+                results += AdsbLol.around(v?.centerLat ?: 25.0, v?.centerLon ?: 30.0, 250)
+            }
+            val flagged = AdsbLol.publiclyFlagged()
+            flaggedLol = flagged.aircraft
+            combineFlagged()
+            results += flagged
+            val all = results.flatMap { it.aircraft }
+            received += all
+            Triple(all, results.maxOf { it.sourceTimeMs }, null as String?)
         }
 
         // 2) OpenSky — anonymous quota is small, so it is queried every few minutes for a bounded box.
@@ -274,7 +302,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val old = byHex[a.hex]
             // Prefer the newer report; on ties prefer adsb.fi, which also carries type information.
             if (old == null || a.positionTimeMs > old.positionTimeMs + 5_000 ||
-                (a.source == DataSource.ADSB_FI && old.source != DataSource.ADSB_FI && a.positionTimeMs >= old.positionTimeMs - 15_000)
+                (a.source != DataSource.OPENSKY && old.source == DataSource.OPENSKY && a.positionTimeMs >= old.positionTimeMs - 15_000)
             ) {
                 byHex[a.hex] = if (a.typeCode == null && old?.typeCode != null)
                     a.copy(typeCode = old.typeCode, description = old.description, registration = a.registration ?: old.registration, category = old.category)

@@ -24,7 +24,10 @@ import com.skymonitor.iraq.data.Regions
 import org.osmdroid.events.MapListener
 import org.osmdroid.events.ScrollEvent
 import org.osmdroid.events.ZoomEvent
-import org.osmdroid.tileprovider.tilesource.XYTileSource
+import org.osmdroid.tileprovider.MapTileProviderBasic
+import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
+import org.osmdroid.util.MapTileIndex
+import org.osmdroid.views.overlay.TilesOverlay
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView
@@ -35,16 +38,21 @@ import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Overlay
 import kotlin.math.roundToInt
 
-/** CARTO "Dark Matter" basemap (OpenStreetMap data), free with attribution. */
-private val DarkTiles = XYTileSource(
-    "CartoDarkMatter", 1, 18, 256, ".png",
-    arrayOf(
-        "https://a.basemaps.cartocdn.com/dark_all/",
-        "https://b.basemaps.cartocdn.com/dark_all/",
-        "https://c.basemaps.cartocdn.com/dark_all/",
-    ),
-    "© OpenStreetMap contributors © CARTO",
-)
+/**
+ * Esri "World Dark Gray" basemap: keyless public tile service (attribution required).
+ * Esri orders tile paths as z/y/x, so the URL is built by hand.
+ */
+private class EsriTiles(name: String, private val service: String) : OnlineTileSourceBase(
+    name, 1, 16, 256, "",
+    arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/"),
+    "© Esri, HERE, Garmin, © OpenStreetMap contributors",
+) {
+    override fun getTileURLString(pMapTileIndex: Long): String =
+        "${baseUrl}$service/MapServer/tile/${MapTileIndex.getZoom(pMapTileIndex)}/${MapTileIndex.getY(pMapTileIndex)}/${MapTileIndex.getX(pMapTileIndex)}"
+}
+
+private val DarkBase = EsriTiles("EsriDarkGrayBase", "World_Dark_Gray_Base")
+private val DarkLabels = EsriTiles("EsriDarkGrayLabels", "World_Dark_Gray_Reference")
 
 private const val COLOR_CIVIL = 0xFF35F0A2.toInt()
 private const val COLOR_OTHER = 0xFFFFB547.toInt()
@@ -125,7 +133,7 @@ fun RadarMap(
     val planes = remember { FolderOverlay() }
     val map = remember {
         MapView(context).apply {
-            setTileSource(DarkTiles)
+            setTileSource(DarkBase)
             setMultiTouchControls(true)
             zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
             minZoomLevel = 2.0
@@ -135,6 +143,8 @@ fun RadarMap(
             isVerticalMapRepetitionEnabled = false
             setScrollableAreaLimitLatitude(MapView.getTileSystem().maxLatitude, MapView.getTileSystem().minLatitude, 0)
             setBackgroundColor(Color.rgb(7, 13, 18))
+            // City and country names on a transparent layer above the dark base map.
+            overlays.add(TilesOverlay(MapTileProviderBasic(context, DarkLabels), context).apply { loadingBackgroundColor = Color.TRANSPARENT; loadingLineColor = Color.TRANSPARENT })
             overlays.add(RadarRingsOverlay())
             overlays.add(planes)
             overlays.add(CopyrightOverlay(context).apply { setTextColor(Color.argb(160, 200, 220, 220)) })

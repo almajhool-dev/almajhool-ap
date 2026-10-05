@@ -66,7 +66,7 @@ object AdsbFi {
     suspend fun byRegistration(reg: String): FetchResult =
         parse(httpGetJson("$BASE/v2/registration/${java.net.URLEncoder.encode(reg.trim().uppercase(), "UTF-8")}"))
 
-    internal fun parse(body: String): FetchResult {
+    internal fun parse(body: String, src: DataSource = DataSource.ADSB_FI): FetchResult {
         val root = try { JSONObject(body) } catch (e: Exception) { throw SourceException("استجابة غير صالحة من المصدر", e) }
         val now = root.optLong("now", System.currentTimeMillis()).let { if (it < 10_000_000_000L) it * 1000 else it }
         val arr: JSONArray = root.optJSONArray("ac") ?: root.optJSONArray("aircraft") ?: JSONArray()
@@ -98,11 +98,28 @@ object AdsbFi {
                 trackDeg = (o.optDouble("track").takeUnless { it.isNaN() } ?: o.optDouble("true_heading").takeUnless { it.isNaN() }),
                 positionTimeMs = now - (seenPos * 1000).toLong(),
                 category = if (flags and 1 == 1) Category.OTHER else Category.CIVIL,
-                source = DataSource.ADSB_FI,
+                source = src,
             )
         }
         return FetchResult(list, now)
     }
+}
+
+/**
+ * adsb.lol — open, keyless ADS-B/MLAT data (ODbL licence). Same readsb JSON format as adsb.fi.
+ * Docs: https://api.adsb.lol/docs
+ */
+object AdsbLol {
+    private const val BASE = "https://api.adsb.lol/v2"
+    private fun f(v: Double) = "%.4f".format(java.util.Locale.US, v)
+
+    suspend fun around(lat: Double, lon: Double, radiusNm: Int): FetchResult =
+        AdsbFi.parse(httpGetJson("$BASE/point/${f(lat)}/${f(lon)}/${radiusNm.coerceIn(1, 250)}"), DataSource.ADSB_LOL)
+
+    suspend fun publiclyFlagged(): FetchResult = AdsbFi.parse(httpGetJson("$BASE/mil"), DataSource.ADSB_LOL)
+
+    suspend fun byCallsign(cs: String): FetchResult =
+        AdsbFi.parse(httpGetJson("$BASE/callsign/${java.net.URLEncoder.encode(cs.trim().uppercase(), "UTF-8")}"), DataSource.ADSB_LOL)
 }
 
 /**

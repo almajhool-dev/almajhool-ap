@@ -71,7 +71,7 @@ class MainActivity : ComponentActivity() {
                         title = { Text("تنبيه مهم", color = Radar.Amber, fontWeight = FontWeight.Bold) },
                         text = {
                             Text(
-                                "$DISCLAIMER\n\nيعرض التطبيق فقط ما تنشره شبكات تتبّع الطيران العامة (adsb.fi و OpenSky). " +
+                                "$DISCLAIMER\n\nيعرض التطبيق فقط ما تنشره شبكات تتبّع الطيران العامة (adsb.fi و adsb.lol و OpenSky). " +
                                     "لا يكشف الطائرات التي لا تبث بيانات، ولا يعترض أي اتصالات.",
                                 color = Radar.Text,
                             )

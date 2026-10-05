@@ -77,7 +77,7 @@ fun SourcesScreen(state: UiState, onBack: () -> Unit) {
 
             Text("الخريطة", color = Radar.Green, fontWeight = FontWeight.Bold)
             Card {
-                Text("الخريطة الأساسية: CARTO Dark Matter ببيانات © OpenStreetMap contributors.", color = Radar.Text, fontSize = 13.sp)
+                Text("الخريطة الأساسية: Esri World Dark Gray (© Esri, HERE, Garmin, © OpenStreetMap contributors).", color = Radar.Text, fontSize = 13.sp)
             }
             Spacer(Modifier.size(24.dp))
         }
@@ -119,10 +119,12 @@ private fun SourceCard(s: SourceStatus) {
         }
         Line("الواجهة (API)", when (s.source) {
             DataSource.ADSB_FI -> "opendata.adsb.fi" + s.endpoints.substringBefore(" ·")
+            DataSource.ADSB_LOL -> "api.adsb.lol" + s.endpoints.substringBefore(" ·")
             DataSource.OPENSKY -> "opensky-network.org" + s.endpoints
         })
         Line("شروط الاستخدام", when (s.source) {
             DataSource.ADSB_FI -> "مجاني للاستخدام غير التجاري مع ذكر المصدر · حد أقصى طلب واحد في الثانية"
+            DataSource.ADSB_LOL -> "بيانات مفتوحة برخصة ODbL · مجانية بدون مفتاح مع ذكر المصدر"
             DataSource.OPENSKY -> "مجاني للاستخدام غير التجاري/البحثي مع ذكر المصدر · حصة يومية محدودة للمستخدم المجهول (يُستعلم كل 5 دقائق)"
         })
         Line("آخر تحديث ناجح", if (s.lastSuccessMs != null) "${clockText(s.lastSuccessMs)} (${agoText(s.lastSuccessMs)})" else "لم ينجح بعد")
