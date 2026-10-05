@@ -116,7 +116,7 @@ function kindOf(buf) {
   if (buf.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) return "docx";
   if (buf.subarray(0, 5).toString() === "%PDF-") return "pdf";
   const s = buf.subarray(0, 2000).toString("utf8");
-  if (!s.includes("�") && !/[\u0000-\u0008]/.test(s)) return "txt";
+  if (!s.includes("\uFFFD") && !/[\u0000-\u0008]/.test(s)) return "txt";
   return null;
 }
 
