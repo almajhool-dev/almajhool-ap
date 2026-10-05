@@ -10,6 +10,9 @@
 |---|---|
 | ![map](docs/screen-map.png) | ![sources](docs/screen-sources.png) |
 
+## التحميل
+**[⬇ تحميل SkyMonitorIraq-v1.0.0.apk](https://github.com/almajhool-dev/almajhool-ap/raw/sky-monitor-iraq/release/SkyMonitorIraq-v1.0.0.apk)** — Android 8 فأعلى.
+
 ## الميزات
 - خريطة عالمية تفاعلية بطابع رادار داكن، مع انتقال مباشر إلى العراق.
 - فلاتر: العراق فقط · العالم · الطائرات المدنية · الفئات المصنّفة علناً (عسكرية/حكومية) · MQ-9/MQ-1/RQ-4.
