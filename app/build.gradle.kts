@@ -28,8 +28,8 @@ android {
         applicationId = "com.skymonitor.iraq"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "2.0.0"
+        versionCode = 5
+        versionName = "2.1.0"
         buildConfigField("String", "CARTO_KEY", "\"$cartoKey\"")
         // Phones only (keeps the APK small): 64-bit and 32-bit ARM.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }

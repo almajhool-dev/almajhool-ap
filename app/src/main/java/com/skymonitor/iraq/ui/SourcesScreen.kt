@@ -77,7 +77,7 @@ fun SourcesScreen(state: UiState, onBack: () -> Unit) {
 
             Text("الخريطة", color = Radar.Green, fontWeight = FontWeight.Bold)
             Card {
-                Text("الخريطة: OpenFreeMap و OpenMapTiles ببيانات © OpenStreetMap، والتضاريس من AWS Terrain Tiles. أسماء الدول والمحافظات والمدن معروضة بالعربية.", color = Radar.Text, fontSize = 13.sp)
+                Text("الخريطة: صور الأقمار الصناعية من Esri World Imagery (Maxar، Earthstar Geographics)، والطرق والمباني ثلاثية الأبعاد من OpenFreeMap و OpenMapTiles ببيانات © OpenStreetMap، والتضاريس من AWS Terrain Tiles. أسماء الدول والمحافظات والمدن معروضة بالعربية.", color = Radar.Text, fontSize = 13.sp)
             }
             Text("تطوير: $DEVELOPER", color = Radar.Muted, fontSize = 13.sp, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
             Spacer(Modifier.size(24.dp))

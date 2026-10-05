@@ -86,6 +86,7 @@ class MapActions(
 @Composable
 fun MapScreen(state: UiState, a: MapActions, showMap: Boolean = true) {
     var tilted by rememberSaveable { mutableStateOf(true) }
+    var mode by rememberSaveable { mutableStateOf(MapMode.SATELLITE) }
     Box(Modifier.fillMaxSize().background(Radar.Bg)) {
         if (showMap) RadarMap(
             aircraft = state.visible,
@@ -94,6 +95,7 @@ fun MapScreen(state: UiState, a: MapActions, showMap: Boolean = true) {
             selectedTrack = state.selectedTrack,
             camera = state.camera,
             tilted = tilted,
+            mode = mode,
             onSelect = a.onSelect,
             onViewport = a.onViewport,
             modifier = Modifier.fillMaxSize(),
@@ -116,6 +118,14 @@ fun MapScreen(state: UiState, a: MapActions, showMap: Boolean = true) {
                 .clickable { tilted = !tilted },
             contentAlignment = Alignment.Center,
         ) { Text(if (tilted) "3D" else "2D", color = if (tilted) Radar.Green else Radar.Text, fontWeight = FontWeight.Bold) }
+
+        // Satellite / radar map switch.
+        Box(
+            Modifier.align(Alignment.CenterStart).padding(start = 12.dp, top = 120.dp).size(48.dp).clip(CircleShape)
+                .background(Radar.Panel).border(1.dp, Radar.Green, CircleShape)
+                .clickable { mode = if (mode == MapMode.SATELLITE) MapMode.RADAR else MapMode.SATELLITE },
+            contentAlignment = Alignment.Center,
+        ) { Text(if (mode == MapMode.SATELLITE) "قمر\nصناعي" else "رادار", color = Radar.Green, fontSize = 10.sp, lineHeight = 11.sp, fontWeight = FontWeight.Bold, textAlign = androidx.compose.ui.text.style.TextAlign.Center) }
 
         Column(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(12.dp),

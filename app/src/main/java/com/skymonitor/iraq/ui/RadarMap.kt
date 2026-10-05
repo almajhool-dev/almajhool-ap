@@ -92,6 +92,64 @@ private fun Style.setLine(id: String, coords: List<DoubleArray>?) {
     src.setGeoJson(Feature.fromGeometry(LineString.fromLngLats(coords.map { Point.fromLngLat(it[1], it[0]) })))
 }
 
+/** Session trails for every aircraft and the full path for the selected one, each ending at the live position. */
+private fun updateTrails(st: Style, aircraft: List<Aircraft>, trails: Map<String, List<DoubleArray>>, selected: Aircraft?, track: List<DoubleArray>?, now: Long) {
+    val byHex = aircraft.associateBy { it.hex }
+    val lines = trails.mapNotNull { (h, pts) ->
+        val a = byHex[h] ?: return@mapNotNull null
+        if (h == selected?.hex) return@mapNotNull null
+        val coords = (pts.takeLast(40) + listOf(livePosition(a, now))).map { Point.fromLngLat(it[1], it[0]) }
+        Feature.fromGeometry(LineString.fromLngLats(coords)).apply { addStringProperty("color", hex(colorFor(a))) }
+    }
+    st.getSourceAs<GeoJsonSource>(SRC_TRAILS)?.setGeoJson(FeatureCollection.fromFeatures(lines))
+    val sel = selected?.let { byHex[it.hex] ?: it }
+    val path = when {
+        sel == null -> null
+        track != null -> track + listOf(livePosition(sel, now))
+        else -> trails[sel.hex]?.plus(listOf(livePosition(sel, now)))
+    }
+    st.setLine(SRC_SEL_TRACK, path)
+}
+
+private fun installOverlays(st: Style, density: Float) {
+    PlaneIcons.all(density).forEach { (name, bmp) -> st.addImage(name, bmp) }
+    st.addSource(GeoJsonSource(SRC_TRAILS))
+    st.addSource(GeoJsonSource(SRC_SEL_TRACK))
+    st.addSource(GeoJsonSource(SRC_SEL_AHEAD))
+    st.addSource(GeoJsonSource(SRC_PLANES))
+    st.addLayer(LineLayer("trails", SRC_TRAILS).withProperties(
+        PropertyFactory.lineColor(Expression.toColor(Expression.get("color"))),
+        PropertyFactory.lineWidth(1.6f), PropertyFactory.lineOpacity(0.55f),
+        PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+    ))
+    st.addLayer(LineLayer("sel-track", SRC_SEL_TRACK).withProperties(
+        PropertyFactory.lineColor("#FFFFFF"), PropertyFactory.lineWidth(3.2f), PropertyFactory.lineOpacity(0.9f),
+        PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+    ))
+    st.addLayer(LineLayer("sel-ahead", SRC_SEL_AHEAD).withProperties(
+        PropertyFactory.lineColor("#FFD27A"), PropertyFactory.lineWidth(2.4f),
+        PropertyFactory.lineDasharray(arrayOf(2f, 2f)), PropertyFactory.lineOpacity(0.9f),
+    ))
+    st.addLayer(SymbolLayer("planes", SRC_PLANES).withProperties(
+        PropertyFactory.iconImage(Expression.get("icon")),
+        PropertyFactory.iconRotate(Expression.get("track")),
+        PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
+        PropertyFactory.iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP),
+        PropertyFactory.iconAllowOverlap(true), PropertyFactory.iconIgnorePlacement(true),
+        PropertyFactory.iconSize(Expression.interpolate(Expression.linear(), Expression.zoom(),
+            Expression.stop(2, 0.42f), Expression.stop(6, 0.62f), Expression.stop(10, 0.85f), Expression.stop(14, 1.1f))),
+        PropertyFactory.symbolSortKey(Expression.get("z")),
+    ))
+    st.addLayer(SymbolLayer("plane-labels", SRC_PLANES).withProperties(
+        PropertyFactory.textField(Expression.get("label")),
+        PropertyFactory.textFont(arrayOf("Noto Sans Bold")),
+        PropertyFactory.textSize(11f), PropertyFactory.textOffset(arrayOf(0f, 1.9f)),
+        PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP), PropertyFactory.textOptional(true),
+        PropertyFactory.textColor("#E6F3EE"), PropertyFactory.textHaloColor("#0B1318"), PropertyFactory.textHaloWidth(1.4f),
+    ).apply { minZoom = 6.5f })
+
+}
+
 @Composable
 fun RadarMap(
     aircraft: List<Aircraft>,
@@ -100,6 +158,7 @@ fun RadarMap(
     selectedTrack: List<DoubleArray>?,
     camera: CameraMove?,
     tilted: Boolean,
+    mode: MapMode,
     onSelect: (Aircraft?) -> Unit,
     onViewport: (Viewport) -> Unit,
     modifier: Modifier = Modifier,
@@ -115,6 +174,8 @@ fun RadarMap(
     val latestSelect by rememberUpdatedState(onSelect)
     val latestViewport by rememberUpdatedState(onViewport)
     val latestSelected by rememberUpdatedState(selected)
+    val latestTrails by rememberUpdatedState(trails)
+    val latestTrack by rememberUpdatedState(selectedTrack)
 
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, e ->
@@ -144,44 +205,7 @@ fun RadarMap(
             m.setMinZoomPreference(1.0)
             m.setMaxZoomPreference(16.5)
             m.cameraPosition = CameraPosition.Builder().target(LatLng(Regions.IRAQ_CENTER_LAT, Regions.IRAQ_CENTER_LON)).zoom(5.2).tilt(45.0).build()
-            m.setStyle(Style.Builder().fromJson(MapStyle.json)) { st ->
-                PlaneIcons.all(density).forEach { (name, bmp) -> st.addImage(name, bmp) }
-                st.addSource(GeoJsonSource(SRC_TRAILS))
-                st.addSource(GeoJsonSource(SRC_SEL_TRACK))
-                st.addSource(GeoJsonSource(SRC_SEL_AHEAD))
-                st.addSource(GeoJsonSource(SRC_PLANES))
-                st.addLayer(LineLayer("trails", SRC_TRAILS).withProperties(
-                    PropertyFactory.lineColor(Expression.toColor(Expression.get("color"))),
-                    PropertyFactory.lineWidth(1.6f), PropertyFactory.lineOpacity(0.55f),
-                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-                ))
-                st.addLayer(LineLayer("sel-track", SRC_SEL_TRACK).withProperties(
-                    PropertyFactory.lineColor("#FFFFFF"), PropertyFactory.lineWidth(3.2f), PropertyFactory.lineOpacity(0.9f),
-                    PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
-                ))
-                st.addLayer(LineLayer("sel-ahead", SRC_SEL_AHEAD).withProperties(
-                    PropertyFactory.lineColor("#FFD27A"), PropertyFactory.lineWidth(2.4f),
-                    PropertyFactory.lineDasharray(arrayOf(2f, 2f)), PropertyFactory.lineOpacity(0.9f),
-                ))
-                st.addLayer(SymbolLayer("planes", SRC_PLANES).withProperties(
-                    PropertyFactory.iconImage(Expression.get("icon")),
-                    PropertyFactory.iconRotate(Expression.get("track")),
-                    PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
-                    PropertyFactory.iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP),
-                    PropertyFactory.iconAllowOverlap(true), PropertyFactory.iconIgnorePlacement(true),
-                    PropertyFactory.iconSize(Expression.interpolate(Expression.linear(), Expression.zoom(),
-                        Expression.stop(2, 0.42f), Expression.stop(6, 0.62f), Expression.stop(10, 0.85f), Expression.stop(14, 1.1f))),
-                    PropertyFactory.symbolSortKey(Expression.get("z")),
-                ))
-                st.addLayer(SymbolLayer("plane-labels", SRC_PLANES).withProperties(
-                    PropertyFactory.textField(Expression.get("label")),
-                    PropertyFactory.textFont(arrayOf("Noto Sans Bold")),
-                    PropertyFactory.textSize(11f), PropertyFactory.textOffset(arrayOf(0f, 1.9f)),
-                    PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP), PropertyFactory.textOptional(true),
-                    PropertyFactory.textColor("#E6F3EE"), PropertyFactory.textHaloColor("#0B1318"), PropertyFactory.textHaloWidth(1.4f),
-                ).apply { minZoom = 6.5f })
-                style = st
-            }
+            m.setPrefetchZoomDelta(3)
             m.addOnMapClickListener { latLng ->
                 val p = m.projection.toScreenLocation(latLng)
                 val r = 26 * density
@@ -199,10 +223,21 @@ fun RadarMap(
         }
     }
 
+    LaunchedEffect(map, mode) {
+        val m = map ?: return@LaunchedEffect
+        style = null
+        m.setStyle(Style.Builder().fromJson(MapStyle.forMode(mode))) { st ->
+            installOverlays(st, density)
+            style = st
+        }
+    }
+
     // Planes move smoothly between public reports (dead reckoning, refreshed every second).
     LaunchedEffect(style) {
         val st = style ?: return@LaunchedEffect
+        var tick = 0
         while (true) {
+            tick++
             val src = st.getSourceAs<GeoJsonSource>(SRC_PLANES)
             val sel = latestSelected?.hex
             val now = System.currentTimeMillis()
@@ -224,29 +259,15 @@ fun RadarMap(
                 val ahead = project(now2[0], now2[1], s.trackDeg, (s.speedKt!! * 1.852 * (20.0 / 60.0)).coerceAtMost(400.0))
                 st.setLine(SRC_SEL_AHEAD, listOf(now2, ahead))
             } else st.setLine(SRC_SEL_AHEAD, null)
-            delay(1000)
+            // Path lines end exactly at the moving aircraft, so they never jump when zooming.
+            if (tick % 6 == 1) updateTrails(st, latestAircraft, latestTrails, latestSelected, latestTrack, now)
+            delay(160)
         }
     }
 
-    // Trails: short session trails for everyone, full path for the selected aircraft.
     LaunchedEffect(style, trails, selected?.hex, selectedTrack) {
         val st = style ?: return@LaunchedEffect
-        val byHex = aircraft.associateBy { it.hex }
-        val lines = trails.mapNotNull { (h, pts) ->
-            val a = byHex[h] ?: return@mapNotNull null
-            if (h == selected?.hex) return@mapNotNull null
-            Feature.fromGeometry(LineString.fromLngLats(pts.takeLast(40).map { Point.fromLngLat(it[1], it[0]) })).apply {
-                addStringProperty("color", hex(colorFor(a)))
-            }
-        }
-        st.getSourceAs<GeoJsonSource>(SRC_TRAILS)?.setGeoJson(FeatureCollection.fromFeatures(lines))
-        val sel = selected
-        val path = when {
-            sel == null -> null
-            selectedTrack != null -> selectedTrack + listOf(doubleArrayOf(sel.lat, sel.lon))
-            else -> trails[sel.hex]
-        }
-        st.setLine(SRC_SEL_TRACK, path)
+        updateTrails(st, aircraft, trails, selected, selectedTrack, System.currentTimeMillis())
     }
 
     LaunchedEffect(map, camera?.id) {

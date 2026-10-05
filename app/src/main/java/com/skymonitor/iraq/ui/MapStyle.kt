@@ -6,7 +6,46 @@ package com.skymonitor.iraq.ui
  *  - AWS Terrain Tiles (Terrarium DEM) for 3D relief shading
  *  - 3D extruded buildings at street zoom
  */
+enum class MapMode { SATELLITE, RADAR }
+
 object MapStyle {
+    fun forMode(mode: MapMode): String = if (mode == MapMode.RADAR) json else satellite
+
+    /**
+     * Satellite imagery (Esri World Imagery, keyless with attribution) with the same Arabic labels,
+     * borders and coloured 3D buildings on top.
+     */
+    val satellite: String by lazy {
+        val root = org.json.JSONObject(json)
+        root.getJSONObject("sources").put("sat", org.json.JSONObject()
+            .put("type", "raster").put("tileSize", 256).put("maxzoom", 19)
+            .put("tiles", org.json.JSONArray().put("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"))
+            .put("attribution", "Imagery © Esri, Maxar, Earthstar Geographics"))
+        val keep = setOf("boundary-provinces", "boundary-countries", "roads-major", "buildings-3d",
+            "label-water", "label-roads", "label-airports", "label-villages", "label-towns", "label-provinces", "label-countries", "label-cities")
+        val old = root.getJSONArray("layers")
+        val layers = org.json.JSONArray()
+        layers.put(org.json.JSONObject().put("id", "sat").put("type", "raster").put("source", "sat")
+            .put("paint", org.json.JSONObject().put("raster-fade-duration", 120)))
+        for (i in 0 until old.length()) {
+            val l = old.getJSONObject(i)
+            val id = l.getString("id")
+            if (id !in keep) continue
+            val paint = l.optJSONObject("paint") ?: org.json.JSONObject()
+            when {
+                id.startsWith("label-") -> paint.put("text-color", if (id == "label-countries" || id == "label-cities") "#FFFFFF" else "#F1F1E8")
+                    .put("text-halo-color", "#000000").put("text-halo-width", 1.6)
+                id == "roads-major" -> { l.put("minzoom", 11); paint.put("line-color", "#F4E2B0").put("line-opacity", 0.35) }
+                id == "boundary-countries" -> paint.put("line-color", "#FFE08A")
+                id == "boundary-provinces" -> paint.put("line-color", "#FFFFFF").put("line-opacity", 0.55)
+                id == "buildings-3d" -> { l.put("minzoom", 14); paint.put("fill-extrusion-opacity", 0.92) }
+            }
+            l.put("paint", paint)
+            layers.put(l)
+        }
+        root.put("layers", layers).toString()
+    }
+
     private const val AR = """["coalesce", ["get", "name:ar"], ["get", "name"]]"""
     private const val FONT = """["Noto Sans Regular"]"""
     private const val FONT_BOLD = """["Noto Sans Bold"]"""
@@ -63,7 +102,9 @@ object MapStyle {
       "paint": { "line-color": "#47B08C", "line-width": ["interpolate", ["linear"], ["zoom"], 1, 0.6, 6, 1.6, 12, 2.6] } },
 
     { "id": "buildings-3d", "type": "fill-extrusion", "source": "omt", "source-layer": "building", "minzoom": 13,
-      "paint": { "fill-extrusion-color": "#1C2B34",
+      "paint": { "fill-extrusion-color": ["interpolate", ["linear"], ["coalesce", ["get", "render_height"], 8],
+                     0, "#CFC2A8", 10, "#C4B391", 25, "#B9A78A", 50, "#9DB0C2", 120, "#7F9BB8"],
+                 "fill-extrusion-vertical-gradient": true,
                  "fill-extrusion-height": ["coalesce", ["get", "render_height"], 8],
                  "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
                  "fill-extrusion-opacity": 0.85 } },
