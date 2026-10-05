@@ -44,6 +44,12 @@
     "api/generate.js": {
       "maxDuration": 300,
       "includeFiles": "{node_modules/@sparticuz/chromium/bin/**,node_modules/@fontsource/amiri/files/amiri-*-normal.woff2,node_modules/@fontsource/cairo/files/cairo-*-normal.woff2}"
+    },
+    "api/style.js": {
+      "maxDuration": 60
+    },
+    "api/logo.js": {
+      "maxDuration": 30
     }
   },
   "buildCommand": "npm run build",

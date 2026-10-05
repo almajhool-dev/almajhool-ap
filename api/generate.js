@@ -1,9 +1,14 @@
 // POST /api/generate → validates input, generates the report and returns the finished file.
-import sharp from "sharp";
 import { route, json, requireUser, requireSameOrigin, rateLimit, clientIp, HttpError, sql } from "./_lib.js";
 import { setOidcToken } from "./_ai.js";
 import { buildContent, LANGS } from "./_content.js";
 import { buildDocx, buildPdf, buildPptx, buildXlsx } from "./_build.js";
+import { removeBackground } from "./_logo.js";
+import { ensureTable } from "./style.js";
+
+const PALETTES = { navy: "1B2A6B", burgundy: "6D1A2A", emerald: "0F6B4F", charcoal: "36454F" };
+const BACKGROUNDS = { none: null, ivory: "FBF8F1", mist: "F4F7FB", sage: "F3F7F2" };
+const TOPIC = { black: "000000", blue: "1F4E9A" };
 
 const FORMATS = {
   docx: { build: buildDocx, mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
@@ -35,8 +40,8 @@ async function processLogo(b64) {
   const isWebp = buf.subarray(0, 4).toString() === "RIFF" && buf.subarray(8, 12).toString() === "WEBP";
   if (!isPng && !isJpg && !isWebp) throw new HttpError(400, "صيغة الصورة غير مدعومة (PNG أو JPG أو WEBP فقط)");
   try {
-    const img = sharp(buf, { limitInputPixels: 40_000_000, failOn: "error" }).rotate().resize({ width: 800, height: 800, fit: "inside", withoutEnlargement: true });
-    const { data, info } = await img.png({ compressionLevel: 9 }).toBuffer({ resolveWithObject: true });
+    // Re-encodes the image (drops any embedded payload/metadata), removes a plain background and trims it.
+    const { data, info } = await removeBackground(buf);
     return { data, width: info.width, height: info.height };
   } catch {
     throw new HttpError(400, "تعذّر قراءة الصورة، جرّب صورة أخرى");
@@ -60,13 +65,33 @@ export const POST = route(async (request) => {
   const pages = Math.round(Number(body.pages));
   if (!Number.isFinite(pages) || pages < 3 || pages > 40) throw new HttpError(400, "عدد الصفحات يجب أن يكون بين 3 و 40");
 
+  const students = (Array.isArray(body.students) ? body.students : [body.student])
+    .map((n, i) => clean(n, 80, { label: `اسم الطالب ${i + 1}` })).filter((n) => n.length >= 2).slice(0, 10);
+  if (!students.length) throw new HttpError(400, "اكتب اسم طالب واحد على الأقل");
+  const mode = body.mode === "advanced" ? "advanced" : "standard";
+  const theme = mode === "advanced"
+    ? { primary: PALETTES[body.palette] || PALETTES.navy, topic: TOPIC[body.topicColor] || TOPIC.blue,
+        border: ["none", "cover", "all"].includes(body.border) ? body.border : "cover", bg: BACKGROUNDS[body.background] ?? null }
+    : { primary: "000000", topic: TOPIC[body.topicColor] || TOPIC.black, border: "none", bg: null };
+
+  let style = null;
+  if (mode === "advanced" && body.styleId) {
+    await ensureTable();
+    const [row] = await sql`SELECT profile FROM style_profiles WHERE id = ${Number(body.styleId) || 0} AND user_id = ${user.id}`;
+    if (!row) throw new HttpError(400, "النموذج المحفوظ غير موجود، اختر نموذجًا آخر");
+    style = row.profile;
+  }
+
   const input = {
     title: clean(body.title, 220, { required: true, label: "عنوان التقرير" }),
-    student: clean(body.student, 120, { required: true, label: "اسم الطالب" }),
+    students,
     supervisor: clean(body.supervisor, 120, { label: "اسم المشرف" }),
     university: clean(body.university, 160, { required: true, label: "الجامعة أو المعهد" }),
+    college: clean(body.college, 160, { label: "الكلية" }),
     department: clean(body.department, 120, { label: "القسم" }),
-    lang, format, pages,
+    lang, format, pages, mode, theme, style,
+    images: body.images !== false,
+    fmt: style?.format || null,
   };
   const logo = await processLogo(body.logo);
   setOidcToken(request.headers.get("x-vercel-oidc-token"));
@@ -83,12 +108,13 @@ export const POST = route(async (request) => {
   await sql`INSERT INTO reports (user_id, title, lang, format, pages) VALUES (${user.id}, ${input.title}, ${lang}, ${format}, ${pages})`;
 
   const name = `${input.title.slice(0, 80)}.${format}`;
+  report.style = undefined;
   return new Response(file, {
     headers: {
       "Content-Type": FORMATS[format].mime,
       "Content-Disposition": `attachment; filename="report.${format}"; filename*=UTF-8''${encodeURIComponent(name)}`,
       "Cache-Control": "no-store",
-      "X-Gen-Stats": JSON.stringify({ ms: report.stats.ms, fail: report.stats.fail.length, ok: report.stats.ok }).slice(0, 900),
+      "X-Gen-Stats": JSON.stringify({ ms: report.stats.ms, fail: report.stats.fail.length, refs: report.references.length, images: report.chapters.filter((c) => c.image).length }).slice(0, 900),
     },
   });
 });

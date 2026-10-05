@@ -1,5 +1,8 @@
 // Builds the report content: outline → sections (in parallel) → introduction, conclusion, references.
 import { chat, chatJson, pool } from "./_ai.js";
+import { findReferences, formatRef } from "./_refs.js";
+import { findImages } from "./_images.js";
+import { styleInstructions } from "./_style.js";
 
 export const LANGS = {
   ar: { name: "العربية", rtl: true, l: { intro: "المقدمة", conclusion: "الخاتمة", refs: "المصادر والمراجع", toc: "فهرس المحتويات", chapter: "الفصل", by: "إعداد الطالب", sup: "إشراف", dept: "القسم", year: "العام الدراسي", report: "تقرير بعنوان" } },
@@ -33,7 +36,7 @@ function trimWords(paras, max) {
   return out;
 }
 
-function plan(pages, format, lang) {
+function plan(pages, format, lang, images = false) {
   if (format === "pptx") {
     const slides = Math.max(6, Math.min(40, pages));
     const chapters = slides <= 8 ? 2 : slides <= 14 ? 3 : slides <= 24 ? 4 : 5;
@@ -46,16 +49,18 @@ function plan(pages, format, lang) {
   const chapters = pages <= 7 ? 2 : pages <= 12 ? 3 : pages <= 25 ? 4 : 5;
   const sections = pages <= 7 ? 2 : pages <= 20 ? 3 : 4;
   const frontBack = Math.min(4, Math.max(1.2, textPages * 0.15));
-  const chapterPages = Math.max(0.9, (textPages - frontBack) / chapters);
+  const chapterPages = Math.max(0.9, (textPages - frontBack) / chapters - (images ? 0.6 : 0));
   const words = Math.max(110, Math.round((chapterPages * wpp * 0.8 - 40) / sections));
   return { chapters, sections, words, introWords: Math.round(frontBack * 0.55 * wpp * 0.9), conclWords: Math.round(frontBack * 0.45 * wpp * 0.9) };
 }
 
 export async function buildContent(input) {
-  const { title, lang, pages, format, department } = input;
-  const L = LANGS[lang];
-  const p = plan(pages, format, lang);
-  const sys = { role: "system", content: STYLE(L.name) };
+  const { title, lang, pages, format, department, mode, style } = input;
+  const L = { ...LANGS[lang] };
+  const p = plan(pages, format, lang, !!input.images);
+  const learned = mode === "advanced" && style ? style : null;
+  if (learned?.avgParaWords && format !== "pptx") p.paraWords = Math.max(60, Math.min(220, learned.avgParaWords));
+  const sys = { role: "system", content: STYLE(L.name) + styleInstructions(learned) };
   const stats = { ok: {}, fail: [], ms: {} };
   const t0 = Date.now();
   const script = lang === "ar" ? "arabic" : undefined;
@@ -64,13 +69,14 @@ export async function buildContent(input) {
     sys,
     { role: "user", content: `Create the outline of a university report titled: "${title}"${department ? ` (field: ${department})` : ""}.
 Return ONLY valid JSON, no other text, in ${L.name}:
-{"chapters":[{"title":"...","sections":["...","..."]}]}
+{"keywords_en":"3-6 English search keywords for the topic","keywords_ar":"3-6 Arabic search keywords for the topic","chapters":[{"title":"...","sections":["...","..."],"image_query":"2-4 English words naming a concrete photographable subject for this chapter"}]}
 Exactly ${p.chapters} chapters, each with exactly ${p.sections} sections. Titles must be specific to the topic (no numbering, no words like "Chapter").` },
   ], { maxTokens: 1500, temperature: 0.6, stats });
   stats.ms.outline = Date.now() - t0;
 
   const chapters = (outline.chapters || []).slice(0, p.chapters).map((c) => ({
     title: String(c.title || "").replace(/^[\d.\-\s]+/, "").trim(),
+    imageQuery: String(c.image_query || "").replace(/[^\p{L}\p{N} ]/gu, " ").trim().slice(0, 60),
     sections: (c.sections || []).slice(0, p.sections).map((s) => ({ title: String(s.title || s).replace(/^[\d.\-\s]+/, "").trim() })),
   })).filter((c) => c.title && c.sections.length);
   if (!chapters.length) throw new Error("BAD_OUTLINE");
@@ -78,7 +84,7 @@ Exactly ${p.chapters} chapters, each with exactly ${p.sections} sections. Titles
   const outlineText = chapters.map((c, i) => `${i + 1}. ${c.title}: ${c.sections.map((s) => s.title).join("; ")}`).join("\n");
   const jobs = chapters.flatMap((c, ci) => c.sections.map((s, si) => ({ c, s, ci, si })));
 
-  const sectionsDone = pool(jobs, 8, async ({ c, s }) => {
+  const sectionsDone = pool(jobs, Number(process.env.GEN_CONCURRENCY) || 8, async ({ c, s }) => {
     if (format === "pptx") {
       const text = await chat([sys, { role: "user", content: `Report: "${title}". Chapter: "${c.title}". Slide topic: "${s.title}".
 Write 4 to 5 concise, informative bullet points for this presentation slide (each 12-22 words), one per line, no symbols or numbering.` }], { maxTokens: 700, script, stats });
@@ -87,7 +93,7 @@ Write 4 to 5 concise, informative bullet points for this presentation slide (eac
       const text = await chat([sys, { role: "user", content: `Report title: "${title}".
 Full outline:\n${outlineText}\n
 Write the section "${s.title}" of the chapter "${c.title}".
-Length: about ${p.words} words, in ${Math.max(2, Math.round(p.words / 110))} well-developed paragraphs separated by a blank line.
+Length: about ${p.words} words, in ${Math.max(2, Math.round(p.words / (p.paraWords || 110)))} well-developed paragraphs separated by a blank line.
 Do not repeat the section title, do not write an introduction to the whole report, do not summarize at the end.` }], { maxTokens: Math.min(4000, Math.round(p.words * 3.2) + 400), script, stats });
       s.paragraphs = trimWords(splitParas(text), Math.round(p.words * 1.35));
     }
@@ -100,13 +106,12 @@ Do not repeat the section title, do not write an introduction to the whole repor
     chat([sys, { role: "user", content: format === "pptx"
       ? `Write 4 concise conclusion bullet points (12-22 words each) for a presentation titled "${title}". One per line, no symbols.`
       : `Write the conclusion of the university report "${title}" with this outline:\n${outlineText}\nAbout ${p.conclWords} words in 2-3 paragraphs: main findings and a few practical recommendations. Do not write a heading.` }], { maxTokens: 1600, script, stats }),
-    chat([{ role: "system", content: "You are an academic librarian. You only cite real, existing, verifiable publications." },
-      { role: "user", content: `List 8 to 12 real, well-known and verifiable references (books, peer-reviewed articles, official reports) closely related to: "${title}".
-Prefer references written in ${L.name} when real ones exist, otherwise in English. Use APA 7 style without DOIs or URLs. Only include works you are confident exist; never invent authors, titles or DOIs.
-One reference per line, no numbering, no extra text.` }], { maxTokens: 1500, temperature: 0.3, stats }),
+    findReferences({ title, lang, keywordsAr: String(outline.keywords_ar || ""), keywordsEn: String(outline.keywords_en || ""), stats }),
+    format === "xlsx" || !input.images ? Promise.resolve([]) : findImages(chapters.map((c) => c.imageQuery || outline.keywords_en || "")),
   ]);
   // Await both together so a failure in either is handled (no unhandled rejection).
-  const [[intro, conclusion, refsText]] = await Promise.all([rest, sectionsDone]);
+  const [[intro, conclusion, refs, images]] = await Promise.all([rest, sectionsDone]);
+  chapters.forEach((c, i) => { c.image = images[i] || null; });
   stats.ms.total = Date.now() - t0;
 
   return {
@@ -117,6 +122,7 @@ One reference per line, no numbering, no extra text.` }], { maxTokens: 1500, tem
     conclusion: format === "pptx" ? splitParas(conclusion) : trimWords(splitParas(conclusion), Math.round(p.conclWords * 1.35)),
     chapters,
     stats,
-    references: splitParas(refsText).map((x) => x.replace(/\s*(https?:\/\/\S+|doi:\s*\S+)\s*$/i, "").trim()).slice(0, 14).sort((a, b) => a.localeCompare(b, lang)),
+    references: refs.map(formatRef).sort((a, b) => a.localeCompare(b, lang)),
+    chapterWord: learned?.chapterWord && (learned.lang === "ar") === (lang === "ar") ? learned.chapterWord : null,
   };
 }

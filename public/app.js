@@ -2,7 +2,7 @@
 const $ = (s) => document.querySelector(s);
 const VERIFIER = "neon_auth_session_verifier";
 const FORMAT_LABEL = { docx: "Word", pdf: "PDF", pptx: "PowerPoint", xlsx: "Excel" };
-const state = { me: null, logo: null, fileUrl: null, busy: false };
+const state = { me: null, logo: null, fileUrl: null, busy: false, logos: null, profiles: [] };
 
 function toast(msg, err = false) {
   const t = $("#toast");
@@ -94,37 +94,244 @@ $("#logo-input").addEventListener("change", async (e) => {
   if (!/^image\/(png|jpeg|webp)$/.test(f.type)) { toast("الصيغ المدعومة: PNG أو JPG أو WEBP", true); return; }
   if (f.size > 2 * 1024 * 1024) { toast("حجم الصورة يجب أن يكون أقل من 2 ميغابايت", true); return; }
   state.logo = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
-  $("#logo-preview").src = state.logo;
-  $("#logo-preview").hidden = false;
-  $("#logo-clear").hidden = false;
+  $("#logo-q").value = "";
+  showLogo("شعار مخصص — ستُزال الخلفية تلقائيًا");
 });
 $("#logo-clear").addEventListener("click", () => {
   state.logo = null;
   $("#logo-input").value = "";
   $("#logo-preview").hidden = true;
   $("#logo-clear").hidden = true;
+  $("#logo-name").textContent = "";
+  $("#logo-q").value = "";
+  updatePreview();
 });
 
 function readForm() {
   const v = (n) => form[n].value.trim();
+  const radio = (n) => form.querySelector(`input[name="${n}"]:checked`)?.value;
+  const students = [...document.querySelectorAll("#students input")].map((i) => i.value.trim()).filter(Boolean);
   const data = {
-    title: v("title"), lang: form.lang.value, pages: Number(form.pages.value), format: form.format.value,
-    student: v("student"), supervisor: v("supervisor"), university: v("university"), department: v("department"),
+    title: v("title"), lang: form.lang.value, pages: Number(form.pages.value), format: radio("format"),
+    students, supervisor: v("supervisor"), university: v("university"), college: v("college"), department: v("department"),
+    mode: radio("mode"), topicColor: radio("topicColor"), images: form.images.checked,
   };
+  if (data.mode === "advanced") {
+    Object.assign(data, { palette: radio("palette"), border: radio("border"), background: radio("background") });
+    const sid = radio("styleId");
+    if (sid && sid !== "0") data.styleId = Number(sid);
+  }
   if (data.title.length < 3) return [null, "اكتب عنوان التقرير", "title"];
-  if (data.student.length < 2) return [null, "اكتب اسم الطالب", "student"];
   if (data.university.length < 2) return [null, "اكتب اسم الجامعة أو المعهد", "university"];
+  if (!students.length) return [null, "اكتب اسم طالب واحد على الأقل", null];
   if (state.logo) data.logo = state.logo;
   return [data];
 }
+
+/* ---------- Students ---------- */
+function addStudent(value = "") {
+  const box = $("#students");
+  if (box.children.length >= 10) { toast("الحد الأقصى 10 طلاب", true); return; }
+  const row = document.createElement("div");
+  row.className = "student-row";
+  const input = document.createElement("input");
+  input.maxLength = 80;
+  input.placeholder = `اسم الطالب ${box.children.length + 1}`;
+  input.value = value;
+  input.addEventListener("input", updatePreview);
+  const del = document.createElement("button");
+  del.type = "button"; del.textContent = "×"; del.title = "حذف";
+  del.addEventListener("click", () => { if (box.children.length > 1) row.remove(); else input.value = ""; updatePreview(); });
+  row.append(input, del);
+  box.append(row);
+  return input;
+}
+addStudent();
+$("#add-student").addEventListener("click", () => addStudent().focus());
+
+/* ---------- Mode & live cover preview ---------- */
+const PAL = { navy: "#1B2A6B", burgundy: "#6D1A2A", emerald: "#0F6B4F", charcoal: "#36454F" };
+const BG = { none: "#fff", ivory: "#FBF8F1", mist: "#F4F7FB", sage: "#F3F7F2" };
+function updatePreview() {
+  const radio = (n) => form.querySelector(`input[name="${n}"]:checked`)?.value;
+  const pv = $("#preview");
+  pv.style.setProperty("--p", PAL[radio("palette")] || PAL.navy);
+  pv.style.setProperty("--t", radio("topicColor") === "blue" ? "#1F4E9A" : "#000");
+  pv.style.setProperty("--bg", BG[radio("background")] || "#fff");
+  pv.classList.toggle("framed", radio("border") !== "none");
+  $("#pv-uni").textContent = form.university.value.trim() || "اسم الجامعة";
+  $("#pv-title").textContent = form.title.value.trim() || "عنوان الموضوع";
+  const names = [...document.querySelectorAll("#students input")].map((i) => i.value.trim()).filter(Boolean);
+  $("#pv-names").replaceChildren(...(names.length ? names : ["الطالب الأول", "الطالب الثاني"]).slice(0, 6).map((n) => { const d = document.createElement("div"); d.textContent = n; return d; }));
+  $("#pv-logo").hidden = !state.logo;
+  if (state.logo) $("#pv-logo").src = state.logo;
+}
+form.addEventListener("input", updatePreview);
+form.addEventListener("change", (e) => {
+  if (e.target.name === "mode") {
+    $("#advanced").hidden = form.querySelector('input[name="mode"]:checked').value !== "advanced";
+    if (!$("#advanced").hidden) loadProfiles();
+  }
+  updatePreview();
+});
+
+/* ---------- Logo library (instant search) ---------- */
+const norm = (s) => String(s || "").toLowerCase().replace(/[\u064B-\u065F\u0670\u0640]/g, "").replace(/[أإآٱ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").replace(/\s+/g, " ").trim();
+async function logos() {
+  if (!state.logos) state.logos = await fetch("/logos.json").then((r) => r.json()).then((l) => l.map((x) => ({ ...x, k: norm(`${x.ar} ${x.en}`) }))).catch(() => []);
+  return state.logos;
+}
+let logoTimer, active = -1;
+const COUNTRY = { IQ: "العراق", SA: "السعودية", EG: "مصر", JO: "الأردن", SY: "سوريا", LB: "لبنان", KW: "الكويت", AE: "الإمارات", QA: "قطر", BH: "البحرين", OM: "عُمان", YE: "اليمن", PS: "فلسطين", DZ: "الجزائر", MA: "المغرب", TN: "تونس", LY: "ليبيا", SD: "السودان" };
+function renderLogoResults(items, q, live = false) {
+  const ul = $("#logo-results");
+  ul.replaceChildren();
+  active = -1;
+  for (const it of items) {
+    const li = document.createElement("li");
+    li.setAttribute("role", "option");
+    const name = document.createElement("span");
+    name.textContent = it.ar || it.en;
+    const meta = document.createElement("small");
+    meta.textContent = it.c ? COUNTRY[it.c] || it.c : "ويكيبيديا";
+    li.append(name, meta);
+    li.addEventListener("mousedown", (e) => { e.preventDefault(); pickLogo(it); });
+    ul.append(li);
+  }
+  if (!live && q.length >= 3) {
+    const more = document.createElement("li");
+    more.className = "more";
+    more.textContent = items.length ? `لم تجده؟ ابحث أوسع عن «${q}»` : `ابحث في ويكيبيديا عن «${q}»`;
+    more.addEventListener("mousedown", (e) => { e.preventDefault(); liveLogoSearch(q); });
+    ul.append(more);
+  }
+  if (live && !items.length) {
+    const li = document.createElement("li"); li.className = "more"; li.textContent = "لم نجد شعارًا — استخدم «رفع شعار مخصص»";
+    ul.append(li);
+  }
+  ul.hidden = !ul.children.length;
+}
+async function liveLogoSearch(q) {
+  const ul = $("#logo-results");
+  ul.replaceChildren(Object.assign(document.createElement("li"), { className: "more", textContent: "جارٍ البحث…" }));
+  const j = await fetch(`/api/logo?q=${encodeURIComponent(q)}`, { credentials: "same-origin" }).then((r) => r.json()).catch(() => ({ results: [] }));
+  renderLogoResults((j.results || []).map((x) => ({ ...x, s: x.w })), q, true);
+}
+$("#logo-q").addEventListener("input", (e) => {
+  clearTimeout(logoTimer);
+  const q = e.target.value.trim();
+  if (q.length < 2) { $("#logo-results").hidden = true; return; }
+  logoTimer = setTimeout(async () => {
+    const n = norm(q);
+    const list = (await logos()).filter((x) => x.k.includes(n));
+    list.sort((a, b) => (a.c === "IQ" ? 0 : 1) - (b.c === "IQ" ? 0 : 1) || a.k.indexOf(n) - b.k.indexOf(n));
+    renderLogoResults(list.slice(0, 8), q);
+  }, 80);
+});
+$("#logo-q").addEventListener("keydown", (e) => {
+  const items = [...$("#logo-results").children];
+  if (!items.length || $("#logo-results").hidden) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    active = (active + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    items.forEach((li, i) => li.setAttribute("aria-selected", i === active));
+  } else if (e.key === "Enter" && active >= 0) {
+    e.preventDefault();
+    items[active].dispatchEvent(new MouseEvent("mousedown"));
+  } else if (e.key === "Escape") $("#logo-results").hidden = true;
+});
+$("#logo-q").addEventListener("blur", () => setTimeout(() => ($("#logo-results").hidden = true), 150));
+
+async function pickLogo(it) {
+  $("#logo-results").hidden = true;
+  $("#logo-q").value = it.ar || it.en;
+  $("#logo-name").textContent = "جارٍ تحميل الشعار…";
+  try {
+    const r = await fetch(`/api/logo?src=${encodeURIComponent(it.s)}&f=${encodeURIComponent(it.f)}`);
+    if (!r.ok) throw new Error();
+    const blob = await r.blob();
+    state.logo = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(blob); });
+    showLogo(it.ar || it.en);
+    if (!form.university.value.trim() && it.ar) form.university.value = it.ar;
+  } catch {
+    $("#logo-name").textContent = "";
+    toast("تعذّر تحميل هذا الشعار، جرّب «رفع شعار مخصص»", true);
+  }
+}
+function showLogo(label) {
+  $("#logo-preview").src = state.logo;
+  $("#logo-preview").hidden = false;
+  $("#logo-clear").hidden = false;
+  $("#logo-name").textContent = label;
+  updatePreview();
+}
+
+/* ---------- Style samples (advanced) ---------- */
+async function loadProfiles() {
+  const j = await fetch("/api/style", { credentials: "same-origin" }).then((r) => r.json()).catch(() => ({ profiles: [] }));
+  state.profiles = j.profiles || [];
+  renderProfiles();
+}
+function renderProfiles(selectId) {
+  const ul = $("#profiles");
+  const current = selectId ?? form.querySelector('input[name="styleId"]:checked')?.value ?? "0";
+  ul.replaceChildren();
+  const item = (id, title, sub, removable) => {
+    const li = document.createElement("li");
+    const label = document.createElement("label");
+    const r = document.createElement("input");
+    r.type = "radio"; r.name = "styleId"; r.value = String(id); r.checked = String(id) === String(current);
+    const t = document.createElement("span");
+    t.textContent = title;
+    if (sub) { const s = document.createElement("small"); s.textContent = sub; t.append(s); }
+    label.append(r, t);
+    li.append(label);
+    if (removable) {
+      const del = document.createElement("button");
+      del.type = "button"; del.className = "link"; del.textContent = "حذف";
+      del.addEventListener("click", async () => {
+        await fetch(`/api/style?id=${id}`, { method: "DELETE", credentials: "same-origin" });
+        loadProfiles();
+      });
+      li.append(del);
+    }
+    ul.append(li);
+  };
+  item(0, "بدون نموذج — أسلوب أكاديمي قياسي", "", false);
+  for (const p of state.profiles) item(p.id, p.name, p.summary, true);
+}
+$("#sample-input").addEventListener("change", async (e) => {
+  const files = [...e.target.files].slice(0, 3);
+  e.target.value = "";
+  if (!files.length) return;
+  if (files.reduce((n, f) => n + f.size, 0) > 3 * 1024 * 1024) { toast("مجموع حجم النماذج يجب أن يكون أقل من 3 ميغابايت", true); return; }
+  const status = $("#sample-status");
+  status.textContent = "جارٍ تحليل النموذج…";
+  try {
+    const data = await Promise.all(files.map((f) => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(f); })));
+    const r = await fetch("/api/style", {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: $("#sample-name").value.trim() || files[0].name.replace(/\.[^.]+$/, ""), files: data }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || "تعذّر تحليل النموذج");
+    status.textContent = "✓ تم الحفظ: " + j.summary;
+    await loadProfiles();
+    renderProfiles(j.id);
+  } catch (err) {
+    status.textContent = "";
+    toast(err.message, true);
+  }
+});
 
 /* ---------- Generation ---------- */
 const STEPS = [
   [0, "نضع مخطط الفصول والمباحث…"],
   [8, "نكتب المقدمة والفصل الأول…"],
   [30, "نكتب بقية الفصول والمباحث…"],
-  [60, "نكتب الخاتمة ونجمع المراجع…"],
-  [85, "نصمّم الغلاف وننسّق الصفحات…"],
+  [55, "نبحث عن مصادر حقيقية في المجلات العراقية والعربية…"],
+  [70, "نختار الصور التوضيحية ونكتب الخاتمة…"],
+  [88, "نصمّم الغلاف وننسّق الصفحات…"],
   [120, "اللمسات الأخيرة على الملف…"],
 ];
 let timer;
@@ -147,7 +354,7 @@ async function generate(e) {
   if (state.busy) return;
   const [data, err, field] = readForm();
   const errBox = $("#form-error");
-  if (!data) { errBox.textContent = err; errBox.hidden = false; form[field].focus(); return; }
+  if (!data) { errBox.textContent = err; errBox.hidden = false; (field ? form[field] : $("#students input"))?.focus(); return; }
   errBox.hidden = true;
   state.busy = true;
   state.last = data;
@@ -193,7 +400,7 @@ async function generate(e) {
 form.addEventListener("submit", generate);
 $("#btn-google").addEventListener("click", signInGoogle);
 $("#btn-logout").addEventListener("click", signOut);
-$("#btn-new").addEventListener("click", () => show("form-view"));
+$("#btn-new").addEventListener("click", () => { show("form-view"); updatePreview(); });
 $("#btn-back").addEventListener("click", () => show("dash"));
 $("#btn-another").addEventListener("click", () => { form.title.value = ""; show("form-view"); form.title.focus(); });
 $("#btn-retry").addEventListener("click", () => generate());

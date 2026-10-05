@@ -58,6 +58,14 @@
       <form id="report-form" class="paper" novalidate autocomplete="on">
         <h2>تقرير جديد</h2>
 
+        <fieldset class="group">
+          <legend>نوع التقرير</legend>
+          <div class="modes">
+            <label><input type="radio" name="mode" value="standard" checked><span><b>التقرير العادي</b><small>أبيض وأسود كلاسيكي للطباعة السريعة، مع صور توضيحية ومصادر حقيقية</small></span></label>
+            <label><input type="radio" name="mode" value="advanced"><span><b>التقرير الاحترافي المتقدم</b><small>كل ما سبق + تعلّم أسلوب تقرير نموذجي ترفعه + استوديو الألوان والإطارات</small></span></label>
+          </div>
+        </fieldset>
+
         <label class="field wide">
           <span>اسم الموضوع / عنوان التقرير <b>*</b></span>
           <textarea name="title" rows="2" maxlength="220" required placeholder="مثال: أثر الذكاء الاصطناعي في جودة التعليم الجامعي"></textarea>
@@ -83,11 +91,88 @@
 
         <fieldset class="group">
           <legend>معلومات الغلاف الأكاديمي</legend>
+          <p class="muted small hint">الترويسة ثابتة في أعلى يمين الغلاف: «جمهورية العراق — وزارة التعليم العالي والبحث العلمي» ثم اسم الجامعة والكلية والقسم، والشعار في أعلى اليسار.</p>
           <div class="grid">
-            <label class="field"><span>اسم الطالب <b>*</b></span><input name="student" maxlength="120" required autocomplete="name"></label>
-            <label class="field"><span>اسم المشرف <i>(اختياري)</i></span><input name="supervisor" maxlength="120"></label>
             <label class="field"><span>اسم الجامعة أو المعهد <b>*</b></span><input name="university" maxlength="160" required></label>
-            <label class="field"><span>القسم الدراسي</span><input name="department" maxlength="120"></label>
+            <label class="field"><span>الكلية <i>(اختياري)</i></span><input name="college" maxlength="160" placeholder="مثال: كلية التربية للعلوم الصرفة"></label>
+            <label class="field"><span>القسم الدراسي <i>(اختياري)</i></span><input name="department" maxlength="120"></label>
+            <label class="field"><span>اسم المشرف <i>(اختياري)</i></span><input name="supervisor" maxlength="120"></label>
+          </div>
+          <div class="field">
+            <span>أسماء الطلاب المشاركين <b>*</b> <i>(تظهر أسفل الغلاف في عمودين: يمين ويسار)</i></span>
+            <div id="students"></div>
+            <button id="add-student" class="link" type="button">+ إضافة طالب</button>
+          </div>
+          <div class="field">
+            <span>لون اسم الموضوع على الغلاف</span>
+            <div class="chips">
+              <label><input type="radio" name="topicColor" value="black" checked><span><i class="sw c-000"></i>أسود</span></label>
+              <label><input type="radio" name="topicColor" value="blue"><span><i class="sw c-1f4e9a"></i>أزرق</span></label>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>شعار الجامعة أو المعهد</legend>
+          <div class="logo-search">
+            <input id="logo-q" type="search" placeholder="اكتب أول حروف اسم الجامعة… مثال: بغداد، البصرة، التقنية" autocomplete="off" aria-label="البحث عن شعار">
+            <ul id="logo-results" role="listbox" hidden></ul>
+          </div>
+          <div class="upload">
+            <img id="logo-preview" alt="" hidden>
+            <span id="logo-name" class="small"></span>
+            <button id="logo-clear" class="link" type="button" hidden>إزالة</button>
+          </div>
+          <div class="upload">
+            <label class="btn-ghost" for="logo-input">رفع شعار مخصص</label>
+            <input id="logo-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+            <span class="muted small">إن لم تجد شعارك: ارفعه (PNG أو JPG أو WEBP، أقل من 2 ميغابايت) وسنزيل الخلفية ونضبط أبعاده تلقائيًا.</span>
+          </div>
+        </fieldset>
+
+        <fieldset id="advanced" class="group" hidden>
+          <legend>التعلّم من تقرير نموذجي</legend>
+          <p class="muted small hint">ارفع تقريرًا أو أكثر (Word أو PDF) كنموذج؛ نحلّل هيكله وطريقة تقسيم العناوين وطول الفقرات والهوامش والخط، ونحفظه لك لتستخدمه في كل تقرير جديد.</p>
+          <ul id="profiles"></ul>
+          <div class="upload">
+            <input id="sample-name" class="inline" maxlength="80" placeholder="اسم النموذج (مثال: نموذج قسم الحاسوب)">
+            <label class="btn-ghost" for="sample-input">اختيار ملفات النموذج</label>
+            <input id="sample-input" type="file" accept=".docx,.pdf,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" multiple hidden>
+            <span id="sample-status" class="muted small"></span>
+          </div>
+
+          <h3 class="studio-h">استوديو التنسيق</h3>
+          <div class="studio">
+            <div>
+              <div class="field"><span>لوحة الألوان</span>
+                <div class="chips">
+                  <label><input type="radio" name="palette" value="navy" checked><span><i class="sw c-1b2a6b"></i>كحلي ملكي</span></label>
+                  <label><input type="radio" name="palette" value="burgundy"><span><i class="sw c-6d1a2a"></i>عنابي داكن</span></label>
+                  <label><input type="radio" name="palette" value="emerald"><span><i class="sw c-0f6b4f"></i>أخضر زمردي</span></label>
+                  <label><input type="radio" name="palette" value="charcoal"><span><i class="sw c-36454f"></i>رمادي فحمي</span></label>
+                </div>
+              </div>
+              <div class="field"><span>الإطار الحدودي</span>
+                <div class="chips">
+                  <label><input type="radio" name="border" value="none"><span>بدون</span></label>
+                  <label><input type="radio" name="border" value="cover" checked><span>الغلاف فقط</span></label>
+                  <label><input type="radio" name="border" value="all"><span>كل الصفحات</span></label>
+                </div>
+              </div>
+              <div class="field"><span>خلفية الورقة</span>
+                <div class="chips">
+                  <label><input type="radio" name="background" value="none" checked><span><i class="sw c-fff"></i>أبيض</span></label>
+                  <label><input type="radio" name="background" value="ivory"><span><i class="sw c-fbf8f1"></i>عاجي</span></label>
+                  <label><input type="radio" name="background" value="mist"><span><i class="sw c-f4f7fb"></i>أزرق ضبابي</span></label>
+                  <label><input type="radio" name="background" value="sage"><span><i class="sw c-f3f7f2"></i>أخضر هادئ</span></label>
+                </div>
+              </div>
+            </div>
+            <div class="preview" id="preview" aria-hidden="true">
+              <div class="pv-top"><div class="pv-min"><b>جمهورية العراق</b><b>وزارة التعليم العالي والبحث العلمي</b><span id="pv-uni">اسم الجامعة</span></div><img id="pv-logo" alt="" hidden></div>
+              <div class="pv-mid"><div class="pv-lbl">تقرير بعنوان</div><div id="pv-title" class="pv-title">عنوان الموضوع</div></div>
+              <div class="pv-bot"><div class="pv-lbl small">إعداد الطلاب</div><div id="pv-names" class="pv-names"></div></div>
+            </div>
           </div>
         </fieldset>
 
@@ -100,17 +185,7 @@
             <label><input type="radio" name="format" value="xlsx"><span><b>Excel</b><small>.xlsx</small></span></label>
           </div>
           <p id="pptx-note" class="muted small" hidden>في PowerPoint يمثّل الرقم عدد الشرائح التقريبي.</p>
-        </fieldset>
-
-        <fieldset class="group">
-          <legend>شعار أو صورة للغلاف <i>(اختياري)</i></legend>
-          <div class="upload">
-            <label class="btn-ghost" for="logo-input">اختيار صورة</label>
-            <input id="logo-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
-            <img id="logo-preview" alt="" hidden>
-            <button id="logo-clear" class="link" type="button" hidden>إزالة</button>
-            <span class="muted small">PNG أو JPG أو WEBP، أقل من 2 ميغابايت. يُوضع أعلى صفحة الغلاف.</span>
-          </div>
+          <label class="check-line"><input type="checkbox" name="images" checked> إدراج صور توضيحية (من Wikimedia Commons بتراخيص مفتوحة مع ذكر المصدر)</label>
         </fieldset>
 
         <p id="form-error" class="error" role="alert" hidden></p>
@@ -136,7 +211,7 @@
             <a id="btn-download" class="btn-primary big" download>تحميل التقرير فورًا</a>
             <a id="btn-open" class="btn-ghost big" target="_blank" rel="noopener">فتح الملف</a>
           </div>
-          <p class="muted small">راجِع قائمة المراجع وتحقّق منها قبل التسليم.</p>
+          <p class="muted small">المصادر حقيقية ومأخوذة من سجلات Crossref مع رابط DOI لكل مصدر — راجِعها قبل التسليم.</p>
           <button id="btn-another" class="link" type="button">إنشاء تقرير آخر</button>
         </div>
         <div id="failed" hidden>
