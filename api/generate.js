@@ -108,7 +108,6 @@ export const POST = route(async (request) => {
   await sql`INSERT INTO reports (user_id, title, lang, format, pages) VALUES (${user.id}, ${input.title}, ${lang}, ${format}, ${pages})`;
 
   const name = `${input.title.slice(0, 80)}.${format}`;
-  report.style = undefined;
   return new Response(file, {
     headers: {
       "Content-Type": FORMATS[format].mime,
