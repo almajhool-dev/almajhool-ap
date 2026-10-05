@@ -3669,5 +3669,20 @@ end $$;
 -- مقاطع القصص لحد 50 ميگا
 update storage.buckets set file_size_limit = 52428800 where id = 'posts' and coalesce(file_size_limit, 0) < 52428800;
 
+-- =====================================================================
+--  الإصدار 27: تسجيل نسخة جديدة يوقف ظهورها لحين قرار صاحب التطبيق
+-- =====================================================================
+create or replace function public.ci_set_release(p_gh text, p_build int, p_url text, p_notes text) returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _gh_verify(p_gh) then return false; end if;
+  if p_url not like 'https://github.com/almajhool-dev/almajhool-ap/releases/download/%' then return false; end if;
+  insert into app_release(id, build, url, notes, paused) values (1, p_build, p_url, left(coalesce(p_notes, ''), 2000), true)
+    on conflict (id) do update set build = excluded.build, url = excluded.url, notes = excluded.notes,
+      paused = true, updated_at = now();
+  return true;
+end $$;
+grant execute on function public.ci_set_release(text, int, text, text) to anon;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
