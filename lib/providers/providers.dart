@@ -248,6 +248,7 @@ class ChatHub extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> refresh() async {
     try {
       conversations = await chats.myConversations();
+      _prefetch();
       unreadNotifications = await notifs.unreadCount();
       final c = await contacts.load();
       pendingRequests = c.incoming.length;
@@ -256,6 +257,36 @@ class ChatHub extends ChangeNotifier with WidgetsBindingObserver {
     }
     loading = false;
     notifyListeners();
+  }
+
+  // تحميل مسبق لرسائل آخر المحادثات (مثل ماسنجر): من تفتح المحادثة تطلع فورًا بآخر الرسائل
+  final Map<String, DateTime> _prefetched = {};
+  bool _prefetching = false;
+  Future<void> _prefetch() async {
+    if (_prefetching) return;
+    _prefetching = true;
+    try {
+      final list = [...conversations]..sort((a, b) => b.lastMessageAt.compareTo(a.lastMessageAt));
+      for (final c in list.take(12)) {
+        if (c.id == openConversationId) continue;
+        final last = _prefetched[c.id];
+        if (last != null && !c.lastMessageAt.isAfter(last)) continue;
+        final cached = CacheService.messages(c.id);
+        final newest = cached.isEmpty ? null : DateTime.tryParse('${cached.first['created_at']}');
+        if (newest != null && !c.lastMessageAt.isAfter(newest.add(const Duration(seconds: 1)))) {
+          _prefetched[c.id] = c.lastMessageAt;
+          continue;
+        }
+        try {
+          await chats.fetchMessages(c.id);
+          _prefetched[c.id] = c.lastMessageAt;
+        } catch (_) {
+          break; // بدون إنترنت
+        }
+      }
+    } finally {
+      _prefetching = false;
+    }
   }
 
   void refreshSoon() {
@@ -271,6 +302,7 @@ class ChatHub extends ChangeNotifier with WidgetsBindingObserver {
       try {
         conversations = await chats.myConversations();
         notifyListeners();
+        _prefetch();
       } catch (_) {}
     });
   }
@@ -345,6 +377,15 @@ class ChatHub extends ChangeNotifier with WidgetsBindingObserver {
 
   void _onMessage(Message m) {
     refreshConversationsSoon();
+    // نضيف الرسالة لذاكرة المحادثة فورًا (حتى تطلع من تفتحها بدون انتظار)
+    if (m.conversationId != openConversationId) {
+      try {
+        final cached = CacheService.messages(m.conversationId);
+        if (cached.isNotEmpty && !cached.any((x) => x['id'] == m.id)) {
+          CacheService.saveMessages(m.conversationId, [m.toMap(), ...cached]).catchError((_) {});
+        }
+      } catch (_) {}
+    }
     if (m.senderId == myId || m.isSystem) return;
     chats.markAllDelivered().catchError((_) {});
     ConversationSummary? conv;

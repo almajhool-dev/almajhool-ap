@@ -76,6 +76,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (c.id == _id) _conv = c;
     }
     _load();
+    _loadInfo();
     _subscribe();
   }
 
@@ -87,6 +88,9 @@ class _ChatScreenState extends State<ChatScreen> {
       t.cancel();
     }
     _readDebounce?.cancel();
+    _cacheDebounce?.cancel();
+    final sent = _messages.where((m) => m.state == SendState.sent && !m.id.startsWith('local-')).take(60);
+    CacheService.saveMessages(_id, sent.map((m) => m.toMap()).toList()).catchError((_) {});
     _recordTicker?.cancel();
     _recorder.dispose();
     _repo.markRead(_id).catchError((_) {});
@@ -99,15 +103,9 @@ class _ChatScreenState extends State<ChatScreen> {
   // ------------------------------------------------------------------ data
 
   Future<void> _load() async {
+    // 1) الرسائل أولًا وتطلع فورًا (بدون انتظار باقي الطلبات)
     try {
-      final results = await Future.wait([
-        _repo.fetchMessages(_id),
-        _repo.members(_id),
-        _repo.pinned(_id),
-        _repo.summary(_id),
-        _profiles.myBlocks(),
-      ]);
-      final fetched = results[0] as List<Message>;
+      final fetched = await _repo.fetchMessages(_id);
       final pending = Outbox.forConversation(_id).map((m) => Message(
             id: 'local-${m['client_id']}',
             clientId: m['client_id'] as String,
@@ -120,12 +118,14 @@ class _ChatScreenState extends State<ChatScreen> {
           ));
       if (!mounted) return;
       setState(() {
-        _messages = [...pending.toList().reversed, ...fetched];
-        _members = results[1] as List<Member>;
-        _pinned = results[2] as List<Message>;
-        _conv = (results[3] as ConversationSummary?) ?? _conv;
-        final blocks = results[4] as Set<String>;
-        _blockedByMe = _conv != null && !_conv!.isGroup && blocks.contains(_conv!.otherUserId);
+        // نحافظ على أي رسالة وصلت/انرسلت أثناء التحميل
+        final ids = fetched.map((m) => m.id).toSet();
+        final extra = _messages.where((m) =>
+            !ids.contains(m.id) && (m.state != SendState.sent || m.createdAt.isAfter(fetched.isEmpty ? DateTime(2000) : fetched.first.createdAt)));
+        final pend = pending.toList().reversed.toList();
+        final pendIds = pend.map((m) => m.id).toSet();
+        _messages = [...pend, ...extra.where((m) => !pendIds.contains(m.id)), ...fetched];
+        _messages.sort((x, y) => y.createdAt.compareTo(x.createdAt));
         _hasMore = fetched.length >= 30;
         _loading = false;
       });
@@ -135,6 +135,41 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() => _loading = false);
       if (_messages.isEmpty) showSnack(context, friendlyError(e), error: true);
     }
+  }
+
+  /// معلومات المحادثة (الأعضاء، المثبتة، الحظر) بالخلفية بدون ما تأخر الرسائل.
+  Future<void> _loadInfo() async {
+    try {
+      final results = await Future.wait([
+        _repo.members(_id),
+        _repo.pinned(_id),
+        _profiles.myBlocks(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _members = results[0] as List<Member>;
+        _pinned = results[1] as List<Message>;
+        final blocks = results[2] as Set<String>;
+        _blockedByMe = _conv != null && !_conv!.isGroup && blocks.contains(_conv!.otherUserId);
+      });
+    } catch (_) {}
+    if (_conv == null) {
+      try {
+        final c = await _repo.summary(_id);
+        if (mounted && c != null) setState(() => _conv = c);
+      } catch (_) {}
+    }
+  }
+
+  Timer? _cacheDebounce;
+
+  /// نحفظ آخر الرسائل حتى من ترجع للمحادثة تطلع فورًا وبآخر شي.
+  void _saveCache() {
+    _cacheDebounce?.cancel();
+    _cacheDebounce = Timer(const Duration(milliseconds: 800), () {
+      final sent = _messages.where((m) => m.state == SendState.sent && !m.id.startsWith('local-')).take(60);
+      CacheService.saveMessages(_id, sent.map((m) => m.toMap()).toList()).catchError((_) {});
+    });
   }
 
   void _onScroll() {
@@ -229,6 +264,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       if (m.senderId != null) _typing.remove(m.senderId)?.cancel();
     });
+    _saveCache();
     if (m.senderId != myId) {
       _readDebounce?.cancel();
       _readDebounce = Timer(const Duration(milliseconds: 600), () => _repo.markRead(_id).catchError((_) {}));
