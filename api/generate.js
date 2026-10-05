@@ -4,6 +4,7 @@ import { setOidcToken } from "./_ai.js";
 import { buildContent, LANGS } from "./_content.js";
 import { buildDocx, buildPdf, buildPptx, buildXlsx, chapterLabel } from "./_build.js";
 import { ensureImages } from "./_diagram.js";
+import { sharedBrowser } from "./_browser.js";
 import { removeBackground } from "./_logo.js";
 import { ensureTable } from "./style.js";
 import { cleanSource } from "./_source.js";
@@ -50,14 +51,26 @@ async function processLogo(b64) {
   }
 }
 
+let opsReady = false;
+async function ensureOps() {
+  if (opsReady) return;
+  await sql`CREATE TABLE IF NOT EXISTS gen_locks (user_id text PRIMARY KEY, until timestamptz NOT NULL)`;
+  await sql`CREATE TABLE IF NOT EXISTS gen_errors (id serial PRIMARY KEY, user_id text, stage text, message text, at timestamptz NOT NULL DEFAULT now())`;
+  opsReady = true;
+}
+async function logError(userId, stage, e) {
+  console.error(stage, e);
+  const msg = [e?.message, ...(e?.details || [])].filter(Boolean).join(" | ").slice(0, 1500);
+  await sql`INSERT INTO gen_errors (user_id, stage, message) VALUES (${userId}, ${stage}, ${msg})`.catch(() => {});
+}
+
 export const POST = route(async (request) => {
   requireSameOrigin(request);
   const len = Number(request.headers.get("content-length") || 0);
   if (len > 4_300_000) throw new HttpError(413, "حجم الطلب كبير جدًا");
   const user = await requireUser(request);
-  await rateLimit(`ip:${clientIp(request)}`, 20, 600);
-  await rateLimit(`u:${user.id}:h`, 6, 3600, "وصلت للحد المسموح (6 تقارير بالساعة). حاول بعد قليل.");
-  await rateLimit(`u:${user.id}:d`, 25, 86400, "وصلت للحد اليومي (25 تقريرًا). عُد غدًا.");
+  // No report quota. Abuse protection only: a flood guard per network address and one report at a time per account.
+  await rateLimit(`ip:${clientIp(request)}`, 40, 600, "طلبات كثيرة جدًا من نفس الشبكة خلال دقائق، انتظر قليلًا.");
 
   const body = await request.json().catch(() => { throw new HttpError(400, "بيانات غير صالحة"); });
   const lang = String(body.lang || "ar");
@@ -100,17 +113,33 @@ export const POST = route(async (request) => {
   const logo = await processLogo(body.logo);
   setOidcToken(request.headers.get("x-vercel-oidc-token"));
 
-  let report;
+  await ensureOps();
+  const [lock] = await sql`INSERT INTO gen_locks (user_id, until) VALUES (${user.id}, now() + interval '6 minutes')
+    ON CONFLICT (user_id) DO UPDATE SET until = EXCLUDED.until WHERE gen_locks.until < now() RETURNING user_id`;
+  if (!lock) throw new HttpError(429, "لديك تقرير قيد الإنشاء الآن — انتظر حتى يكتمل ثم أنشئ التالي.");
+
+  const shared = sharedBrowser();
+  let report, file, stage = "content";
   try {
-    report = await buildContent(input);
+    try {
+      report = await buildContent(input);
+    } catch (e) {
+      await logError(user.id, "content", e);
+      return json({ error: "خدمة الكتابة مزدحمة الآن، حاول مرة أخرى بعد دقيقة." }, 503);
+    }
+    report.logo = logo;
+    stage = "images";
+    // Images are mandatory: any section without a suitable photo or AI image gets a drawn diagram.
+    try { await ensureImages(report, (i) => chapterLabel(report, i), shared); } catch (e) { await logError(user.id, "diagram", e); }
+    stage = "build";
+    file = format === "pdf" ? await buildPdf(report, shared) : await FORMATS[format].build(report);
   } catch (e) {
-    console.error("content", e);
-    return json({ error: "خدمة الكتابة مزدحمة الآن، حاول مرة أخرى بعد دقيقة.", detail: (e.details || [e.message]).slice(-6) }, 503);
+    await logError(user.id, stage, e);
+    throw e;
+  } finally {
+    await shared.close();
+    await sql`DELETE FROM gen_locks WHERE user_id = ${user.id}`.catch(() => {});
   }
-  report.logo = logo;
-  // Images are mandatory: any chapter without a suitable photo gets a drawn diagram.
-  try { await ensureImages(report, (i) => chapterLabel(report, i)); } catch (e) { console.error("diagram", e); }
-  const file = await FORMATS[format].build(report);
   await sql`INSERT INTO reports (user_id, title, lang, format, pages) VALUES (${user.id}, ${report.title}, ${lang}, ${format}, ${pages})`;
 
   const name = `${report.title.slice(0, 80)}.${format}`;

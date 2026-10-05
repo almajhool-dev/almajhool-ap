@@ -18,3 +18,12 @@ export async function lockedPage(browser) {
   page.on("request", (req) => (req.url().startsWith("data:") || req.url() === "about:blank" ? req.continue() : req.abort()));
   return page;
 }
+
+/** One browser shared by every step of a request (diagrams + PDF), launched only if needed. */
+export function sharedBrowser() {
+  let b = null;
+  return {
+    get: async () => (b ||= await launchBrowser()),
+    close: async () => { if (b) { const x = b; b = null; await x.close().catch(() => {}); } },
+  };
+}

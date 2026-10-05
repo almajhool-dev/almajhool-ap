@@ -73,39 +73,42 @@ const toJpeg = async (buf, cropBottom = 0) => {
   return { data, width: info.width, height: info.height };
 };
 
-/** AI illustration through Vercel AI Gateway (Gemini image models). */
-async function gatewayImage(prompt) {
+/** AI illustration through Vercel AI Gateway (Gemini image models). `ctx.gatewayDown` stops retries after a failure. */
+async function gatewayImage(prompt, ctx, msLeft) {
   const key = gatewayKey();
-  if (!key) return null;
-  for (const model of ["google/gemini-3.1-flash-image-preview", "google/gemini-2.5-flash-image"]) {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 60_000);
-    try {
-      const r = await fetch("https://ai-gateway.vercel.sh/v1/chat/completions", {
-        method: "POST", signal: ctrl.signal,
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-        body: JSON.stringify({ model, modalities: ["image", "text"], stream: false, messages: [{ role: "user", content: prompt }] }),
-      });
-      if (!r.ok) { if (r.status === 401 || r.status === 403) return null; continue; }
-      const j = await r.json();
-      const url = j?.choices?.[0]?.message?.images?.[0]?.image_url?.url || "";
-      const b64 = url.split(",")[1];
-      if (b64) return { ...(await toJpeg(Buffer.from(b64, "base64"))), kind: "ai" };
-    } catch { /* try next */ } finally { clearTimeout(t); }
-  }
-  return null;
+  if (!key || ctx.gatewayDown || msLeft() < 8_000) return null;
+  const model = ctx.gatewayModel || "google/gemini-3.1-flash-image-preview";
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), Math.min(30_000, msLeft() - 2_000));
+  try {
+    const r = await fetch("https://ai-gateway.vercel.sh/v1/chat/completions", {
+      method: "POST", signal: ctrl.signal,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model, modalities: ["image", "text"], stream: false, messages: [{ role: "user", content: prompt }] }),
+    });
+    if (!r.ok) {
+      if (r.status === 404 && !ctx.gatewayModel) { ctx.gatewayModel = "google/gemini-2.5-flash-image"; return null; }
+      ctx.gatewayDown = true; // no credits / not enabled / rate-limited: don't keep waiting on it
+      return null;
+    }
+    const j = await r.json();
+    const b64 = (j?.choices?.[0]?.message?.images?.[0]?.image_url?.url || "").split(",")[1];
+    return b64 ? { ...(await toJpeg(Buffer.from(b64, "base64"))), kind: "ai" } : null;
+  } catch { ctx.gatewayFails = (ctx.gatewayFails || 0) + 1; if (ctx.gatewayFails >= 2) ctx.gatewayDown = true; return null; }
+  finally { clearTimeout(t); }
 }
 
 /** Free keyless fallback generator (its corner watermark is cropped off). */
-async function pollinationsImage(prompt, seed) {
+async function pollinationsImage(prompt, seed, ctx, msLeft) {
+  if (ctx.freeDown || msLeft() < 6_000) return null;
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 45_000);
+  const t = setTimeout(() => ctrl.abort(), Math.min(25_000, msLeft() - 1_000));
   try {
     const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt.slice(0, 600))}?width=1100&height=700&nologo=true&model=flux&seed=${seed}`;
     const r = await fetch(url, { headers: { "User-Agent": UA }, signal: ctrl.signal });
-    if (!r.ok || !/^image\//.test(r.headers.get("content-type") || "")) return null;
+    if (!r.ok || !/^image\//.test(r.headers.get("content-type") || "")) { if (r.status === 429) ctx.freeDown = true; return null; }
     return { ...(await toJpeg(Buffer.from(await r.arrayBuffer()), 0.07)), kind: "ai" };
-  } catch { return null; } finally { clearTimeout(t); }
+  } catch { ctx.freeFails = (ctx.freeFails || 0) + 1; if (ctx.freeFails >= 3) ctx.freeDown = true; return null; } finally { clearTimeout(t); }
 }
 
 export function illustrationPrompt({ topic, chapter, section, query }) {
@@ -116,22 +119,36 @@ Strictly no text, no letters, no numbers, no captions, no logos, no watermarks, 
 }
 
 /**
- * One illustration per item ({query, prompt}): a relevant freely-licensed photo, otherwise an AI-generated
- * image. Returns an array aligned with items; null entries are filled later with drawn diagrams.
+ * One illustration per item ({query, prompt, topicEn}): a relevant freely-licensed photo, otherwise an AI-generated
+ * image. Hard time budget: whatever is not found by the deadline is returned as null (filled later with diagrams),
+ * so image search can never make the report time out.
  */
-export async function findSectionImages(items, { fallbacks = [] } = {}) {
+export async function findSectionImages(items, { fallbacks = [], budgetMs = 75_000, concurrency = 6 } = {}) {
+  const deadline = Date.now() + budgetMs;
+  const msLeft = () => deadline - Date.now();
   const used = new Set();
-  return pool(items, 4, async (it, i) => {
+  const ctx = {};
+  const out = new Array(items.length).fill(null);
+  let next = 0;
+  const one = async (it, i) => {
     const photo = await commonsImage(it.query, used);
     if (photo) return photo;
-    // The free generator only understands English: give it the English subject + topic keywords, or skip it.
     const en = [it.query, it.topicEn].filter((x) => x && /[a-z]{3}/i.test(x)).join(", ");
-    const ai = (await gatewayImage(it.prompt)) ||
-      (en ? await pollinationsImage(`Professional realistic editorial photograph of ${en}. Accurate, high detail, natural light, no text, no letters, no watermark`, 1000 + i) : null);
-    if (ai) return { ...ai, credit: "AI" };
-    for (const f of fallbacks) { const p = await commonsImage(f, used); if (p) return p; }
+    const ai = (await gatewayImage(it.prompt, ctx, msLeft)) ||
+      (en ? await pollinationsImage(`Professional realistic editorial photograph of ${en}. Accurate, high detail, natural light, no text, no letters, no watermark`, 1000 + i, ctx, msLeft) : null);
+    if (ai) return ai;
+    for (const f of fallbacks) { if (msLeft() < 3_000) break; const p = await commonsImage(f, used); if (p) return p; }
     return null;
-  });
+  };
+  const worker = async () => {
+    while (next < items.length && msLeft() > 2_000) {
+      const i = next++;
+      try { const img = await one(items[i], i); if (msLeft() > 0) out[i] = img; } catch { /* leave null */ }
+    }
+  };
+  const work = Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  await Promise.race([work, new Promise((res) => setTimeout(res, Math.max(0, budgetMs)))]);
+  return out.slice();
 }
 
 /** Kept for compatibility: one image per query with broader fallbacks. */

@@ -72,9 +72,18 @@ export async function rateLimit(key, max, windowSec, message) {
   if (Math.random() < 0.05) await sql`DELETE FROM rate_hits WHERE at < now() - interval '2 days'`;
 }
 
-/** Same-origin check for state-changing requests (CSRF defence on top of SameSite=Strict). */
-export function requireSameOrigin(request) {
+/**
+ * Same-origin check for state-changing requests (CSRF defence on top of SameSite=Strict cookies):
+ * the Origin must match the host, the browser must not mark the request as cross-site, and bodies must be JSON
+ * (plain HTML forms from other sites cannot send that content type).
+ */
+export function requireSameOrigin(request, { json: needJson = true } = {}) {
   const origin = request.headers.get("origin");
   const host = request.headers.get("host");
-  if (!origin || !host || new URL(origin).host !== host) throw new HttpError(403, "طلب غير مسموح");
+  let ok = false;
+  try { ok = !!origin && !!host && new URL(origin).host === host; } catch { ok = false; }
+  const site = request.headers.get("sec-fetch-site");
+  if (site && !["same-origin", "none"].includes(site)) ok = false;
+  if (needJson && !["GET", "HEAD", "DELETE"].includes(request.method) && !/^application\/json\b/i.test(request.headers.get("content-type") || "")) ok = false;
+  if (!ok) throw new HttpError(403, "طلب غير مسموح");
 }

@@ -36,13 +36,14 @@ function diagramHtml(r, chapter, index, current = -1) {
 }
 
 /** Fills every section that has no photo or AI image with a rendered diagram, so no section is left without one. */
-export async function ensureImages(r, chapterLabel) {
+export async function ensureImages(r, chapterLabel, shared = null) {
   const missing = [];
   r.chapters.forEach((c, ci) => c.sections.forEach((s, si) => { if (!s.image) missing.push([c, ci, s, si]); }));
   if (!missing.length) return;
-  const browser = await launchBrowser();
+  const browser = shared ? await shared.get() : await launchBrowser();
+  let page;
   try {
-    const page = await lockedPage(browser);
+    page = await lockedPage(browser);
     await page.setViewport({ width: 1100, height: 620, deviceScaleFactor: 1.5 });
     for (const [c, ci, s, si] of missing) {
       await page.setContent(diagramHtml({ ...r, chapterLabel }, c, ci, si), { waitUntil: "load" });
@@ -52,6 +53,6 @@ export async function ensureImages(r, chapterLabel) {
       s.image = { data, width: info.width, height: info.height, kind: "diagram", credit: r.lang === "ar" ? "مخطط توضيحي من إعداد التقرير" : "Illustrative diagram prepared for this report" };
     }
   } finally {
-    await browser.close();
+    if (shared) await page?.close().catch(() => {}); else await browser.close();
   }
 }

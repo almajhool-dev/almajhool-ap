@@ -1,5 +1,5 @@
 // /api/auth/<path> → Neon Auth (rewritten in vercel.json to /api/auth?__p=<path>)
-import { authProxy } from "./_lib.js";
+import { authProxy, rateLimit, clientIp, HttpError, json } from "./_lib.js";
 
 const ALLOWED = new Set(["sign-in/social", "get-session", "sign-out"]);
 
@@ -9,6 +9,11 @@ async function handler(request) {
   // Google is the only sign-in method: everything except these endpoints (email/password sign-up,
   // password reset, account changes, ...) is refused here.
   if (!ALLOWED.has(path)) return new Response("Not allowed", { status: 403 });
+  // Brute-force / bot guard on sign-in attempts.
+  if (path === "sign-in/social") {
+    try { await rateLimit(`auth:${clientIp(request)}`, 30, 600, "محاولات دخول كثيرة، انتظر قليلًا."); }
+    catch (e) { if (e instanceof HttpError) return json({ error: e.message }, e.status); throw e; }
+  }
   url.searchParams.delete("__p");
   url.pathname = "/api/auth/" + path;
   const init = { method: request.method, headers: request.headers };

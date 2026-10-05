@@ -250,8 +250,8 @@ function bodyHtml(r) {
   <h1 class="first">${esc(r.L.toc)}</h1><div class="toc">${toc}</div>${main}</body></html>`;
 }
 
-export async function buildPdf(r) {
-  const browser = await launchBrowser();
+export async function buildPdf(r, shared = null) {
+  const browser = shared ? await shared.get() : await launchBrowser();
   try {
     const page = await lockedPage(browser); // generated content is static; no scripts or network
     const render = async (html, footer) => {
@@ -291,7 +291,7 @@ export async function buildPdf(r) {
     out.setAuthor(r.students.join("، "));
     return Buffer.from(await out.save());
   } finally {
-    await browser.close();
+    if (!shared) await browser.close();
   }
 }
 

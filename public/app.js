@@ -411,7 +411,7 @@ const STEPS = [
 ];
 let timer;
 function startProgress(pages) {
-  const expected = 70 + pages * 9; // seconds
+  const expected = 55 + pages * 6; // seconds
   const t0 = Date.now();
   $("#working").hidden = false; $("#done").hidden = true; $("#failed").hidden = true;
   clearInterval(timer);

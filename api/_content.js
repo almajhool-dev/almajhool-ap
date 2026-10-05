@@ -96,19 +96,19 @@ Exactly ${p.chapters} chapters, each with exactly ${p.sections} sections. Titles
   const outlineText = chapters.map((c, i) => `${i + 1}. ${c.title}: ${c.sections.map((s) => s.title).join("; ")}`).join("\n");
   const jobs = chapters.flatMap((c, ci) => c.sections.map((s, si) => ({ c, s, ci, si })));
 
-  const sectionsDone = pool(jobs, Number(process.env.GEN_CONCURRENCY) || 8, async ({ c, s }) => {
+  const sectionsDone = pool(jobs, Number(process.env.GEN_CONCURRENCY) || 12, async ({ c, s }) => {
     const ctx = src ? retrieve(src, `${s.title} ${c.title} ${title}`, format === "pptx" ? 2500 : 4200) : "";
     const srcBlock = ctx ? `\n${SOURCE_RULES}\nSOURCE MATERIAL (from the student's file, relevant passages):\n"""${ctx}"""\n` : "";
     if (format === "pptx") {
       const text = await chat([sys, { role: "user", content: `Report: "${title}". Chapter: "${c.title}". Slide topic: "${s.title}".
-${srcBlock}Write 4 to 5 concise, informative bullet points for this presentation slide (each 12-22 words), one per line, no symbols or numbering.` }], { maxTokens: 700, script, stats });
+${srcBlock}Write 4 to 5 concise, informative bullet points for this presentation slide (each 12-22 words), one per line, no symbols or numbering.` }], { maxTokens: 700, script, stats, temperature: 0.6, timeoutMs: 45_000 });
       s.bullets = splitParas(text).slice(0, 5);
     } else {
       const text = await chat([sys, { role: "user", content: `Report title: "${title}".
 Full outline:\n${outlineText}\n
 ${srcBlock}Write the section "${s.title}" of the chapter "${c.title}".
 Length: about ${p.words} words, in ${Math.max(2, Math.round(p.words / (p.paraWords || 110)))} well-developed paragraphs separated by a blank line.
-Do not repeat the section title, do not write an introduction to the whole report, do not summarize at the end.` }], { maxTokens: Math.min(4000, Math.round(p.words * 3.2) + 400), script, stats });
+Do not repeat the section title, do not write an introduction to the whole report, do not summarize at the end.` }], { maxTokens: Math.min(4000, Math.round(p.words * 3.2) + 400), script, stats, temperature: 0.6, timeoutMs: 55_000 });
       s.paragraphs = trimWords(splitParas(text), Math.round(p.words * 1.35));
     }
   }).then(() => { stats.ms.sections = Date.now() - t0; });
@@ -118,12 +118,12 @@ Do not repeat the section title, do not write an introduction to the whole repor
   const rest = Promise.all([
     chat([sys, { role: "user", content: format === "pptx"
       ? `Write 4 concise introduction bullet points (12-22 words each) for a presentation titled "${title}" with this outline:\n${outlineText}\nOne per line, no symbols.`
-      : `Write the introduction of the university report "${title}" with this outline:\n${outlineText}\nAbout ${p.introWords} words in 2-4 paragraphs: context and importance of the topic, the problem it addresses, objectives, and a short description of how the report is organized. Do not write a heading.${overview}` }], { maxTokens: 2000, script, stats }),
+      : `Write the introduction of the university report "${title}" with this outline:\n${outlineText}\nAbout ${p.introWords} words in 2-4 paragraphs: context and importance of the topic, the problem it addresses, objectives, and a short description of how the report is organized. Do not write a heading.${overview}` }], { maxTokens: 2000, script, stats, temperature: 0.6, timeoutMs: 55_000 }),
     chat([sys, { role: "user", content: format === "pptx"
       ? `Write 4 concise conclusion bullet points (12-22 words each) for a presentation titled "${title}". One per line, no symbols.`
-      : `Write the conclusion of the university report "${title}" with this outline:\n${outlineText}\nAbout ${p.conclWords} words in 2-3 paragraphs: main findings and a few practical recommendations. Do not write a heading.${overview}` }], { maxTokens: 1600, script, stats }),
+      : `Write the conclusion of the university report "${title}" with this outline:\n${outlineText}\nAbout ${p.conclWords} words in 2-3 paragraphs: main findings and a few practical recommendations. Do not write a heading.${overview}` }], { maxTokens: 1600, script, stats, temperature: 0.6, timeoutMs: 55_000 }),
     findReferences({ title, lang, keywordsAr: String(outline.keywords_ar || ""), keywordsEn: String(outline.keywords_en || ""), stats }),
-    findSectionImages(items, { fallbacks: [String(outline.keywords_en || "")] }),
+    findSectionImages(items, { fallbacks: [String(outline.keywords_en || "")], budgetMs: 80_000 }),
   ]);
   // Await both together so a failure in either is handled (no unhandled rejection).
   const [[intro, conclusion, refs, images]] = await Promise.all([rest, sectionsDone]);
