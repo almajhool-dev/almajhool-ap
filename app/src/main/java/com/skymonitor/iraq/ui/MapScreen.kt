@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -46,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -87,15 +89,18 @@ class MapActions(
 fun MapScreen(state: UiState, a: MapActions, showMap: Boolean = true) {
     var tilted by rememberSaveable { mutableStateOf(true) }
     var mode by rememberSaveable { mutableStateOf(MapMode.SATELLITE) }
+    var routeRequest by remember { mutableStateOf(0L) }
     Box(Modifier.fillMaxSize().background(Radar.Bg)) {
-        if (showMap) RadarMap(
+        if (showMap) SkyMap(
             aircraft = state.visible,
             trails = state.trails,
             selected = state.selected,
             selectedTrack = state.selectedTrack,
+            selectedRoute = state.selectedRoute,
             camera = state.camera,
             tilted = tilted,
             mode = mode,
+            showRouteRequest = routeRequest,
             onSelect = a.onSelect,
             onViewport = a.onViewport,
             modifier = Modifier.fillMaxSize(),
@@ -121,7 +126,7 @@ fun MapScreen(state: UiState, a: MapActions, showMap: Boolean = true) {
 
         // Satellite / radar map switch.
         Box(
-            Modifier.align(Alignment.CenterStart).padding(start = 12.dp, top = 120.dp).size(48.dp).clip(CircleShape)
+            Modifier.align(Alignment.CenterStart).offset(y = (-62).dp).padding(start = 12.dp).size(48.dp).clip(CircleShape)
                 .background(Radar.Panel).border(1.dp, Radar.Green, CircleShape)
                 .clickable { mode = if (mode == MapMode.SATELLITE) MapMode.RADAR else MapMode.SATELLITE },
             contentAlignment = Alignment.Center,
@@ -136,7 +141,7 @@ fun MapScreen(state: UiState, a: MapActions, showMap: Boolean = true) {
                 visible = state.selected != null,
                 enter = slideInVertically { it } + fadeIn(),
                 exit = slideOutVertically { it } + fadeOut(),
-            ) { state.selected?.let { DetailPanel(it, state) { a.onSelect(null) } } }
+            ) { state.selected?.let { DetailPanel(it, state, onShowRoute = { routeRequest = System.nanoTime() }) { a.onSelect(null) } } }
             if (state.selected == null) DisclaimerStrip(a.onOpenSources)
         }
     }
@@ -285,7 +290,7 @@ private fun EmptyHint(state: UiState) {
 }
 
 @Composable
-private fun DetailPanel(a: Aircraft, state: UiState, onClose: () -> Unit) {
+private fun DetailPanel(a: Aircraft, state: UiState, onShowRoute: () -> Unit, onClose: () -> Unit) {
     val accent = Color(colorFor(a))
     Column(
         Modifier.fillMaxWidth().heightIn(max = 380.dp).clip(RoundedCornerShape(18.dp)).background(Radar.Panel)
@@ -309,13 +314,26 @@ private fun DetailPanel(a: Aircraft, state: UiState, onClose: () -> Unit) {
             InfoRow("التسجيل", a.registration ?: NOT_AVAILABLE)
             a.country?.let { InfoRow("بلد التسجيل", it) }
             InfoRow("المصدر", a.source.label)
+            state.selectedRoute?.let { r ->
+                Spacer(Modifier.size(6.dp))
+                r.airline?.let { InfoRow("شركة الطيران", it) }
+                InfoRow("قادمة من", r.origin.labelAr)
+                InfoRow("متجهة إلى", r.destination.labelAr)
+                Text(
+                    "عرض الرحلة كاملة على الخريطة ↗", color = Radar.Sky, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(vertical = 6.dp).clickable(onClick = onShowRoute),
+                )
+            }
             Spacer(Modifier.size(6.dp))
             val pathText = when {
                 state.trackLoading -> "جارٍ تحميل المسار…"
                 state.selectedTrack != null -> "الخط الأبيض: المسار الذي قطعته منذ الإقلاع."
                 else -> state.trackNote ?: "الخط الأبيض: المسار المرصود أثناء فتح التطبيق."
             }
-            Text("$pathText\nالخط الأصفر المتقطع: اتجاهها الحالي خلال 20 دقيقة (تقدير، وليس الوجهة المعلنة).", color = Radar.Muted, fontSize = 12.sp, lineHeight = 17.sp)
+            val aheadText = if (state.selectedRoute != null)
+                "الخط الأبيض المنقّط: من مطار الإقلاع. الخط الأصفر: الطريق المتبقي إلى مطار الوجهة.\nالمطاران من سجل المسارات العام لرمز النداء وقد يختلفان عن رحلة اليوم."
+            else "الخط الأصفر المتقطع: اتجاهها الحالي خلال 20 دقيقة (لم يُنشر مسار لرمز النداء هذا)."
+            Text("$pathText\n$aheadText", color = Radar.Muted, fontSize = 12.sp, lineHeight = 17.sp)
         }
     }
 }

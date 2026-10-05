@@ -25,6 +25,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -75,9 +79,12 @@ fun SourcesScreen(state: UiState, onBack: () -> Unit) {
                 Bullet("تغطية الشبكات التطوعية فوق العراق محدودة، لذا قد تكون بعض المناطق فارغة حتى مع وجود حركة جوية.")
             }
 
+            Text("حفظ الخرائط بدون إنترنت", color = Radar.Green, fontWeight = FontWeight.Bold)
+            StorageCard()
+
             Text("الخريطة", color = Radar.Green, fontWeight = FontWeight.Bold)
             Card {
-                Text("الخريطة: صور الأقمار الصناعية من Esri World Imagery (Maxar، Earthstar Geographics)، والطرق والمباني ثلاثية الأبعاد من OpenFreeMap و OpenMapTiles ببيانات © OpenStreetMap، والتضاريس من AWS Terrain Tiles. أسماء الدول والمحافظات والمدن معروضة بالعربية.", color = Radar.Text, fontSize = 13.sp)
+                Text("الخريطة: كرة أرضية ثلاثية الأبعاد بمكتبة MapLibre GL JS. صور الأقمار الصناعية من Esri World Imagery (Maxar، Earthstar Geographics)، والطرق والمباني ثلاثية الأبعاد من OpenFreeMap و OpenMapTiles ببيانات © OpenStreetMap، والتضاريس المجسّمة من AWS Terrain Tiles، ومطارات الإقلاع والوجهة من adsbdb.com (سجل عام لمسارات رموز النداء). أسماء الدول والمحافظات والمدن معروضة بالعربية.", color = Radar.Text, fontSize = 13.sp)
             }
             Text("تطوير: $DEVELOPER", color = Radar.Muted, fontSize = 13.sp, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
             Spacer(Modifier.size(24.dp))
@@ -144,5 +151,64 @@ private fun Line(label: String, value: String) {
     Row(Modifier.fillMaxWidth()) {
         Text(label, color = Radar.Muted, fontSize = 13.sp, modifier = Modifier.width(140.dp))
         Text(value, color = Color(0xFFDDEBE6), fontSize = 13.sp, modifier = Modifier.weight(1f))
+    }
+}
+
+private fun sizeText(b: Long): String = when {
+    b >= 1L shl 30 -> "%.1f غيغابايت".format(java.util.Locale.US, b / (1L shl 30).toDouble())
+    else -> "%d ميغابايت".format(java.util.Locale.US, b / (1L shl 20))
+}
+
+@Composable
+private fun StorageCard() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val cache = androidx.compose.runtime.remember { com.skymonitor.iraq.map.TileCache.get(context) }
+    val pack by com.skymonitor.iraq.map.OfflinePack.state.collectAsState()
+    var used by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(-1L) }
+    var limit by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(cache.limitBytes) }
+    var tick by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0) }
+    androidx.compose.runtime.LaunchedEffect(pack.running, pack.done / 400, tick) {
+        used = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { cache.usedBytes() }
+    }
+    Card {
+        Text("كل مكان تشاهده على الخريطة يُحفظ في الهاتف تلقائياً، فيفتح فوراً في المرة القادمة ويعمل بدون إنترنت.", color = Radar.Text, fontSize = 13.sp, lineHeight = 19.sp)
+        Line("المساحة المستخدمة", if (used < 0) "…" else sizeText(used))
+        Line("المساحة الفارغة في الهاتف", sizeText(cache.freeBytes()))
+        Text("الحد الأقصى للحفظ", color = Radar.Muted, fontSize = 13.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(1L shl 30 to "1 غيغا", 3L shl 30 to "3 غيغا", 0L to "بلا حد").forEach { (v, label) ->
+                val on = limit == v
+                Box(
+                    Modifier.clip(RoundedCornerShape(50)).background(if (on) Radar.Green.copy(alpha = .18f) else Color.Transparent)
+                        .border(1.dp, if (on) Radar.Green else Radar.Line, RoundedCornerShape(50))
+                        .clickable { cache.limitBytes = v; limit = v }.padding(horizontal = 14.dp, vertical = 7.dp),
+                ) { Text(label, color = if (on) Radar.Green else Radar.Text, fontSize = 13.sp) }
+            }
+        }
+        if (limit == 0L) Text("«بلا حد»: يستمر الحفظ حتى يبقى أقل من 800 ميغابايت فارغة في الهاتف، ثم تُحذف الأماكن الأقدم.", color = Radar.Muted, fontSize = 12.sp, lineHeight = 17.sp)
+
+        Spacer(Modifier.size(4.dp))
+        Text("تنزيل خريطة جاهزة: كل دول العالم (عرض عام) + العراق بالمدن والطرق والتضاريس والأسماء العربية. صور القمر الصناعي لا تُنزَّل دفعةً واحدة لأن شروط مزوّدها لا تسمح بذلك، لكن ما تشاهده منها يُحفظ.", color = Radar.Muted, fontSize = 12.sp, lineHeight = 17.sp)
+        when {
+            pack.running -> {
+                val frac = if (pack.total > 0) pack.done.toFloat() / pack.total else 0f
+                androidx.compose.material3.LinearProgressIndicator(progress = { frac }, color = Radar.Green, trackColor = Radar.Line, modifier = Modifier.fillMaxWidth())
+                Text("جارٍ التنزيل: ${pack.done} من ${pack.total} (${(frac * 100).toInt()}٪)", color = Radar.Text, fontSize = 13.sp)
+                androidx.compose.material3.TextButton(onClick = { com.skymonitor.iraq.map.OfflinePack.cancel() }) { Text("إيقاف", color = Radar.Red) }
+            }
+            else -> {
+                pack.error?.let { Text("⚠ $it", color = Radar.Red, fontSize = 13.sp) }
+                pack.finishedAtMs?.let { Text("✓ اكتمل التنزيل" + if (pack.failed > 0) " (تعذّر ${pack.failed} جزء، أعد المحاولة لاحقاً)" else "", color = Radar.Green, fontSize = 13.sp) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    androidx.compose.material3.Button(
+                        onClick = { com.skymonitor.iraq.map.OfflinePack.start(context) },
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Radar.Green, contentColor = Color.Black),
+                    ) { Text("تنزيل الخريطة (حوالي 180 ميغا)") }
+                    androidx.compose.material3.TextButton(onClick = {
+                        kotlin.concurrent.thread { cache.clear(); tick++ }
+                    }) { Text("مسح", color = Radar.Muted) }
+                }
+            }
+        }
     }
 }

@@ -77,6 +77,8 @@ data class UiState(
     val selectedTrack: List<DoubleArray>? = null,
     val trackLoading: Boolean = false,
     val trackNote: String? = null,
+    /** Published route (origin → destination airports) for the selected flight's callsign. */
+    val selectedRoute: com.skymonitor.iraq.data.FlightRoute? = null,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -144,8 +146,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun select(a: Aircraft?) {
         val changed = a?.hex != _state.value.selected?.hex
-        _state.update { it.copy(selected = a, selectedTrack = if (changed) null else it.selectedTrack, trackNote = if (changed) null else it.trackNote) }
-        if (a != null && changed) loadTrack(a)
+        _state.update { it.copy(selected = a, selectedTrack = if (changed) null else it.selectedTrack, trackNote = if (changed) null else it.trackNote,
+            selectedRoute = if (changed) null else it.selectedRoute) }
+        if (a != null && changed) { loadTrack(a); loadRoute(a) }
     }
 
     fun focus(a: Aircraft) {
@@ -171,6 +174,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         ?: "تعذّر جلب المسار الكامل")
                 }
             }
+        }
+    }
+
+    private var routeJob: Job? = null
+
+    /** Looks up where the flight comes from and where it is heading (public adsbdb route by callsign). */
+    private fun loadRoute(a: Aircraft) {
+        routeJob?.cancel()
+        val cs = a.callsign?.trim().orEmpty()
+        if (cs.isEmpty()) return
+        routeJob = viewModelScope.launch {
+            val r = runCatching { com.skymonitor.iraq.data.AdsbDb.route(cs) }.getOrNull()
+            if (_state.value.selected?.hex == a.hex) _state.update { it.copy(selectedRoute = r) }
         }
     }
 

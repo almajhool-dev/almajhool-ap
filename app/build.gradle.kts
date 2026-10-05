@@ -28,8 +28,8 @@ android {
         applicationId = "com.skymonitor.iraq"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "2.1.0"
+        versionCode = 6
+        versionName = "3.0.0"
         buildConfigField("String", "CARTO_KEY", "\"$cartoKey\"")
         // Phones only (keeps the APK small): 64-bit and 32-bit ARM.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
@@ -77,7 +77,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-    implementation("org.maplibre.gl:android-sdk:11.13.5")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

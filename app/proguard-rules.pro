@@ -5,3 +5,9 @@
 -keep class org.maplibre.turf.** { *; }
 -keep class com.google.gson.** { *; }
 -dontwarn org.maplibre.geojson.**
+
+# WebView bridge used by the globe map
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+-keepattributes JavascriptInterface
