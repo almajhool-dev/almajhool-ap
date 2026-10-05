@@ -77,12 +77,9 @@ fun SourcesScreen(state: UiState, onBack: () -> Unit) {
 
             Text("الخريطة", color = Radar.Green, fontWeight = FontWeight.Bold)
             Card {
-                Text(
-                    if (com.skymonitor.iraq.BuildConfig.CARTO_KEY.isNotBlank()) "الخريطة الأساسية: CARTO Dark Matter ببيانات © OpenStreetMap contributors © CARTO."
-                    else "الخريطة الأساسية: Esri World Dark Gray (© Esri, HERE, Garmin, © OpenStreetMap contributors).",
-                    color = Radar.Text, fontSize = 13.sp,
-                )
+                Text("الخريطة: OpenFreeMap و OpenMapTiles ببيانات © OpenStreetMap، والتضاريس من AWS Terrain Tiles. أسماء الدول والمحافظات والمدن معروضة بالعربية.", color = Radar.Text, fontSize = 13.sp)
             }
+            Text("تطوير: $DEVELOPER", color = Radar.Muted, fontSize = 13.sp, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
             Spacer(Modifier.size(24.dp))
         }
     }

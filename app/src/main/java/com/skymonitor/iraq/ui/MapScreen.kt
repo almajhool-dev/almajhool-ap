@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
@@ -36,7 +37,6 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.WifiOff
-import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,6 +44,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,10 +62,10 @@ import com.skymonitor.iraq.Region
 import com.skymonitor.iraq.UiState
 import com.skymonitor.iraq.Viewport
 import com.skymonitor.iraq.data.Aircraft
-import com.skymonitor.iraq.data.Category
-import com.skymonitor.iraq.data.WatchedType
 
 const val DISCLAIMER = "المعلومات المعروضة تعتمد على مصادر طيران عامة، وقد تكون بعض الطائرات العسكرية غير ظاهرة أو بياناتها متأخرة أو محجوبة."
+const val APP_NAME_AR = "سكاي مونيتر العراق"
+const val DEVELOPER = "المبرمج المجهول"
 
 class MapActions(
     val onSelect: (Aircraft?) -> Unit,
@@ -81,11 +85,15 @@ class MapActions(
 
 @Composable
 fun MapScreen(state: UiState, a: MapActions, showMap: Boolean = true) {
+    var tilted by rememberSaveable { mutableStateOf(true) }
     Box(Modifier.fillMaxSize().background(Radar.Bg)) {
         if (showMap) RadarMap(
             aircraft = state.visible,
-            selectedHex = state.selected?.hex,
+            trails = state.trails,
+            selected = state.selected,
+            selectedTrack = state.selectedTrack,
             camera = state.camera,
+            tilted = tilted,
             onSelect = a.onSelect,
             onViewport = a.onViewport,
             modifier = Modifier.fillMaxSize(),
@@ -97,28 +105,29 @@ fun MapScreen(state: UiState, a: MapActions, showMap: Boolean = true) {
             SearchField(state, a)
             Spacer(Modifier.size(8.dp))
             FilterRow(state, a)
-            state.banner?.let { Spacer(Modifier.size(8.dp)); Banner(it, Icons.Filled.WifiOff, a.onDismissBanner) }
-            AnimatedVisibility(state.searchResults != null || state.searching) {
-                SearchResults(state, a)
-            }
+            state.banner?.let { Spacer(Modifier.size(8.dp)); Banner(it, a.onDismissBanner) }
+            AnimatedVisibility(state.searchResults != null || state.searching) { SearchResults(state, a) }
         }
+
+        // 2D / 3D switch.
+        Box(
+            Modifier.align(Alignment.CenterStart).padding(start = 12.dp).size(48.dp).clip(CircleShape)
+                .background(Radar.Panel).border(1.dp, if (tilted) Radar.Green else Radar.Line, CircleShape)
+                .clickable { tilted = !tilted },
+            contentAlignment = Alignment.Center,
+        ) { Text(if (tilted) "3D" else "2D", color = if (tilted) Radar.Green else Radar.Text, fontWeight = FontWeight.Bold) }
 
         Column(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (state.selected == null) {
-                EmptyHint(state)
-                Legend()
-            }
+            if (state.selected == null) EmptyHint(state)
             AnimatedVisibility(
                 visible = state.selected != null,
                 enter = slideInVertically { it } + fadeIn(),
                 exit = slideOutVertically { it } + fadeOut(),
-            ) {
-                state.selected?.let { DetailPanel(it) { a.onSelect(null) } }
-            }
-            DisclaimerStrip(a.onOpenSources)
+            ) { state.selected?.let { DetailPanel(it, state) { a.onSelect(null) } } }
+            if (state.selected == null) DisclaimerStrip(a.onOpenSources)
         }
     }
 }
@@ -133,16 +142,16 @@ private fun TopBar(state: UiState, a: MapActions) {
         Box(Modifier.size(10.dp).clip(CircleShape).background(if (state.offline) Radar.Red else Radar.Green))
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text("Sky Monitor Iraq", color = Radar.Text, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(APP_NAME_AR, color = Radar.Text, fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Text(
                 if (state.offline) "غير متصل — آخر تحديث ${agoText(state.lastRefreshMs)}"
-                else "${state.visible.size} ظاهرة · آخر تحديث ${agoText(state.lastRefreshMs)}",
+                else "${state.visible.size} طائرة ظاهرة · آخر تحديث ${agoText(state.lastRefreshMs)}",
                 color = Radar.Muted, fontSize = 12.sp,
             )
         }
         if (state.refreshing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Radar.Green)
         else IconButton(onClick = a.onRefresh) { Icon(Icons.Filled.Refresh, "تحديث", tint = Radar.Green) }
-        IconButton(onClick = a.onOpenSources) { Icon(Icons.Filled.Storage, "مصدر البيانات", tint = Radar.Text) }
+        IconButton(onClick = a.onOpenSources) { Icon(Icons.Filled.Info, "مصدر البيانات", tint = Radar.Text) }
     }
 }
 
@@ -154,7 +163,7 @@ private fun SearchField(state: UiState, a: MapActions) {
         onValueChange = a.onQuery,
         modifier = Modifier.fillMaxWidth(),
         singleLine = true,
-        placeholder = { Text("ابحث بالنداء، التسجيل، أو الطراز (مثل MQ-9 أو RQ-4)", fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        placeholder = { Text("ابحث بالنداء أو التسجيل أو الطراز", fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         leadingIcon = { Icon(Icons.Filled.Search, null, tint = Radar.Muted) },
         trailingIcon = {
             if (state.query.isNotEmpty()) IconButton(onClick = { a.onQuery(""); a.onCloseSearch() }) { Icon(Icons.Filled.Close, "مسح", tint = Radar.Muted) }
@@ -183,22 +192,22 @@ private fun Chip(label: String, selected: Boolean, color: Color = Radar.Green, o
 private fun FilterRow(state: UiState, a: MapActions) {
     val f = state.filters
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Chip("العراق فقط", f.region == Region.IRAQ) { a.onRegion(Region.IRAQ) }
+        Chip("العراق", f.region == Region.IRAQ) { a.onRegion(Region.IRAQ) }
         Chip("العالم", f.region == Region.WORLD) { a.onRegion(Region.WORLD) }
-        Chip("الطائرات المدنية", f.civil, Radar.Green, a.onToggleCivil)
-        Chip("فئات أخرى (مصنّفة علناً)", f.other, Radar.Amber, a.onToggleOther)
-        Chip("MQ-9 · MQ-1 · RQ-4", f.watchedOnly, Radar.Red, a.onToggleWatched)
+        Chip("مدنية", f.civil, Radar.Green, a.onToggleCivil)
+        Chip("عسكرية وحكومية", f.other, Radar.Amber, a.onToggleOther)
+        Chip("المسيّرات فقط", f.watchedOnly, Radar.Red, a.onToggleWatched)
     }
 }
 
 @Composable
-private fun Banner(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClose: () -> Unit) {
+private fun Banner(text: String, onClose: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xF0301318))
             .border(1.dp, Radar.Red.copy(alpha = .6f), RoundedCornerShape(12.dp)).padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, null, tint = Radar.Red, modifier = Modifier.size(20.dp))
+        Icon(Icons.Filled.WifiOff, null, tint = Radar.Red, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))
         Text(text, color = Radar.Text, fontSize = 13.sp, modifier = Modifier.weight(1f))
         IconButton(onClick = onClose, modifier = Modifier.size(28.dp)) { Icon(Icons.Filled.Close, "إغلاق", tint = Radar.Muted) }
@@ -213,7 +222,7 @@ private fun SearchResults(state: UiState, a: MapActions) {
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                if (state.searching) "جارٍ البحث في المصادر العامة…" else "نتائج البحث (${state.searchResults?.size ?: 0})",
+                if (state.searching) "جارٍ البحث…" else "النتائج (${state.searchResults?.size ?: 0})",
                 color = Radar.Text, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f),
             )
             if (state.searching) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Radar.Green)
@@ -250,7 +259,7 @@ private fun EmptyHint(state: UiState) {
     if (state.visible.isNotEmpty() || state.lastRefreshMs == null) return
     val f = state.filters
     val msg = when {
-        f.watchedOnly -> "لا تبث أي طائرة من طرازات MQ-9 أو MQ-1 أو RQ-4 بيانات عامة ضمن هذا النطاق حالياً. عدم ظهورها لا يعني عدم وجودها."
+        f.watchedOnly -> "لا تبث أي مسيّرة MQ-9 أو MQ-1 أو RQ-4 بيانات عامة ضمن هذا النطاق حالياً. عدم ظهورها لا يعني عدم وجودها."
         !f.civil && !f.other -> "كل الفئات مخفية — فعّل فلتراً واحداً على الأقل."
         else -> "لا توجد طائرات تبث بيانات عامة في هذا النطاق الآن. عدم ظهور طائرة لا يعني عدم وجودها."
     }
@@ -266,60 +275,45 @@ private fun EmptyHint(state: UiState) {
 }
 
 @Composable
-private fun Legend() {
-    Row(
-        Modifier.clip(RoundedCornerShape(50)).background(Radar.Panel).border(1.dp, Radar.Line, RoundedCornerShape(50))
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
-    ) {
-        LegendDot(Radar.Green, "مدنية")
-        LegendDot(Radar.Amber, "فئات أخرى")
-        LegendDot(Radar.Sky, "غير مصنّفة")
-        LegendDot(Radar.Red, "MQ-9/MQ-1/RQ-4")
-    }
-}
-
-@Composable
-private fun LegendDot(c: Color, label: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(c))
-        Spacer(Modifier.width(5.dp))
-        Text(label, color = Radar.Muted, fontSize = 11.sp)
-    }
-}
-
-@Composable
-private fun DetailPanel(a: Aircraft, onClose: () -> Unit) {
+private fun DetailPanel(a: Aircraft, state: UiState, onClose: () -> Unit) {
     val accent = Color(colorFor(a))
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Radar.Panel)
+        Modifier.fillMaxWidth().heightIn(max = 380.dp).clip(RoundedCornerShape(18.dp)).background(Radar.Panel)
             .border(1.dp, accent.copy(alpha = .7f), RoundedCornerShape(18.dp)).padding(14.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(a.displayName, color = Radar.Text, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                Text(a.watched?.label ?: a.description ?: a.typeCode ?: "النوع غير منشور لدى المصدر", color = accent, fontSize = 14.sp)
+                Text(a.watched?.label ?: a.description ?: a.typeCode ?: "الطراز غير منشور لدى المصدر", color = accent, fontSize = 14.sp)
             }
             IconButton(onClick = onClose) { Icon(Icons.Filled.Close, "إغلاق", tint = Radar.Muted) }
         }
-        Spacer(Modifier.size(8.dp))
-        InfoRow("الطراز (رمز ICAO)", a.typeCode ?: NOT_AVAILABLE)
-        InfoRow("التسجيل", a.registration ?: NOT_AVAILABLE)
-        InfoRow("الارتفاع", altitudeText(a.altitudeFt, a.onGround))
-        InfoRow("السرعة الأرضية", speedText(a.speedKt))
-        InfoRow("اتجاه الحركة", trackText(a.trackDeg))
-        InfoRow("آخر تحديث للموقع", "${agoText(a.positionTimeMs)} (${clockText(a.positionTimeMs)})")
-        InfoRow("الفئة", categoryText(a.category))
-        a.country?.let { InfoRow("بلد التسجيل", it) }
-        InfoRow("رمز ICAO 24-bit", a.hex.uppercase())
-        InfoRow("مصدر البيانات", a.source.label)
+        Column(Modifier.verticalScroll(rememberScrollState())) {
+            Spacer(Modifier.size(6.dp))
+            InfoRow("الارتفاع", altitudeText(a.altitudeFt, a.onGround))
+            InfoRow("السرعة", speedText(a.speedKt))
+            InfoRow("اتجاه الحركة", trackText(a.trackDeg))
+            InfoRow("آخر تحديث", "${agoText(a.positionTimeMs)} (${clockText(a.positionTimeMs)})")
+            InfoRow("الفئة", categoryText(a.category))
+            InfoRow("رمز الطراز", a.typeCode ?: NOT_AVAILABLE)
+            InfoRow("التسجيل", a.registration ?: NOT_AVAILABLE)
+            a.country?.let { InfoRow("بلد التسجيل", it) }
+            InfoRow("المصدر", a.source.label)
+            Spacer(Modifier.size(6.dp))
+            val pathText = when {
+                state.trackLoading -> "جارٍ تحميل المسار…"
+                state.selectedTrack != null -> "الخط الأبيض: المسار الذي قطعته منذ الإقلاع."
+                else -> state.trackNote ?: "الخط الأبيض: المسار المرصود أثناء فتح التطبيق."
+            }
+            Text("$pathText\nالخط الأصفر المتقطع: اتجاهها الحالي خلال 20 دقيقة (تقدير، وليس الوجهة المعلنة).", color = Radar.Muted, fontSize = 12.sp, lineHeight = 17.sp)
+        }
     }
 }
 
 @Composable
 private fun InfoRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-        Text(label, color = Radar.Muted, fontSize = 13.sp, modifier = Modifier.width(130.dp))
+        Text(label, color = Radar.Muted, fontSize = 13.sp, modifier = Modifier.width(110.dp))
         Text(value, color = Radar.Text, fontSize = 13.sp, modifier = Modifier.weight(1f))
     }
 }
@@ -327,13 +321,13 @@ private fun InfoRow(label: String, value: String) {
 @Composable
 private fun DisclaimerStrip(onOpenSources: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xF0221A0C))
-            .border(1.dp, Radar.Amber.copy(alpha = .5f), RoundedCornerShape(12.dp))
-            .clickable(onClick = onOpenSources).padding(horizontal = 10.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xE6221A0C))
+            .border(1.dp, Radar.Amber.copy(alpha = .45f), RoundedCornerShape(12.dp))
+            .clickable(onClick = onOpenSources).padding(horizontal = 10.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Filled.Public, null, tint = Radar.Amber, modifier = Modifier.size(18.dp))
+        Icon(Icons.Filled.Public, null, tint = Radar.Amber, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(8.dp))
-        Text(DISCLAIMER, color = Radar.Text, fontSize = 11.5.sp, lineHeight = 16.sp)
+        Text(DISCLAIMER, color = Radar.Text, fontSize = 11.sp, lineHeight = 15.sp)
     }
 }

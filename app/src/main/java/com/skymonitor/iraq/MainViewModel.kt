@@ -50,7 +50,7 @@ data class Filters(
     val watchedOnly: Boolean = false,
 )
 
-data class CameraMove(val lat: Double, val lon: Double, val zoom: Double, val id: Long = System.nanoTime())
+data class CameraMove(val lat: Double, val lon: Double, val zoom: Double, val fitIraq: Boolean = false, val id: Long = System.nanoTime())
 
 data class UiState(
     val visible: List<Aircraft> = emptyList(),
@@ -71,11 +71,17 @@ data class UiState(
     val searchMessage: String? = null,
     val camera: CameraMove? = null,
     val banner: String? = null,
+    /** Recent positions seen in this session, per aircraft (oldest first): [lat, lon]. */
+    val trails: Map<String, List<DoubleArray>> = emptyMap(),
+    /** Full path of the selected flight since take-off, when the public source has it. */
+    val selectedTrack: List<DoubleArray>? = null,
+    val trackLoading: Boolean = false,
+    val trackNote: String? = null,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val _state = MutableStateFlow(UiState(camera = CameraMove(Regions.IRAQ_CENTER_LAT, Regions.IRAQ_CENTER_LON, 6.2)))
+    private val _state = MutableStateFlow(UiState(camera = CameraMove(Regions.IRAQ_CENTER_LAT, Regions.IRAQ_CENTER_LON, 5.4, fitIraq = true)))
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     /** Latest record per aircraft (ICAO hex). */
@@ -122,8 +128,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.update {
             it.copy(
                 filters = it.filters.copy(region = r),
-                camera = if (r == Region.IRAQ) CameraMove(Regions.IRAQ_CENTER_LAT, Regions.IRAQ_CENTER_LON, 6.2)
-                else CameraMove(25.0, 30.0, 2.6),
+                camera = if (r == Region.IRAQ) CameraMove(Regions.IRAQ_CENTER_LAT, Regions.IRAQ_CENTER_LON, 5.4, fitIraq = true)
+                else CameraMove(25.0, 30.0, 1.6),
             )
         }
         publish()
@@ -134,10 +140,38 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleOther() { _state.update { it.copy(filters = it.filters.copy(other = !it.filters.other)) }; publish() }
     fun toggleWatched() { _state.update { it.copy(filters = it.filters.copy(watchedOnly = !it.filters.watchedOnly)) }; publish() }
 
-    fun select(a: Aircraft?) = _state.update { it.copy(selected = a) }
+    private var trackJob: Job? = null
+
+    fun select(a: Aircraft?) {
+        val changed = a?.hex != _state.value.selected?.hex
+        _state.update { it.copy(selected = a, selectedTrack = if (changed) null else it.selectedTrack, trackNote = if (changed) null else it.trackNote) }
+        if (a != null && changed) loadTrack(a)
+    }
 
     fun focus(a: Aircraft) {
-        _state.update { it.copy(selected = a, searchResults = null, camera = CameraMove(a.lat, a.lon, 8.0)) }
+        _state.update { it.copy(searchResults = null, camera = CameraMove(a.lat, a.lon, 8.0)) }
+        select(a)
+    }
+
+    /** Fetches the path flown since take-off from OpenSky (public, anonymous). */
+    private fun loadTrack(a: Aircraft) {
+        trackJob?.cancel()
+        trackJob = viewModelScope.launch {
+            _state.update { it.copy(trackLoading = true, trackNote = null) }
+            val result = runCatching { OpenSky.track(a.hex) }
+            if (_state.value.selected?.hex != a.hex) return@launch
+            result.onSuccess { pts ->
+                _state.update {
+                    it.copy(trackLoading = false, selectedTrack = pts.takeIf { p -> p.size >= 2 },
+                        trackNote = if (pts.size < 2) "المسار الكامل غير منشور لهذه الطائرة؛ يظهر فقط ما رُصد أثناء فتح التطبيق" else null)
+                }
+            }.onFailure { e ->
+                _state.update {
+                    it.copy(trackLoading = false, trackNote = (e as? SourceException)?.userMessage?.let { m -> "تعذّر جلب المسار الكامل: $m" }
+                        ?: "تعذّر جلب المسار الكامل")
+                }
+            }
+        }
     }
 
     fun dismissBanner() = _state.update { it.copy(banner = null) }
@@ -296,6 +330,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { s -> s.copy(statuses = s.statuses.map { if (it.source == src) f(it) else it }) }
     }
 
+    /** Positions observed per aircraft during this session. */
+    private val history = HashMap<String, ArrayDeque<DoubleArray>>()
+
+    private fun remember(a: Aircraft) {
+        val h = history.getOrPut(a.hex) { ArrayDeque() }
+        val last = h.lastOrNull()
+        if (last == null || abs(last[0] - a.lat) > 1e-4 || abs(last[1] - a.lon) > 1e-4) {
+            h.addLast(doubleArrayOf(a.lat, a.lon))
+            while (h.size > 180) h.removeFirst()
+        }
+    }
+
     private fun merge(fresh: List<Aircraft>) {
         val now = System.currentTimeMillis()
         for (a in fresh) {
@@ -311,6 +357,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         // Forget aircraft whose last public position is too old to be meaningful.
         byHex.values.removeAll { now - it.positionTimeMs > STALE_MS }
+        history.keys.retainAll(byHex.keys)
+        byHex.values.forEach(::remember)
     }
 
     private fun publish() {
@@ -324,7 +372,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 (s.query.isBlank() || a.matchesQuery(s.query))
         }
         val sel = s.selected?.let { cur -> visible.firstOrNull { it.hex == cur.hex } ?: cur }
-        _state.update { it.copy(visible = visible, totalLoaded = pool.size, selected = sel) }
+        val trails = visible.mapNotNull { a -> history[a.hex]?.takeIf { it.size >= 2 }?.let { a.hex to it.toList() } }.toMap()
+        _state.update { it.copy(visible = visible, totalLoaded = pool.size, selected = sel, trails = trails) }
     }
 
     companion object {

@@ -15,9 +15,9 @@ enum class Category { CIVIL, OTHER, UNCLASSIFIED }
 
 /** Aircraft types the app highlights when — and only when — they appear in public data. */
 enum class WatchedType(val label: String, val typeCodes: Set<String>, val keywords: List<String>) {
-    MQ9("MQ-9 Reaper", setOf("Q9"), listOf("MQ-9", "MQ9", "REAPER")),
-    MQ1("MQ-1 Predator", setOf("Q1"), listOf("MQ-1", "MQ1", "PREDATOR", "GRAY EAGLE")),
-    RQ4("RQ-4 Global Hawk", setOf("Q4"), listOf("RQ-4", "RQ4", "GLOBAL HAWK"));
+    MQ9("مسيّرة MQ-9 ريبر", setOf("Q9"), listOf("MQ-9", "MQ9", "REAPER")),
+    MQ1("مسيّرة MQ-1 بريداتور", setOf("Q1"), listOf("MQ-1", "MQ1", "PREDATOR", "GRAY EAGLE")),
+    RQ4("مسيّرة RQ-4 غلوبال هوك", setOf("Q4"), listOf("RQ-4", "RQ4", "GLOBAL HAWK"));
 
     fun matches(a: Aircraft): Boolean {
         val t = a.typeCode?.uppercase()

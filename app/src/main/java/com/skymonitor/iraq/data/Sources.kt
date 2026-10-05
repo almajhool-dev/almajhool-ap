@@ -127,6 +127,23 @@ object AdsbLol {
  * Docs: https://openskynetwork.github.io/opensky-api/rest.html  (anonymous: limited daily credits, 10 s resolution)
  */
 object OpenSky {
+    /** Path flown so far by the aircraft's current flight: list of [lat, lon]. Empty when unknown. */
+    suspend fun track(hex: String): List<DoubleArray> {
+        val body = try {
+            httpGetJson("https://opensky-network.org/api/tracks/all?icao24=${hex.lowercase()}&time=0")
+        } catch (e: SourceException) {
+            if (e.userMessage.contains("404")) return emptyList() else throw e // 404 = no current flight on record
+        }
+        val path = try { JSONObject(body).optJSONArray("path") } catch (e: Exception) { null } ?: return emptyList()
+        val out = ArrayList<DoubleArray>(path.length())
+        for (i in 0 until path.length()) {
+            val p = path.optJSONArray(i) ?: continue
+            if (p.isNull(1) || p.isNull(2)) continue
+            out += doubleArrayOf(p.optDouble(1), p.optDouble(2))
+        }
+        return out
+    }
+
     suspend fun box(minLat: Double, minLon: Double, maxLat: Double, maxLon: Double): FetchResult {
         val f = { v: Double -> "%.3f".format(java.util.Locale.US, v) }
         val body = httpGetJson("https://opensky-network.org/api/states/all?lamin=${f(minLat)}&lomin=${f(minLon)}&lamax=${f(maxLat)}&lomax=${f(maxLon)}")
