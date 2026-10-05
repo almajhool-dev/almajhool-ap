@@ -3684,5 +3684,69 @@ begin
 end $$;
 grant execute on function public.ci_set_release(text, int, text, text) to anon;
 
+-- =====================================================================
+--  الإصدار 28: حذف أجهزة Google الميتة (NotRegistered) ومنع خطأ المتابعة المكررة
+-- =====================================================================
+-- نربط كل طلب إشعار بالرمز اللي انرسل له، حتى نحذف الرموز اللي Google يرفضها بـ 404
+create table if not exists public.push_requests (
+  req_id bigint primary key,
+  token text not null,
+  created timestamptz not null default now()
+);
+alter table public.push_requests enable row level security;
+revoke all on public.push_requests from anon, authenticated;
+
+create or replace function public._push(msgs jsonb) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare m jsonb; tok text; pid text; rid bigint;
+begin
+  if msgs is null or jsonb_array_length(msgs) = 0 or not push_ready() then return; end if;
+  select value into tok from private_settings where key = 'fcm_access';
+  select (value::jsonb)->>'project_id' into pid from private_settings where key = 'fcm_sa';
+  for m in select * from jsonb_array_elements(msgs) loop
+    rid := net.http_post(
+      url := 'https://fcm.googleapis.com/v1/projects/' || pid || '/messages:send',
+      body := jsonb_build_object('message', m),
+      headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || tok),
+      timeout_milliseconds := 8000);
+    if rid is not null and m ? 'token' then
+      begin
+        insert into push_requests(req_id, token) values (rid, m->>'token') on conflict (req_id) do nothing;
+      exception when others then null;
+      end;
+    end if;
+  end loop;
+exception when others then null;
+end $$;
+revoke execute on function public._push(jsonb) from public, anon, authenticated;
+
+create or replace function public._push_prune() returns void
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  delete from fcm_tokens t using push_requests p, net._http_response r
+   where r.id = p.req_id and t.token = p.token and r.status_code = 404
+     and (r.content like '%UNREGISTERED%' or r.content like '%NotRegistered%');
+  delete from push_requests where created < now() - interval '1 day';
+exception when others then null;
+end $$;
+revoke execute on function public._push_prune() from public, anon, authenticated;
+do $$ begin
+  perform cron.schedule('almajhool-push-prune', '*/10 * * * *', 'select public._push_prune()');
+exception when others then raise notice 'push prune not scheduled: %', sqlerrm;
+end $$;
+
+-- ضغطتين على «متابعة» كانت تطلع خطأ duplicate key للمستخدم: نتجاهل التكرار بصمت
+create or replace function public._follows_dedup() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if exists(select 1 from follows where follower_id = new.follower_id and followee_id = new.followee_id) then
+    return null;
+  end if;
+  return new;
+end $$;
+revoke execute on function public._follows_dedup() from public, anon, authenticated;
+drop trigger if exists aa_follows_dedup on public.follows;
+create trigger aa_follows_dedup before insert on public.follows for each row execute function public._follows_dedup();
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
