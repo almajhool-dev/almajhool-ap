@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1f2a44">
+  <meta name="description" content="منصة لإعداد تقارير وبحوث جامعية منسّقة بصيغ Word وPDF وPowerPoint وExcel">
+  <title>محرّك التقارير الأكاديمية</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="booting">
+  <!-- Login -->
+  <main id="login" class="screen" hidden>
+    <div class="login-card">
+      <div class="seal" aria-hidden="true">
+        <svg viewBox="0 0 48 48" width="44" height="44"><path d="M8 13l16-7 16 7-16 7-16-7z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/><path d="M14 17v10c0 3 4.5 6 10 6s10-3 10-6V17" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M40 13v12" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      </div>
+      <h1>محرّك التقارير الأكاديمية</h1>
+      <p class="lead">تقارير وبحوث جامعية مكتملة: غلاف رسمي، فهرس، فصول ومباحث، خاتمة ومراجع — جاهزة للطباعة.</p>
+      <button id="btn-google" class="btn-google" type="button">
+        <svg viewBox="0 0 48 48" width="20" height="20" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
+        <span>تسجيل الدخول عبر Google</span>
+      </button>
+      <p class="fine">تسجيل دخول آمن عبر Google. لا نطلب كلمة مرور ولا نخزّنها.</p>
+    </div>
+  </main>
+
+  <!-- App -->
+  <div id="app" class="screen" hidden>
+    <header class="top">
+      <div class="brand"><span class="dot"></span>محرّك التقارير الأكاديمية</div>
+      <div class="acct">
+        <img id="acct-avatar" alt="" referrerpolicy="no-referrer">
+        <span id="acct-name"></span>
+        <button id="btn-logout" class="link" type="button">خروج</button>
+      </div>
+    </header>
+
+    <!-- Dashboard -->
+    <section id="dash" class="wrap">
+      <div class="hero">
+        <p class="eyebrow">مرحبًا <span id="hello-name"></span></p>
+        <h2>ماذا ستكتب اليوم؟</h2>
+        <p class="muted">أدخل عنوان الموضوع ومعلومات الغلاف، واختر الصيغة وعدد الصفحات، ويصلك الملف جاهزًا للتسليم.</p>
+        <button id="btn-new" class="btn-primary big" type="button">إنشاء تقرير جديد الآن</button>
+      </div>
+      <div class="history">
+        <h3>تقاريرك السابقة</h3>
+        <ul id="history-list"></ul>
+        <p id="history-empty" class="muted small">لم تنشئ أي تقرير بعد.</p>
+      </div>
+    </section>
+
+    <!-- Form -->
+    <section id="form-view" class="wrap" hidden>
+      <button id="btn-back" class="link back" type="button">→ العودة للوحة التحكم</button>
+      <form id="report-form" class="paper" novalidate autocomplete="on">
+        <h2>تقرير جديد</h2>
+
+        <label class="field wide">
+          <span>اسم الموضوع / عنوان التقرير <b>*</b></span>
+          <textarea name="title" rows="2" maxlength="220" required placeholder="مثال: أثر الذكاء الاصطناعي في جودة التعليم الجامعي"></textarea>
+        </label>
+
+        <div class="grid">
+          <label class="field">
+            <span>لغة التقرير</span>
+            <select name="lang">
+              <option value="ar">العربية</option>
+              <option value="en">English</option>
+              <option value="fr">Français</option>
+              <option value="es">Español</option>
+              <option value="de">Deutsch</option>
+              <option value="tr">Türkçe</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>عدد الصفحات التقريبي <output id="pages-out">10</output></span>
+            <input name="pages" type="range" min="3" max="40" value="10">
+          </label>
+        </div>
+
+        <fieldset class="group">
+          <legend>معلومات الغلاف الأكاديمي</legend>
+          <div class="grid">
+            <label class="field"><span>اسم الطالب <b>*</b></span><input name="student" maxlength="120" required autocomplete="name"></label>
+            <label class="field"><span>اسم المشرف <i>(اختياري)</i></span><input name="supervisor" maxlength="120"></label>
+            <label class="field"><span>اسم الجامعة أو المعهد <b>*</b></span><input name="university" maxlength="160" required></label>
+            <label class="field"><span>القسم الدراسي</span><input name="department" maxlength="120"></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>صيغة الملف المطلوب</legend>
+          <div class="formats">
+            <label><input type="radio" name="format" value="docx" checked><span><b>Word</b><small>.docx</small></span></label>
+            <label><input type="radio" name="format" value="pdf"><span><b>PDF</b><small>.pdf</small></span></label>
+            <label><input type="radio" name="format" value="pptx"><span><b>PowerPoint</b><small>.pptx</small></span></label>
+            <label><input type="radio" name="format" value="xlsx"><span><b>Excel</b><small>.xlsx</small></span></label>
+          </div>
+          <p id="pptx-note" class="muted small" hidden>في PowerPoint يمثّل الرقم عدد الشرائح التقريبي.</p>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>شعار أو صورة للغلاف <i>(اختياري)</i></legend>
+          <div class="upload">
+            <label class="btn-ghost" for="logo-input">اختيار صورة</label>
+            <input id="logo-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+            <img id="logo-preview" alt="" hidden>
+            <button id="logo-clear" class="link" type="button" hidden>إزالة</button>
+            <span class="muted small">PNG أو JPG أو WEBP، أقل من 2 ميغابايت. يُوضع أعلى صفحة الغلاف.</span>
+          </div>
+        </fieldset>
+
+        <p id="form-error" class="error" role="alert" hidden></p>
+        <button id="btn-generate" class="btn-primary big" type="submit">إنشاء التقرير</button>
+      </form>
+    </section>
+
+    <!-- Progress / Result -->
+    <section id="result-view" class="wrap" hidden>
+      <div class="paper center">
+        <div id="working">
+          <div class="spinner" aria-hidden="true"></div>
+          <h2>جارٍ إعداد تقريرك</h2>
+          <p id="work-step" class="muted">نضع مخطط الفصول…</p>
+          <div class="bar"><i id="work-bar"></i></div>
+          <p class="muted small">قد يستغرق ذلك دقيقة إلى ثلاث دقائق حسب عدد الصفحات. لا تغلق الصفحة.</p>
+        </div>
+        <div id="done" hidden>
+          <div class="check" aria-hidden="true">✓</div>
+          <h2>تقريرك جاهز</h2>
+          <p id="done-name" class="muted"></p>
+          <div class="actions">
+            <a id="btn-download" class="btn-primary big" download>تحميل التقرير فورًا</a>
+            <a id="btn-open" class="btn-ghost big" target="_blank" rel="noopener">فتح الملف</a>
+          </div>
+          <p class="muted small">راجِع قائمة المراجع وتحقّق منها قبل التسليم.</p>
+          <button id="btn-another" class="link" type="button">إنشاء تقرير آخر</button>
+        </div>
+        <div id="failed" hidden>
+          <h2>تعذّر إنشاء التقرير</h2>
+          <p id="fail-msg" class="error"></p>
+          <button id="btn-retry" class="btn-primary" type="button">حاول مرة أخرى</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="toast" role="status" hidden></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
