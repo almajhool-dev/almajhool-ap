@@ -14,6 +14,12 @@ val signingProps = Properties().apply {
 }
 fun signing(key: String): String? = signingProps.getProperty(key) ?: System.getenv(key.uppercase())
 
+// CARTO basemap key: from carto.properties (kept out of git) or the CARTO_KEY environment variable.
+val cartoKey: String = Properties().apply {
+    val f = rootProject.file("carto.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}.getProperty("cartoKey") ?: System.getenv("CARTO_KEY") ?: ""
+
 android {
     namespace = "com.skymonitor.iraq"
     compileSdk = 35
@@ -22,8 +28,9 @@ android {
         applicationId = "com.skymonitor.iraq"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
+        buildConfigField("String", "CARTO_KEY", "\"$cartoKey\"")
     }
 
     signingConfigs {

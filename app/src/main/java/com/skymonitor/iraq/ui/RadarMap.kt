@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import com.skymonitor.iraq.BuildConfig
 import com.skymonitor.iraq.CameraMove
 import com.skymonitor.iraq.Viewport
 import com.skymonitor.iraq.data.Aircraft
@@ -52,6 +53,18 @@ private class EsriTiles(name: String, private val service: String) : OnlineTileS
 }
 
 private val DarkBase = EsriTiles("EsriDarkGrayBase", "World_Dark_Gray_Base")
+
+/** CARTO "Dark Matter" (labels included). Used when a CARTO key was supplied at build time. */
+private class CartoDarkTiles(private val key: String) : OnlineTileSourceBase(
+    "CartoDarkMatter", 1, 18, 256, ".png",
+    arrayOf("https://a.basemaps.cartocdn.com/dark_all/", "https://b.basemaps.cartocdn.com/dark_all/", "https://c.basemaps.cartocdn.com/dark_all/"),
+    "© OpenStreetMap contributors © CARTO",
+) {
+    override fun getTileURLString(pMapTileIndex: Long): String =
+        "${baseUrl}${MapTileIndex.getZoom(pMapTileIndex)}/${MapTileIndex.getX(pMapTileIndex)}/${MapTileIndex.getY(pMapTileIndex)}.png?key=$key"
+}
+
+private val useCarto = BuildConfig.CARTO_KEY.isNotBlank()
 private val DarkLabels = EsriTiles("EsriDarkGrayLabels", "World_Dark_Gray_Reference")
 
 private const val COLOR_CIVIL = 0xFF35F0A2.toInt()
@@ -133,7 +146,7 @@ fun RadarMap(
     val planes = remember { FolderOverlay() }
     val map = remember {
         MapView(context).apply {
-            setTileSource(DarkBase)
+            setTileSource(if (useCarto) CartoDarkTiles(BuildConfig.CARTO_KEY) else DarkBase)
             setMultiTouchControls(true)
             zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
             minZoomLevel = 2.0
@@ -144,7 +157,7 @@ fun RadarMap(
             setScrollableAreaLimitLatitude(MapView.getTileSystem().maxLatitude, MapView.getTileSystem().minLatitude, 0)
             setBackgroundColor(Color.rgb(7, 13, 18))
             // City and country names on a transparent layer above the dark base map.
-            overlays.add(TilesOverlay(MapTileProviderBasic(context, DarkLabels), context).apply { loadingBackgroundColor = Color.TRANSPARENT; loadingLineColor = Color.TRANSPARENT })
+            if (!useCarto) overlays.add(TilesOverlay(MapTileProviderBasic(context, DarkLabels), context).apply { loadingBackgroundColor = Color.TRANSPARENT; loadingLineColor = Color.TRANSPARENT })
             overlays.add(RadarRingsOverlay())
             overlays.add(planes)
             overlays.add(CopyrightOverlay(context).apply { setTextColor(Color.argb(160, 200, 220, 220)) })

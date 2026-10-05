@@ -77,7 +77,11 @@ fun SourcesScreen(state: UiState, onBack: () -> Unit) {
 
             Text("الخريطة", color = Radar.Green, fontWeight = FontWeight.Bold)
             Card {
-                Text("الخريطة الأساسية: Esri World Dark Gray (© Esri, HERE, Garmin, © OpenStreetMap contributors).", color = Radar.Text, fontSize = 13.sp)
+                Text(
+                    if (com.skymonitor.iraq.BuildConfig.CARTO_KEY.isNotBlank()) "الخريطة الأساسية: CARTO Dark Matter ببيانات © OpenStreetMap contributors © CARTO."
+                    else "الخريطة الأساسية: Esri World Dark Gray (© Esri, HERE, Garmin, © OpenStreetMap contributors).",
+                    color = Radar.Text, fontSize = 13.sp,
+                )
             }
             Spacer(Modifier.size(24.dp))
         }

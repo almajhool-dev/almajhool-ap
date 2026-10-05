@@ -23,6 +23,7 @@ jobs:
           STOREPASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEYALIAS: ${{ secrets.KEY_ALIAS }}
           KEYPASSWORD: ${{ secrets.KEY_PASSWORD }}
+          CARTO_KEY: ${{ secrets.CARTO_KEY }}
         run: ./gradlew assembleRelease testReleaseUnitTest --no-daemon
       - uses: actions/upload-artifact@v4
         with:
