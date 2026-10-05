@@ -100,14 +100,14 @@ export function fixArabicOrder(text) {
   for (const l of lines) {
     if (!arabicLine(l)) continue;
     const t = l.trim();
-    if (/^[.،؛:!؟]\p{Script=Arabic}/u.test(t)) front++;
-    if (/\p{Script=Arabic}[.،؛:!؟]$/u.test(t)) back++;
+    if (/^[.،؛:!؟]\s*\p{Script=Arabic}/u.test(t)) front++;
+    if (/\p{Script=Arabic}\s*[.،؛:!؟]$/u.test(t)) back++;
   }
   if (front <= back || front < 2) return text;
   return lines.map((l) => {
     if (!arabicLine(l)) return l;
     return l.trim().split(/\s+/).reverse()
-      .map((w) => w.replace(/^([.،؛:!؟]+)(.+)$/u, "$2$1")).join(" ");
+      .map((w) => w.replace(/^([.،؛:!؟]+)(.+)$/u, "$2$1")).join(" ").replace(/\s+([.،؛:!؟])/gu, "$1");
   }).join("\n");
 }
 

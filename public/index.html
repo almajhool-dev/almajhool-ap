@@ -67,9 +67,20 @@
         </fieldset>
 
         <label class="field wide">
-          <span>اسم الموضوع / عنوان التقرير <b>*</b></span>
+          <span>اسم الموضوع / عنوان التقرير <b>*</b> <i>(اختياري إذا رفعت ملفًا — نقترح العنوان منه)</i></span>
           <textarea name="title" rows="2" maxlength="220" required placeholder="مثال: أثر الذكاء الاصطناعي في جودة التعليم الجامعي"></textarea>
         </label>
+
+        <fieldset class="group source">
+          <legend>ارفع ملفك الذي سنستدل به <i>(اختياري)</i></legend>
+          <p class="muted small hint">ارفع ملزمة كاملة أو ملف موضوع محدد (PDF أو Word أو نص)؛ نستخرج منه المادة العلمية والمصطلحات، ونعيد ترتيبها في تقرير أكاديمي احترافي مع تصحيح الأخطاء اللغوية والإملائية. تتم قراءة الملف داخل متصفحك ثم يُرسل نصه فقط.</p>
+          <div class="upload">
+            <label class="btn-ghost" for="source-input">اختيار الملف</label>
+            <input id="source-input" type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" hidden>
+            <span id="source-status" class="small"></span>
+            <button id="source-clear" class="link" type="button" hidden>إزالة</button>
+          </div>
+        </fieldset>
 
         <div class="grid">
           <label class="field">
@@ -185,7 +196,7 @@
             <label><input type="radio" name="format" value="xlsx"><span><b>Excel</b><small>.xlsx</small></span></label>
           </div>
           <p id="pptx-note" class="muted small" hidden>في PowerPoint يمثّل الرقم عدد الشرائح التقريبي.</p>
-          <p class="muted small">🖼 كل تقرير يتضمن صورًا توضيحية إجباريًا داخل الفصول — صور حقيقية من Wikimedia Commons بتراخيص مفتوحة، وإن لم تتوفر صورة مناسبة نرسم مخططًا توضيحيًا للفصل.</p>
+          <p class="muted small">🖼 كل مبحث في التقرير ينتهي بصورة توضيحية إجباريًا: صورة حقيقية مطابقة من Wikimedia Commons، أو صورة مولّدة بالذكاء الاصطناعي حول الفقرة، أو مخطط توضيحي — مع ذكر المصدر تحت كل صورة.</p>
         </fieldset>
 
         <p id="form-error" class="error" role="alert" hidden></p>

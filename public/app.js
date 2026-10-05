@@ -2,7 +2,7 @@
 const $ = (s) => document.querySelector(s);
 const VERIFIER = "neon_auth_session_verifier";
 const FORMAT_LABEL = { docx: "Word", pdf: "PDF", pptx: "PowerPoint", xlsx: "Excel" };
-const state = { me: null, logo: null, fileUrl: null, busy: false, logos: null, profiles: [] };
+const state = { me: null, logo: null, fileUrl: null, busy: false, logos: null, profiles: [], source: null };
 
 function toast(msg, err = false) {
   const t = $("#toast");
@@ -121,12 +121,87 @@ function readForm() {
     const sid = radio("styleId");
     if (sid && sid !== "0") data.styleId = Number(sid);
   }
-  if (data.title.length < 3) return [null, "اكتب عنوان التقرير", "title"];
+  if (state.source) data.source = state.source.text;
+  if (data.title.length < 3 && !state.source) return [null, "اكتب عنوان التقرير أو ارفع ملفًا نستدل به", "title"];
   if (data.university.length < 2) return [null, "اكتب اسم الجامعة أو المعهد", "university"];
   if (!students.length) return [null, "اكتب اسم طالب واحد على الأقل", null];
   if (state.logo) data.logo = state.logo;
   return [data];
 }
+
+/* ---------- Source file (read in the browser) ---------- */
+const SOURCE_MAX = 150000;
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    if (document.querySelector(`script[src="${src}"]`)) return res();
+    const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = rej; document.head.append(s);
+  });
+}
+/** Some PDFs store Arabic lines in visual order (words reversed); restore reading order when detected. */
+function fixArabicOrder(text) {
+  const lines = text.split("\n");
+  const arabicLine = (l) => (l.match(/\p{Script=Arabic}/gu) || []).length > l.replace(/\s/g, "").length * 0.6;
+  let front = 0, back = 0;
+  for (const l of lines) {
+    if (!arabicLine(l)) continue;
+    const t = l.trim();
+    if (/^[.،؛:!؟]\s*\p{Script=Arabic}/u.test(t)) front++;
+    if (/\p{Script=Arabic}\s*[.،؛:!؟]$/u.test(t)) back++;
+  }
+  if (front <= back || front < 2) return text;
+  return lines.map((l) => (arabicLine(l) ? l.trim().split(/\s+/).reverse().map((w) => w.replace(/^([.،؛:!؟]+)(.+)$/u, "$2$1")).join(" ").replace(/\s+([.،؛:!؟])/gu, "$1") : l)).join("\n");
+}
+async function extractText(file) {
+  const ext = (file.name.split(".").pop() || "").toLowerCase();
+  if (ext === "txt" || file.type === "text/plain") return { text: await file.text(), pages: null };
+  const buf = await file.arrayBuffer();
+  if (ext === "pdf" || file.type === "application/pdf") {
+    const pdfjs = await import("/vendor/pdf.min.mjs");
+    pdfjs.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.min.mjs";
+    const doc = await pdfjs.getDocument({ data: buf, cMapUrl: "/vendor/cmaps/", cMapPacked: true, isEvalSupported: false }).promise;
+    let text = "";
+    const n = Math.min(doc.numPages, 500);
+    for (let i = 1; i <= n; i++) {
+      const page = await doc.getPage(i);
+      const tc = await page.getTextContent();
+      text += tc.items.map((it) => it.str + (it.hasEOL ? "\n" : " ")).join("") + "\n\n";
+      $("#source-status").textContent = `جارٍ القراءة… صفحة ${i} من ${n}`;
+      if (text.length > SOURCE_MAX * 1.3) break;
+    }
+    return { text: fixArabicOrder(text), pages: doc.numPages };
+  }
+  if (ext === "docx") {
+    await loadScript("/vendor/mammoth.browser.min.js");
+    const r = await window.mammoth.extractRawText({ arrayBuffer: buf });
+    return { text: r.value, pages: null };
+  }
+  throw new Error("صيغة غير مدعومة — ارفع PDF أو Word (.docx) أو ملفًا نصيًا");
+}
+$("#source-input").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  e.target.value = "";
+  if (!f) return;
+  if (f.size > 60 * 1024 * 1024) { toast("حجم الملف كبير جدًا (الحد 60 ميغابايت)", true); return; }
+  const status = $("#source-status");
+  status.className = "small muted";
+  status.textContent = "جارٍ قراءة الملف…";
+  try {
+    let { text, pages } = await extractText(f);
+    text = text.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+    const words = text.split(/\s+/).filter(Boolean).length;
+    if (text.length < 200) throw new Error("لم نجد نصًا كافيًا في الملف — قد يكون PDF مصوّرًا (صور بلا نص). جرّب نسخة Word أو PDF نصي.");
+    const cut = text.length > SOURCE_MAX;
+    state.source = { name: f.name, text: text.slice(0, SOURCE_MAX) };
+    status.className = "small";
+    status.textContent = `✓ ${f.name} — ${words.toLocaleString("ar-IQ")} كلمة${pages ? ` من ${pages} صفحة` : ""}${cut ? " (سنستخدم أول 150 ألف حرف)" : ""}`;
+    $("#source-clear").hidden = false;
+  } catch (err) {
+    state.source = null;
+    status.className = "small error";
+    status.textContent = err.message || "تعذّر قراءة الملف";
+  }
+});
+$("#source-clear").addEventListener("click", () => { state.source = null; $("#source-status").textContent = ""; $("#source-clear").hidden = true; });
 
 /* ---------- Students ---------- */
 function addStudent(value = "") {
@@ -336,7 +411,7 @@ const STEPS = [
 ];
 let timer;
 function startProgress(pages) {
-  const expected = 50 + pages * 8; // seconds
+  const expected = 70 + pages * 9; // seconds
   const t0 = Date.now();
   $("#working").hidden = false; $("#done").hidden = true; $("#failed").hidden = true;
   clearInterval(timer);
@@ -375,7 +450,8 @@ async function generate(e) {
     const blob = await res.blob();
     if (state.fileUrl) URL.revokeObjectURL(state.fileUrl);
     state.fileUrl = URL.createObjectURL(blob);
-    const name = `${data.title.slice(0, 80).replace(/[\\/:*?"<>|]/g, "")}.${data.format}`;
+    const fromHeader = decodeURIComponent((res.headers.get("Content-Disposition") || "").match(/filename\*=UTF-8''([^;]+)/)?.[1] || "");
+    const name = (fromHeader || `${(data.title || "report").slice(0, 80)}.${data.format}`).replace(/[\\/:*?"<>|]/g, "");
     const dl = $("#btn-download");
     dl.href = state.fileUrl;
     dl.download = name;

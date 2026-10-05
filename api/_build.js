@@ -105,23 +105,20 @@ export async function buildDocx(r) {
   // ---- Body ----
   const main = [h1(r.L.intro), ...r.intro.map(body)];
   let fig = 0;
-  const pushFigure = (c) => {
+  const pushFigure = (img, caption) => {
     fig++;
-    const w = 520, h = Math.min(330, Math.round((c.image.height / c.image.width) * w));
-    main.push(new Paragraph({ alignment: center, spacing: { before: 160, after: 40 }, keepNext: true, children: [new ImageRun({ type: "jpg", data: c.image.data, transformation: { width: Math.round(h * c.image.width / c.image.height), height: h } })] }));
-    main.push(para(`${figLabel(r, fig)}: ${c.title}`, { align: center, size: baseSize - 4, color: GREY, after: 20, line: 260 }));
-    main.push(para(c.image.credit, { rtl: !!c.image.diagram && rtl, align: center, size: 16, color: GREY, after: 200, line: 240 }));
+    const h = Math.min(300, Math.round((img.height / img.width) * 500));
+    main.push(new Paragraph({ alignment: center, spacing: { before: 160, after: 40 }, keepNext: true, keepLines: true, children: [new ImageRun({ type: "jpg", data: img.data, transformation: { width: Math.round(h * img.width / img.height), height: h } })] }));
+    main.push(para(`${figLabel(r, fig)}: ${caption}`, { align: center, size: baseSize - 4, color: GREY, after: 20, line: 260, keepNext: true }));
+    main.push(para(img.credit, { rtl: (img.kind !== "photo") && rtl, align: center, size: 16, color: GREY, after: 220, line: 240 }));
   };
   r.chapters.forEach((c, ci) => {
     main.push(h1(`${chapterLabel(r, ci)}: ${c.title}`));
-    const early = c.image && !(c.sections[0]?.paragraphs || []).length;
-    if (early) pushFigure(c);
     c.sections.forEach((s, si) => {
       main.push(h2(`${secNum(ci, si)} ${s.title}`));
-      (s.paragraphs || []).forEach((t, pi) => {
-        main.push(body(t));
-        if (si === 0 && pi === 0 && c.image && !early) pushFigure(c);
-      });
+      (s.paragraphs || []).forEach((t) => main.push(body(t)));
+      // Every section ends with its own illustration.
+      if (s.image) pushFigure(s.image, s.title);
     });
   });
   main.push(h1(r.L.conclusion), ...r.conclusion.map(body));
@@ -195,7 +192,7 @@ function pdfCss(r) {
   h2 { font-size: ${r.rtl ? "17pt" : "13.5pt"}; margin: 16pt 0 6pt; break-after: avoid; }
   p { text-align: ${f.align === "right" || f.align === "left" ? "start" : "justify"}; text-indent: 1cm; margin: 0 0 8pt; orphans: 3; widows: 3; }
   figure { margin: 10pt 0 14pt; text-align: center; break-inside: avoid; }
-  figure img { max-width: 100%; max-height: 9cm; border-radius: 2pt; }
+  figure img { max-width: 100%; max-height: 8.5cm; border-radius: 2pt; }
   figcaption { font-size: 10.5pt; color: #${GREY}; line-height: 1.4; margin-top: 4pt; }
   figcaption small { display: block; font-size: 8pt; direction: ltr; }
   figcaption small.d { direction: inherit; }
@@ -242,12 +239,9 @@ function bodyHtml(r) {
   let fig = 0;
   r.chapters.forEach((c, ci) => {
     toc += `<div class="c">${esc(chapterLabel(r, ci))}: ${esc(c.title)}</div>` + c.sections.map((s, si) => `<div class="s">${secNum(ci, si)}&nbsp;&nbsp;${esc(s.title)}</div>`).join("");
-    const figure = () => { fig++; return `<figure><img src="data:image/jpeg;base64,${c.image.data.toString("base64")}" alt=""><figcaption>${esc(figLabel(r, fig))}: ${esc(c.title)}<small${c.image.diagram ? ' class="d"' : ""}>${esc(c.image.credit)}</small></figcaption></figure>`; };
-    const early = c.image && !(c.sections[0]?.paragraphs || []).length;
-    main += `<h1>${esc(chapterLabel(r, ci))}: ${esc(c.title)}</h1>${early ? figure() : ""}` + c.sections.map((s, si) => {
-      const paras = (s.paragraphs || []).map((t, pi) => `<p>${esc(t)}</p>${si === 0 && pi === 0 && c.image && !early ? figure() : ""}`).join("");
-      return `<h2>${secNum(ci, si)} ${esc(s.title)}</h2>${paras}`;
-    }).join("");
+    const figure = (img, caption) => { fig++; return `<figure><img src="data:image/jpeg;base64,${img.data.toString("base64")}" alt=""><figcaption>${esc(figLabel(r, fig))}: ${esc(caption)}<small${img.kind !== "photo" ? ' class="d"' : ""}>${esc(img.credit)}</small></figcaption></figure>`; };
+    main += `<h1>${esc(chapterLabel(r, ci))}: ${esc(c.title)}</h1>` + c.sections.map((s, si) =>
+      `<h2>${secNum(ci, si)} ${esc(s.title)}</h2>${(s.paragraphs || []).map((t) => `<p>${esc(t)}</p>`).join("")}${s.image ? figure(s.image, s.title) : ""}`).join("");
   });
   toc += `<div class="c">${esc(r.L.conclusion)}</div><div class="c">${esc(r.L.refs)}</div>`;
   const refs = r.references.map((x, i) => `<p class="${/\p{Script=Arabic}/u.test(x) ? "" : "ltr"}">${i + 1}. ${esc(x)}</p>`).join("");
@@ -355,11 +349,21 @@ export async function buildPptx(r) {
     { text: `${r.L.year}: ${academicYear()}`, options: { color: GREY, fontSize: 13 } },
   ], { ...base, x: 1, y: Math.min(6.4, yEnd), w: 11.33, h: 0.85, fontSize: 16, align: "center" });
 
-  const content = (title, bullets) => {
+  const content = (title, bullets, img) => {
     const s = pptx.addSlide({ masterName: "BODY" });
     s.addText(title, { ...base, x: 0.7, y: 0.35, w: 11.93, h: 0.9, fontSize: 28, bold: true, color: th.primary, align, valign: "middle" });
-    s.addText(bullets.map((b) => ({ text: b, options: { bullet: { indent: 18 }, breakLine: true, paraSpaceAfter: 10 } })),
-      { ...base, x: 0.8, y: 1.6, w: 11.73, h: 5.2, fontSize: 20, align, valign: "top", lineSpacingMultiple: 1.1 });
+    if (img) {
+      // Text on the reading side, the illustration on the other.
+      const w = 5.6, h = Math.min(4.6, w * img.height / img.width);
+      const imgX = r.rtl ? 0.6 : 13.33 - 0.6 - w;
+      s.addImage({ data: `data:image/jpeg;base64,${img.data.toString("base64")}`, x: imgX, y: 1.65, w, h });
+      s.addText(img.credit, { x: imgX, y: 1.7 + h, w, h: 0.3, fontSize: 9, color: GREY, fontFace: r.rtl && img.kind !== "photo" ? font : "Arial", align: "center", rtlMode: r.rtl && img.kind !== "photo" });
+      s.addText(bullets.map((b) => ({ text: b, options: { bullet: { indent: 16 }, breakLine: true, paraSpaceAfter: 8 } })),
+        { ...base, x: r.rtl ? 6.5 : 0.7, y: 1.6, w: 6.2, h: 5.2, fontSize: 17, align, valign: "top", lineSpacingMultiple: 1.05 });
+    } else {
+      s.addText(bullets.map((b) => ({ text: b, options: { bullet: { indent: 18 }, breakLine: true, paraSpaceAfter: 10 } })),
+        { ...base, x: 0.8, y: 1.6, w: 11.73, h: 5.2, fontSize: 20, align, valign: "top", lineSpacingMultiple: 1.1 });
+    }
   };
   const toc = [r.L.intro, ...r.chapters.map((c, i) => `${chapterLabel(r, i)}: ${c.title}`), r.L.conclusion, r.L.refs];
   content(r.L.toc, toc);
@@ -367,15 +371,9 @@ export async function buildPptx(r) {
   r.chapters.forEach((c, ci) => {
     const d = pptx.addSlide();
     d.background = { color: th.primary };
-    const txt = [{ text: chapterLabel(r, ci), options: { fontSize: 20, color: "D9DEE8", breakLine: true } }, { text: c.title, options: { fontSize: 32, bold: true, color: "FFFFFF" } }];
-    if (c.image) {
-      const h = 4.6, w = Math.min(6.2, (c.image.width / c.image.height) * h);
-      const imgX = r.rtl ? 0.6 : 13.33 - 0.6 - w;
-      d.addImage({ data: `data:image/jpeg;base64,${c.image.data.toString("base64")}`, x: imgX, y: 1.2, w, h: w * c.image.height / c.image.width });
-      d.addText(c.image.credit, { x: imgX, y: 1.25 + w * c.image.height / c.image.width, w, h: 0.3, fontSize: 9, color: "C9CEDA", fontFace: "Arial", align: "center" });
-      d.addText(txt, { ...base, x: r.rtl ? 7.1 : 0.6, y: 1.6, w: 5.7, h: 4, align, valign: "middle" });
-    } else d.addText(txt, { ...base, x: 1, y: 2.4, w: 11.33, h: 2.6, align: "center", valign: "middle" });
-    c.sections.forEach((s, si) => content(`${secNum(ci, si)} ${s.title}`, (s.bullets || []).slice(0, 5)));
+    const txt = [{ text: chapterLabel(r, ci), options: { fontSize: 20, color: "D9DEE8", breakLine: true } }, { text: c.title, options: { fontSize: 34, bold: true, color: "FFFFFF" } }];
+    d.addText(txt, { ...base, x: 1, y: 2.4, w: 11.33, h: 2.6, align: "center", valign: "middle" });
+    c.sections.forEach((s, si) => content(`${secNum(ci, si)} ${s.title}`, (s.bullets || []).slice(0, 5), s.image));
   });
   content(r.L.conclusion, r.conclusion.slice(0, 5));
   const per = 6;
@@ -422,16 +420,18 @@ export async function buildXlsx(r) {
   r.chapters.forEach((c, ci) => {
     const ch = add([String(ci + 1), `${chapterLabel(r, ci)}: ${c.title}`, ""], { bold: true, size: 15, color: "FF" + th.primary, fill: { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8EBF2" } } });
     ws.mergeCells(ch.number, 2, ch.number, 3);
-    if (c.image) {
-      // Illustration under the chapter heading (column C), with its caption and credit.
-      const h = 260, w = Math.round((c.image.width / c.image.height) * h);
-      const holder = add(["", "", ""]);
-      holder.height = h * 0.78;
-      const id = wb.addImage({ buffer: c.image.data, extension: "jpeg" });
-      ws.addImage(id, { tl: { col: 2.05, row: holder.number - 1 + 0.05 }, ext: { width: w, height: h }, editAs: "oneCell" });
-      add(["", "", `${figLabel(r, ++fig)}: ${c.title} — ${c.image.credit}`], { size: 11, color: "FF" + GREY });
-    }
-    c.sections.forEach((s, si) => block(secNum(ci, si), s.title, s.paragraphs || []));
+    c.sections.forEach((s, si) => {
+      block(secNum(ci, si), s.title, s.paragraphs || []);
+      if (s.image) {
+        // Section illustration in column C, with caption and credit.
+        const h = 240, w = Math.round((s.image.width / s.image.height) * h);
+        const holder = add(["", "", ""]);
+        holder.height = h * 0.78;
+        const id = wb.addImage({ buffer: s.image.data, extension: "jpeg" });
+        ws.addImage(id, { tl: { col: 2.05, row: holder.number - 1 + 0.05 }, ext: { width: w, height: h }, editAs: "oneCell" });
+        add(["", "", `${figLabel(r, ++fig)}: ${s.title} — ${s.image.credit}`], { size: 11, color: "FF" + GREY });
+      }
+    });
   });
   block("—", r.L.conclusion, r.conclusion);
 

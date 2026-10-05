@@ -6,6 +6,7 @@ import { buildDocx, buildPdf, buildPptx, buildXlsx, chapterLabel } from "./_buil
 import { ensureImages } from "./_diagram.js";
 import { removeBackground } from "./_logo.js";
 import { ensureTable } from "./style.js";
+import { cleanSource } from "./_source.js";
 
 const PALETTES = { navy: "1B2A6B", burgundy: "6D1A2A", emerald: "0F6B4F", charcoal: "36454F" };
 const BACKGROUNDS = { none: null, ivory: "FBF8F1", mist: "F4F7FB", sage: "F3F7F2" };
@@ -52,7 +53,7 @@ async function processLogo(b64) {
 export const POST = route(async (request) => {
   requireSameOrigin(request);
   const len = Number(request.headers.get("content-length") || 0);
-  if (len > 3_500_000) throw new HttpError(413, "حجم الطلب كبير جدًا");
+  if (len > 4_300_000) throw new HttpError(413, "حجم الطلب كبير جدًا");
   const user = await requireUser(request);
   await rateLimit(`ip:${clientIp(request)}`, 20, 600);
   await rateLimit(`u:${user.id}:h`, 6, 3600, "وصلت للحد المسموح (6 تقارير بالساعة). حاول بعد قليل.");
@@ -83,8 +84,11 @@ export const POST = route(async (request) => {
     style = row.profile;
   }
 
+  const source = cleanSource(body.source);
+  if (body.source && source.length < 200) throw new HttpError(400, "الملف المرفوع لا يحتوي نصًا كافيًا للاستدلال به");
   const input = {
-    title: clean(body.title, 220, { required: true, label: "عنوان التقرير" }),
+    title: clean(body.title, 220, { required: !source, label: "عنوان التقرير" }),
+    source: source || null,
     students,
     supervisor: clean(body.supervisor, 120, { label: "اسم المشرف" }),
     university: clean(body.university, 160, { required: true, label: "الجامعة أو المعهد" }),
@@ -107,15 +111,15 @@ export const POST = route(async (request) => {
   // Images are mandatory: any chapter without a suitable photo gets a drawn diagram.
   try { await ensureImages(report, (i) => chapterLabel(report, i)); } catch (e) { console.error("diagram", e); }
   const file = await FORMATS[format].build(report);
-  await sql`INSERT INTO reports (user_id, title, lang, format, pages) VALUES (${user.id}, ${input.title}, ${lang}, ${format}, ${pages})`;
+  await sql`INSERT INTO reports (user_id, title, lang, format, pages) VALUES (${user.id}, ${report.title}, ${lang}, ${format}, ${pages})`;
 
-  const name = `${input.title.slice(0, 80)}.${format}`;
+  const name = `${report.title.slice(0, 80)}.${format}`;
   return new Response(file, {
     headers: {
       "Content-Type": FORMATS[format].mime,
       "Content-Disposition": `attachment; filename="report.${format}"; filename*=UTF-8''${encodeURIComponent(name)}`,
       "Cache-Control": "no-store",
-      "X-Gen-Stats": JSON.stringify({ ms: report.stats.ms, fail: report.stats.fail.length, refs: report.references.length, images: report.chapters.filter((c) => c.image).length, diagrams: report.chapters.filter((c) => c.image?.diagram).length }).slice(0, 900),
+      "X-Gen-Stats": JSON.stringify({ ms: report.stats.ms, fail: report.stats.fail.length, refs: report.references.length, images: report.chapters.flatMap((c) => c.sections).filter((x) => x.image).length, kinds: report.chapters.flatMap((c) => c.sections).map((x) => x.image?.kind?.[0] || '-').join(''), source: !!source }).slice(0, 900),
     },
   });
 });

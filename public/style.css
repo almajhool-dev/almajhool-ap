@@ -174,3 +174,5 @@ legend { font-weight: 700; color: var(--navy); padding: 0 8px; }
 .sw.c-fbf8f1 { background: #fbf8f1; }
 .sw.c-f4f7fb { background: #f4f7fb; }
 .sw.c-f3f7f2 { background: #f3f7f2; }
+.source { background: #fbfaf6; }
+#source-status.error { color: var(--err); }

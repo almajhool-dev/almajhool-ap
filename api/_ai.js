@@ -105,3 +105,8 @@ export async function pool(items, limit, fn) {
   await Promise.all(workers);
   return out;
 }
+
+/** Credential for Vercel AI Gateway (API key if configured, else the request's OIDC token). */
+export function gatewayKey() {
+  return process.env.AI_GATEWAY_API_KEY || oidcToken || process.env.VERCEL_OIDC_TOKEN || "";
+}
