@@ -27,6 +27,22 @@ class PostRepository {
   }
 
   Future<List<Post>> feed({DateTime? before, String? authorId}) async {
+    // طلب واحد للسيرفر (المنشورات + الكاتب + إعجابي) بدل طلبين
+    try {
+      final r = await supa.rpc('feed_page', params: {
+        'p_before': before?.toUtc().toIso8601String(),
+        'p_author': authorId,
+        'p_limit': pageSize,
+      }) as List;
+      final rows = r.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      final posts = rows.map((m) => Post.fromMap(m, liked: m['_liked'] == true)).toList();
+      if (before == null && authorId == null) {
+        await CacheService.writeList('feed', rows);
+      }
+      return posts;
+    } catch (e) {
+      if (!'$e'.contains('PGRST202') && !'$e'.contains('feed_page')) rethrow;
+    }
     var q = supa.from('posts').select('*, $_author').eq('deleted', false);
     if (authorId != null) q = q.eq('author_id', authorId);
     if (before != null) q = q.lt('created_at', before.toUtc().toIso8601String());

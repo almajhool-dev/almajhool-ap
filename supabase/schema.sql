@@ -3987,5 +3987,31 @@ do $$ begin
 exception when others then raise notice 'anon timeout: %', sqlerrm;
 end $$;
 
+-- =====================================================================
+--  الإصدار 31: سرعة التصفح — صفحة المنشورات بطلب واحد بدل طلبين
+-- =====================================================================
+create or replace function public.feed_page(p_before timestamptz default null, p_author uuid default null, p_limit int default 15)
+returns jsonb language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(x order by (x->>'created_at')::timestamptz desc), '[]'::jsonb) from (
+    select to_jsonb(p) || jsonb_build_object(
+        'author', jsonb_build_object('id', a.id, 'username', a.username, 'display_name', a.display_name,
+          'avatar_url', a.avatar_url, 'xp', a.xp, 'is_verified', a.is_verified, 'is_owner', a.is_owner, 'is_admin', a.is_admin),
+        '_liked', exists(select 1 from post_likes l where l.post_id = p.id and l.user_id = auth.uid())) as x
+    from posts p join profiles a on a.id = p.author_id
+    where auth.uid() is not null and not p.deleted
+      and (p_author is null or p.author_id = p_author)
+      and (p_before is null or p.created_at < p_before)
+      and not is_blocked_between(auth.uid(), p.author_id)
+      and can_see_post(p.id, p.author_id, p.visibility)
+    order by p.created_at desc
+    limit least(greatest(coalesce(p_limit, 15), 1), 50)
+  ) t;
+$$;
+grant execute on function public.feed_page(timestamptz, uuid, int) to authenticated;
+
+-- عدد غير المقروء بالمحادثات يتحسب من الفهرس مباشرة
+create index if not exists idx_messages_unread on public.messages(conversation_id, created_at)
+  include (sender_id) where not deleted and type <> 'system';
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

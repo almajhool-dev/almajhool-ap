@@ -247,10 +247,16 @@ class ChatHub extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> refresh() async {
     try {
-      conversations = await chats.myConversations();
+      // الثلاث طلبات بنفس الوقت
+      final convF = chats.myConversations();
+      final unreadF = notifs.unreadCount().catchError((_) => unreadNotifications);
+      final contactsF = contacts.load();
+      contactsF.ignore(); // ما نطلع خطأ غير معالج إذا فشل طلب قبله
+      conversations = await convF;
       _prefetch();
-      unreadNotifications = await notifs.unreadCount();
-      final c = await contacts.load();
+      notifyListeners();
+      unreadNotifications = await unreadF;
+      final c = await contactsF;
       pendingRequests = c.incoming.length;
     } catch (_) {
       // بدون إنترنت: نعرض النسخة المخزنة

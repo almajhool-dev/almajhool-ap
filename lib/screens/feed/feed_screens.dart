@@ -810,8 +810,9 @@ class _PostScreenState extends State<PostScreen> {
 
   Future<void> _load() async {
     try {
-      final p = await _repo.one(widget.postId);
-      final c = await _repo.comments(widget.postId);
+      final res = await Future.wait([_repo.one(widget.postId), _repo.comments(widget.postId)]);
+      final p = res[0] as Post?;
+      final c = res[1] as List<PostComment>;
       if (mounted) {
         setState(() {
           _post = p;

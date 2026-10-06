@@ -48,31 +48,47 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _load();
   }
 
+  static final Map<String, Profile> _memo = {};
+
   Future<void> _load() async {
+    // نعرض آخر نسخة محفوظة فورًا، ونحدّث بالخلفية
+    final cached = _memo[widget.userId];
+    if (cached != null && _p == null) {
+      setState(() {
+        _p = cached;
+        _loading = false;
+      });
+    }
     try {
-      final p = await _profiles.get(widget.userId);
-      try {
-        _counts = await _contacts.counts(widget.userId);
-      } catch (_) {}
-      if (!_isMe) {
-        final rel = await _contacts.statusWith(widget.userId);
-        final blocks = await _profiles.myBlocks();
-        final common = await _profiles.commonGroups(widget.userId);
-        _relation = rel.$1;
-        _requestId = rel.$2;
-        _blocked = blocks.contains(widget.userId);
-        _common = common;
-      }
+      // كل الطلبات بنفس الوقت بدل وحدة ورا الثانية
+      final pf = _profiles.get(widget.userId);
+      final cf = _contacts.counts(widget.userId).catchError((_) => _counts);
+      final rf = _isMe ? null : _contacts.statusWith(widget.userId).catchError((_) => (_relation, _requestId));
+      final bf = _isMe ? null : _profiles.myBlocks().catchError((_) => <String>{});
+      final gf = _isMe ? null : _profiles.commonGroups(widget.userId).catchError((_) => _common);
+      final p = await pf;
+      if (p != null) _memo[widget.userId] = p;
       if (mounted) {
         setState(() {
           _p = p;
           _loading = false;
         });
       }
+      final counts = await cf;
+      if (!_isMe) {
+        final rel = await rf!;
+        final blocks = await bf!;
+        final common = await gf!;
+        _relation = rel.$1;
+        _requestId = rel.$2;
+        _blocked = blocks.contains(widget.userId);
+        _common = common;
+      }
+      if (mounted) setState(() => _counts = counts);
     } catch (e) {
       if (mounted) {
         setState(() => _loading = false);
-        showSnack(context, friendlyError(e), error: true);
+        if (_p == null) showSnack(context, friendlyError(e), error: true);
       }
     }
   }
