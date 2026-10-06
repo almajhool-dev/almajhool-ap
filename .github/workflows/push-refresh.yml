@@ -7,14 +7,17 @@ on:
   schedule:
     - cron: '17 * * * *'
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/push-refresh.yml', 'tool/push_refresh.py']
 
 permissions:
-  contents: read
+  contents: write   # مطلوب لإثبات الهوية عند السيرفر (طلبات النسخ المنسوخة ما عندها كتابة)
   actions: write
 
 concurrency:
   group: push-refresh
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   refresh:
