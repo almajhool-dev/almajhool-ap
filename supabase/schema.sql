@@ -3959,7 +3959,7 @@ end $$;
 -- =====================================================================
 create or replace function public._gh_verify(p_token text) returns boolean
 language plpgsql security definer set search_path = public, extensions as $$
-declare r extensions.http_response; j jsonb; sha text; nonce text; hdr extensions.http_header[];
+declare r extensions.http_response; j jsonb; hdr extensions.http_header[];
   base text := 'https://api.github.com/repos/almajhool-dev/almajhool-ap';
 begin
   if p_token is null or char_length(p_token) < 20 then return false; end if;
@@ -3973,19 +3973,19 @@ begin
   if not ((j->>'total_count')::int = 1 and j->'repositories'->0->>'full_name' = 'almajhool-dev/almajhool-ap') then
     return false;
   end if;
-  -- 2) وعنده صلاحية كتابة: ننشئ فرع مؤقت ونحذفه فورًا
-  select * into r from extensions.http(('GET', base || '/git/ref/heads/main', hdr, null, null)::extensions.http_request);
+  -- 2) وعنده صلاحية كتابة: نحدّث فرع ci-verify الثابت لنفس مكانه (عملية كتابة بدون أي أثر)
+  select * into r from extensions.http(('PATCH', base || '/git/refs/heads/ci-verify', hdr, 'application/json',
+      jsonb_build_object('sha', 'a14b8e28ba74a884f1113e0ef2c8d4c8350f381b', 'force', true)::text)::extensions.http_request);
   if r.status <> 200 then return false; end if;
-  sha := r.content::jsonb->'object'->>'sha';
-  nonce := 'ci-verify-' || encode(gen_random_bytes(8), 'hex');
-  select * into r from extensions.http(('POST', base || '/git/refs', hdr, 'application/json',
-      jsonb_build_object('ref', 'refs/heads/' || nonce, 'sha', sha)::text)::extensions.http_request);
-  if r.status <> 201 then return false; end if;
-  perform extensions.http(('DELETE', base || '/git/refs/heads/' || nonce, hdr, null, null)::extensions.http_request);
   return true;
 exception when others then return false;
 end $$;
 revoke execute on function public._gh_verify(text) from public, anon, authenticated;
+-- التحقق يتصل بـ GitHub مرتين: نعطي طلبات الزوار وقت كافي (كان 3 ثواني ويقطع)
+do $$ begin
+  alter role anon set statement_timeout = '12s';
+exception when others then raise notice 'anon timeout: %', sqlerrm;
+end $$;
 
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
