@@ -1,3 +1,4 @@
+# تجديد مفتاح إشعارات Google (يُشغَّل من GitHub Actions)
 """يجدد مفتاح Google (OAuth) لإرسال الإشعارات ويحفظه في قاعدة البيانات.
 يعمل داخل GitHub Actions فقط: قاعدة البيانات تتحقق من رمز GitHub قبل أي شيء."""
 import base64, json, os, sys, time, urllib.parse, urllib.request
