@@ -2,6 +2,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/models.dart';
 import '../services/core_services.dart';
+import '../services/couple_service.dart';
 
 class AuthRepository {
   Future<bool> usernameAvailable(String username) async {
@@ -64,7 +65,10 @@ class AuthRepository {
   Future<void> signIn(String email, String password) =>
       supa.auth.signInWithPassword(email: email.trim(), password: password);
 
-  Future<void> signOut() => supa.auth.signOut();
+  Future<void> signOut() {
+    CoupleService.reset();
+    return supa.auth.signOut();
+  }
 
   Future<void> sendRecovery(String email) => supa.auth.resetPasswordForEmail(email.trim());
 

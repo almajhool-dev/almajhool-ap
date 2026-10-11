@@ -9,6 +9,8 @@ import '../../widgets/common.dart';
 import '../feed/feed_screens.dart';
 import '../home/home_shell.dart';
 import '../profile/profile_screens.dart';
+import '../couple/couple_screens.dart';
+import '../../services/couple_service.dart';
 
 class NotificationsTab extends StatefulWidget {
   const NotificationsTab({super.key});
@@ -57,6 +59,7 @@ class _NotificationsTabState extends State<NotificationsTab> {
         'warning' => Icons.warning_amber_rounded,
         'post_comment' => Icons.mode_comment_rounded,
         'comment_reply' => Icons.reply_rounded,
+        'couple' => Icons.favorite_rounded,
         'live' => Icons.live_tv_rounded,
         'follow' => Icons.person_add_rounded,
         'live_penalty' => Icons.gpp_maybe_rounded,
@@ -64,6 +67,11 @@ class _NotificationsTabState extends State<NotificationsTab> {
       };
 
   void _open(AppNotification n) {
+    if (n.type == 'couple') {
+      CoupleService.setEnabled(true);
+      Navigator.push(context, MaterialPageRoute(builder: (_) => const CoupleHomeScreen()));
+      return;
+    }
     final live = n.data['live_id'] as String?;
     if (live != null) {
       openLive(context, live);

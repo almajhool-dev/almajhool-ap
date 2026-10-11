@@ -5,6 +5,8 @@ import '../../core/config.dart';
 import '../../models/models.dart';
 import '../../providers/providers.dart';
 import '../../services/core_services.dart';
+import '../../services/couple_service.dart';
+import '../couple/couple_screens.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../chat/chat_screen.dart';
@@ -23,6 +25,12 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    CoupleService.load();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -150,6 +158,21 @@ class _ChatsTabState extends State<ChatsTab> {
                               style: TextStyle(fontSize: 12.5, color: scheme.onSurface.withValues(alpha: 0.6))),
                         ],
                       ),
+                    ),
+                    ValueListenableBuilder<bool>(
+                      valueListenable: CoupleService.enabled,
+                      builder: (context, on, _) => !on
+                          ? const SizedBox.shrink()
+                          : Padding(
+                              padding: const EdgeInsetsDirectional.only(end: 6),
+                              child: IconButton.filledTonal(
+                                tooltip: 'مساحة الشريك',
+                                style: IconButton.styleFrom(backgroundColor: const Color(0x33FF4FD8)),
+                                onPressed: () => Navigator.push(
+                                    context, MaterialPageRoute(builder: (_) => const CoupleHomeScreen())),
+                                icon: const Icon(Icons.favorite_rounded, color: Color(0xFFFF4FD8)),
+                              ),
+                            ),
                     ),
                     IconButton.filledTonal(
                       tooltip: 'مجموعة جديدة',

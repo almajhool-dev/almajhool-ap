@@ -4921,5 +4921,195 @@ begin
 end $$;
 grant execute on function public.ai_set_extras(boolean, boolean, boolean) to authenticated;
 
+-- =====================================================================
+--  الإصدار 38: مساحة الشريك 💞 (ربط بالرمز، رحلتنا، سهرتنا، جدار الذكريات، سؤال اليوم)
+--  ميزة اختيارية: المستخدم يفعّلها من الإعدادات، وإذا ما فعّلها يبقى التطبيق مثل ما هو
+-- =====================================================================
+create table if not exists public.couples (
+  id uuid primary key default gen_random_uuid(),
+  user_a uuid not null references public.profiles(id) on delete cascade,
+  user_b uuid not null references public.profiles(id) on delete cascade,
+  since date,
+  created_at timestamptz not null default now(),
+  check (user_a <> user_b)
+);
+create unique index if not exists couples_user_a on public.couples(user_a);
+create unique index if not exists couples_user_b on public.couples(user_b);
+alter table public.couples enable row level security;
+drop policy if exists couples_select on public.couples;
+create policy couples_select on public.couples for select to authenticated
+  using (auth.uid() in (user_a, user_b));
+
+create table if not exists public.couple_codes (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  code text not null unique,
+  expires_at timestamptz not null
+);
+alter table public.couple_codes enable row level security;
+
+create or replace function public._my_couple() returns uuid
+language sql stable security definer set search_path = public as $$
+  select id from couples where auth.uid() in (user_a, user_b) limit 1;
+$$;
+grant execute on function public._my_couple() to authenticated;
+
+create table if not exists public.couple_memories (
+  id uuid primary key default gen_random_uuid(),
+  couple_id uuid not null references public.couples(id) on delete cascade,
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  title text not null check (char_length(title) between 1 and 60),
+  note text not null default '' check (char_length(note) <= 1000),
+  happened_on date not null default current_date,
+  image_url text check (image_url is null or image_url like 'https://smjkxsqvdpywumghvnfv.supabase.co/storage/v1/object/public/posts/%'),
+  created_at timestamptz not null default now()
+);
+create index if not exists couple_memories_idx on public.couple_memories(couple_id, happened_on);
+alter table public.couple_memories enable row level security;
+drop policy if exists cm_select on public.couple_memories;
+create policy cm_select on public.couple_memories for select to authenticated using (couple_id = _my_couple());
+drop policy if exists cm_insert on public.couple_memories;
+create policy cm_insert on public.couple_memories for insert to authenticated
+  with check (couple_id = _my_couple() and author_id = auth.uid());
+drop policy if exists cm_delete on public.couple_memories;
+create policy cm_delete on public.couple_memories for delete to authenticated
+  using (couple_id = _my_couple());
+
+-- حالة المشاهدة المشتركة (تتزامن بين الطرفين لحظيًا)
+create table if not exists public.couple_watch (
+  couple_id uuid primary key references public.couples(id) on delete cascade,
+  video_id text check (video_id is null or video_id ~ '^[A-Za-z0-9_-]{6,20}$'),
+  playing boolean not null default false,
+  position double precision not null default 0 check (position >= 0 and position < 360000),
+  updated_by uuid,
+  updated_at timestamptz not null default now()
+);
+alter table public.couple_watch enable row level security;
+drop policy if exists cw_select on public.couple_watch;
+create policy cw_select on public.couple_watch for select to authenticated using (couple_id = _my_couple());
+drop policy if exists cw_insert on public.couple_watch;
+create policy cw_insert on public.couple_watch for insert to authenticated
+  with check (couple_id = _my_couple() and updated_by = auth.uid());
+drop policy if exists cw_update on public.couple_watch;
+create policy cw_update on public.couple_watch for update to authenticated
+  using (couple_id = _my_couple()) with check (couple_id = _my_couple() and updated_by = auth.uid());
+
+create table if not exists public.couple_answers (
+  couple_id uuid not null references public.couples(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  day date not null,
+  answer text not null check (char_length(answer) between 1 and 500),
+  created_at timestamptz not null default now(),
+  primary key (couple_id, user_id, day)
+);
+alter table public.couple_answers enable row level security;
+
+revoke all on public.couples, public.couple_codes, public.couple_memories, public.couple_watch, public.couple_answers from anon;
+revoke all on public.couple_codes, public.couple_answers from authenticated;
+revoke insert, update, delete on public.couples from authenticated;
+grant select on public.couples to authenticated;
+grant select, insert, delete on public.couple_memories to authenticated;
+grant select, insert, update on public.couple_watch to authenticated;
+
+do $$ begin
+  begin execute 'alter publication supabase_realtime add table public.couple_watch'; exception when others then null; end;
+  begin execute 'alter publication supabase_realtime add table public.couple_memories'; exception when others then null; end;
+  begin execute 'alter publication supabase_realtime add table public.couples'; exception when others then null; end;
+end $$;
+
+create or replace function public.couple_status() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare c couples; pid uuid; p profiles;
+begin
+  if auth.uid() is null then raise exception 'not_authenticated'; end if;
+  select * into c from couples where auth.uid() in (user_a, user_b) limit 1;
+  if c.id is null then return jsonb_build_object('linked', false); end if;
+  pid := case when c.user_a = auth.uid() then c.user_b else c.user_a end;
+  select * into p from profiles where id = pid;
+  return jsonb_build_object('linked', true, 'couple_id', c.id, 'since', c.since, 'linked_at', c.created_at,
+    'partner', jsonb_build_object('id', p.id, 'display_name', p.display_name, 'username', p.username,
+      'avatar_url', p.avatar_url, 'verified', p.is_verified),
+    'memories', (select count(*) from couple_memories where couple_id = c.id));
+end $$;
+grant execute on function public.couple_status() to authenticated;
+
+create or replace function public.couple_my_code() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare r couple_codes; k text; i int := 0;
+begin
+  if auth.uid() is null then raise exception 'not_authenticated'; end if;
+  if _my_couple() is not null then raise exception 'حسابك مربوط بشريك أصلًا'; end if;
+  select * into r from couple_codes where user_id = auth.uid() and expires_at > now() + interval '2 minutes';
+  if r.user_id is not null then
+    return jsonb_build_object('code', r.code, 'expires_at', r.expires_at);
+  end if;
+  delete from couple_codes where expires_at < now();
+  loop
+    i := i + 1;
+    k := lpad((floor(random() * 1000000))::int::text, 6, '0');
+    exit when not exists(select 1 from couple_codes where code = k) or i > 20;
+  end loop;
+  insert into couple_codes(user_id, code, expires_at) values (auth.uid(), k, now() + interval '20 minutes')
+    on conflict (user_id) do update set code = excluded.code, expires_at = excluded.expires_at
+    returning * into r;
+  return jsonb_build_object('code', r.code, 'expires_at', r.expires_at);
+end $$;
+grant execute on function public.couple_my_code() to authenticated;
+
+create or replace function public.couple_link(p_code text) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare me uuid := auth.uid(); other uuid; cid uuid; nm text;
+begin
+  if me is null then raise exception 'not_authenticated'; end if;
+  if is_banned() then raise exception 'حسابك محظور'; end if;
+  perform _rate('couple_link', 8, 600);   -- يمنع تخمين الرموز
+  perform pg_advisory_xact_lock(445566);
+  if _my_couple() is not null then raise exception 'حسابك مربوط بشريك أصلًا'; end if;
+  select user_id into other from couple_codes where code = btrim(coalesce(p_code, '')) and expires_at > now();
+  if other is null then return null; end if;  -- بدون exception حتى تنحسب المحاولة الغلط
+  if other = me then raise exception 'هذا رمزك انت، دخّل رمز شريكك'; end if;
+  if is_blocked_between(me, other) then raise exception 'ما يصير الربط: يوجد حظر'; end if;
+  if exists(select 1 from couples where other in (user_a, user_b)) then raise exception 'هذا الشخص مربوط بشريك ثاني'; end if;
+  insert into couples(user_a, user_b) values (other, me) returning id into cid;
+  insert into couple_watch(couple_id, updated_by) values (cid, me) on conflict do nothing;
+  delete from couple_codes where user_id in (me, other);
+  select display_name into nm from profiles where id = me;
+  insert into notifications(user_id, type, title, body, data)
+    values (other, 'couple', 'صرتوا شركاء 💞', coalesce(nm, '') || ' ربط حسابه وياك بمساحة الشريك', jsonb_build_object('user_id', me));
+  return cid;
+end $$;
+grant execute on function public.couple_link(text) to authenticated;
+
+create or replace function public.couple_unlink() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  delete from couples where auth.uid() in (user_a, user_b);
+end $$;
+grant execute on function public.couple_unlink() to authenticated;
+
+create or replace function public.couple_set_since(p_date date) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if p_date is not null and (p_date > current_date + 1 or p_date < date '1950-01-01') then raise exception 'تاريخ غير صحيح'; end if;
+  update couples set since = p_date where id = _my_couple();
+end $$;
+grant execute on function public.couple_set_since(date) to authenticated;
+
+-- سؤال اليوم: جواب الشريك يبين بس بعد ما تجاوب انت
+create or replace function public.couple_question(p_answer text default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare cid uuid := _my_couple(); d date := (now() at time zone 'Asia/Baghdad')::date; mine text; theirs text;
+begin
+  if cid is null then raise exception 'اربط حسابك بشريكك أول'; end if;
+  if nullif(btrim(coalesce(p_answer, '')), '') is not null then
+    insert into couple_answers(couple_id, user_id, day, answer) values (cid, auth.uid(), d, left(btrim(p_answer), 500))
+      on conflict (couple_id, user_id, day) do update set answer = excluded.answer, created_at = now();
+  end if;
+  select answer into mine from couple_answers where couple_id = cid and user_id = auth.uid() and day = d;
+  select answer into theirs from couple_answers where couple_id = cid and user_id <> auth.uid() and day = d;
+  return jsonb_build_object('day', d, 'day_index', (d - date '2026-01-01'), 'mine', mine,
+    'partner_answered', theirs is not null, 'theirs', case when mine is not null then theirs end);
+end $$;
+grant execute on function public.couple_question(text) to authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

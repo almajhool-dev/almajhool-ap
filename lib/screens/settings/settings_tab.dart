@@ -13,6 +13,8 @@ import '../../services/update_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../admin/admin_screen.dart';
+import '../../services/couple_service.dart';
+import '../couple/couple_screens.dart';
 import '../../repositories/post_repository.dart';
 import '../contacts/contacts_tab.dart';
 import '../profile/profile_screens.dart';
@@ -83,6 +85,22 @@ class _SettingsTabState extends State<SettingsTab> {
             leading: const Icon(Icons.block),
             title: const Text('المستخدمون المحظورون'),
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BlockedUsersScreen())),
+          ),
+          _section('مساحة الشريك 💞'),
+          ValueListenableBuilder<bool>(
+            valueListenable: CoupleService.enabled,
+            builder: (context, on, _) => Column(children: [
+              SwitchListTile(
+                secondary: const Icon(Icons.favorite_rounded, color: Color(0xFFFF4FD8)),
+                title: const Text('تفعيل مساحة الشريك'),
+                subtitle: Text(on
+                    ? 'اربط حسابك بشريكك: رحلتكم، سهرة يوتيوب سوا، ذكرياتكم وسؤال اليوم'
+                    : 'مطفية — التطبيق يبقى بنسخته الأصلية'),
+                value: on,
+                onChanged: (v) => CoupleService.setEnabled(v),
+              ),
+              if (on) const CouplePairCard(),
+            ]),
           ),
           _section('المظهر'),
           Padding(
