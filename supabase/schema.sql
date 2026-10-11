@@ -4122,7 +4122,7 @@ begin
     out := (r.content::jsonb)->'content'->0->>'text';
   else
     body := jsonb_build_object('systemInstruction', jsonb_build_object('parts', jsonb_build_array(jsonb_build_object('text', p_system))),
-      'generationConfig', jsonb_build_object('maxOutputTokens', 400),
+      'generationConfig', jsonb_build_object('maxOutputTokens', 1500),
       'contents', (select jsonb_agg(jsonb_build_object('role', case when e->>'role' = 'assistant' then 'model' else 'user' end,
          'parts', jsonb_build_array(jsonb_build_object('text', e->>'text')))) from jsonb_array_elements(msgs) e));
     select * into r from extensions.http(('POST',
@@ -4284,7 +4284,7 @@ begin
     out := (r.content::jsonb)->'content'->0->>'text';
   else
     body := jsonb_build_object('systemInstruction', jsonb_build_object('parts', jsonb_build_array(jsonb_build_object('text', p_system))),
-      'generationConfig', jsonb_build_object('maxOutputTokens', 400),
+      'generationConfig', jsonb_build_object('maxOutputTokens', 1500),
       'contents', (select jsonb_agg(jsonb_build_object('role', case when e->>'role' = 'assistant' then 'model' else 'user' end,
          'parts', jsonb_build_array(jsonb_build_object('text', e->>'text')))) from jsonb_array_elements(p_msgs) e));
     select * into r from extensions.http(('POST',
@@ -4390,7 +4390,7 @@ begin
     out := (r.content::jsonb)->'content'->0->>'text';
   elsif p_provider = 'gemini' then
     body := jsonb_build_object('systemInstruction', jsonb_build_object('parts', jsonb_build_array(jsonb_build_object('text', p_system))),
-      'generationConfig', jsonb_build_object('maxOutputTokens', 400),
+      'generationConfig', jsonb_build_object('maxOutputTokens', 1500),
       'contents', (select jsonb_agg(jsonb_build_object('role', case when e->>'role' = 'assistant' then 'model' else 'user' end,
          'parts', jsonb_build_array(jsonb_build_object('text', e->>'text')))) from jsonb_array_elements(p_msgs) e));
     select * into r from extensions.http(('POST',
