@@ -5111,5 +5111,87 @@ begin
 end $$;
 grant execute on function public.couple_question(text) to authenticated;
 
+-- =====================================================================
+--  الإصدار 39: حارس الإشعارات — إشعارات Google ما تتوقف مهما انضاف للتطبيق
+--  (1) تشخيص  (2) إعادة تشغيل عامل الإرسال تلقائيًا  (3) إرسال احتياطي مباشر إذا العامل واكف
+-- =====================================================================
+create or replace function public.sys_diag() returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare r jsonb := '{}';
+begin
+  begin r := r || jsonb_build_object('queued', (select count(*) from net.http_request_queue), 'qmin', (select min(id) from net.http_request_queue), 'resp_max_id', (select max(id) from net._http_response),
+      'last_resp', (select max(created) from net._http_response)); exception when others then r := r || jsonb_build_object('net_err', sqlerrm); end;
+  begin r := r || jsonb_build_object('workers', (select jsonb_agg(jsonb_build_object('t', backend_type, 'a', application_name, 's', state)) from pg_stat_activity where backend_type not in ('client backend')),
+      'max_workers', current_setting('max_worker_processes'), 'cron_bgw', current_setting('cron.use_background_workers', true), 'conns', (select count(*) from pg_stat_activity)); exception when others then null; end;
+  begin r := r || jsonb_build_object('cron', (select jsonb_agg(x) from (select j.jobname, d.status, count(*) n, max(left(d.return_message, 120)) msg
+        from cron.job_run_details d join cron.job j using (jobid) where d.start_time > now() - interval '30 minutes' group by 1, 2) x)); exception when others then null; end;
+  begin r := r || jsonb_build_object('watchdog', (select value from private_settings where key = 'push_watchdog'), 'wd_state', (select value from private_settings where key = 'push_wd_state')); exception when others then null; end;
+  return r;
+end $$;
+grant execute on function public.sys_diag() to anon;
+
+-- يرسل الطلبات العالقة مباشرة (بدون العامل) — احتياط إذا العامل ما رجع
+create or replace function public._net_drain(p_limit int default 40) returns int
+language plpgsql security definer set search_path = public, extensions as $$
+declare q record; hs extensions.http_header[]; k text; v text; n int := 0; res extensions.http_response;
+begin
+  perform set_config('http.timeout_msec', '8000', true);
+  for q in select * from net.http_request_queue where id <= (select max(id) from net.http_request_queue)
+           order by id limit p_limit loop
+    hs := '{}';
+    for k, v in select * from jsonb_each_text(coalesce(q.headers, '{}'::jsonb)) loop
+      if lower(k) <> 'content-type' then hs := hs || extensions.http_header(k, v); end if;
+    end loop;
+    begin
+      res := extensions.http((upper(q.method), q.url, hs, 'application/json', convert_from(q.body, 'utf8'))::extensions.http_request);
+    exception when others then null;
+    end;
+    delete from net.http_request_queue where id = q.id;
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+revoke execute on function public._net_drain(int) from public, anon, authenticated;
+
+create or replace function public._push_watchdog() returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare mn bigint; cnt int; prev text; act text := null; sent int;
+begin
+  select min(id), count(*) into mn, cnt from net.http_request_queue;
+  select value into prev from private_settings where key = 'push_wd_state';
+  if mn is null then
+    prev := '';
+  elsif prev = mn::text then
+    -- نفس الطلب عالق من دقيقة: نعيد تشغيل عامل الإرسال
+    begin perform net.worker_restart(); act := 'restart'; exception when others then act := 'restart_fail'; end;
+    prev := mn::text || '|r';
+  elsif prev = mn::text || '|r' then
+    -- بعده عالق بعد إعادة التشغيل: نرسل مباشرة بدون العامل
+    sent := _net_drain(80);
+    act := 'drain:' || sent;
+    prev := '';
+  else
+    prev := mn::text;
+  end if;
+  insert into private_settings(key, value) values ('push_wd_state', coalesce(prev, ''))
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  if act is not null then
+    insert into private_settings(key, value) values ('push_watchdog', now()::text || ' ' || act || ' q=' || cnt)
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end if;
+exception when others then
+  begin
+    insert into private_settings(key, value) values ('push_watchdog', now()::text || ' err ' || left(sqlerrm, 200))
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  exception when others then null;
+  end;
+end $$;
+revoke execute on function public._push_watchdog() from public, anon, authenticated;
+
+do $$ begin
+  perform cron.schedule('almajhool-push-watchdog', '* * * * *', 'select public._push_watchdog()');
+exception when others then raise notice 'v39 cron: %', sqlerrm;
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
