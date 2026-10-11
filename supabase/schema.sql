@@ -5193,5 +5193,17 @@ do $$ begin
 exception when others then raise notice 'v39 cron: %', sqlerrm;
 end $$;
 
+-- =====================================================================
+--  الإصدار 40: تشخيص تسجيل أجهزة Google حسب نسخة التطبيق
+-- =====================================================================
+create or replace function public.push_builds() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(x order by x.b desc), '[]') from (
+    select app_build b, count(*) n, max(updated_at) last_reg,
+      count(*) filter (where updated_at > now() - interval '2 hours') recent
+    from fcm_tokens group by app_build) x;
+$$;
+grant execute on function public.push_builds() to anon;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
