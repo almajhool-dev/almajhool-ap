@@ -1316,10 +1316,15 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool keepEdits = false}) async {
     try {
       final r = Map<String, dynamic>.from(await supa.rpc('ai_status') as Map);
       if (!mounted) return;
+      if (keepEdits) {
+        // أثناء الحفظ: نحدّث حالة المفاتيح بس، وما نرجع الأزرار لقيمها القديمة
+        setState(() => _st = r);
+        return;
+      }
       setState(() {
         _st = r;
         _comments = r['enabled_comments'] == true;
@@ -1357,7 +1362,7 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
           _keys[p.id]!.clear();
         }
       }
-      await _load();
+      await _load(keepEdits: true);
       if ((_comments || _dms) && !_anyKey) throw Exception('حط مفتاح واحد على الأقل');
       await supa.rpc('ai_configure3', params: {
         'p_comments': _comments,

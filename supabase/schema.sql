@@ -4511,5 +4511,40 @@ begin
 end $$;
 grant execute on function public.ai_configure3(boolean, boolean, text, jsonb, text, boolean, int) to authenticated;
 
+-- =====================================================================
+--  الإصدار 35: تشخيص المساعد + تشغيله مرة وحدة (كان زر التشغيل يرجع ينطفي بسبب خلل بالتطبيق)
+-- =====================================================================
+create or replace function public.ai_diag() returns jsonb
+language sql stable security definer set search_path = public, cron as $$
+  select jsonb_build_object(
+    'comments', c.enabled_comments, 'dms', c.enabled_dms, 'first', c.first_provider, 'model_gemini', c.model_gemini,
+    'keys', jsonb_build_object(
+      'gemini', exists(select 1 from private_settings where key = 'ai_key_gemini'),
+      'groq', exists(select 1 from private_settings where key = 'ai_key_groq'),
+      'openrouter', exists(select 1 from private_settings where key = 'ai_key_openrouter'),
+      'anthropic', exists(select 1 from private_settings where key = 'ai_key_anthropic')),
+    'jobs', (select coalesce(jsonb_object_agg(status, n), '{}') from (select status, count(*) n from ai_jobs group by status) x),
+    'errors', (select coalesce(jsonb_agg(jsonb_build_object('at', done_at, 'kind', kind, 'info', info) order by id desc), '[]')
+               from (select * from ai_jobs where status = 'error' order by id desc limit 5) e),
+    'cron', (select coalesce(jsonb_agg(jsonb_build_object('schedule', schedule, 'active', active)), '[]') from cron.job where jobname = 'almajhool-ai'),
+    'cron_last', (select jsonb_build_object('status', status, 'msg', left(return_message, 200), 'at', start_time)
+                  from cron.job_run_details d join cron.job j on j.jobid = d.jobid where j.jobname = 'almajhool-ai'
+                  order by d.start_time desc limit 1))
+  from ai_config c where c.id = 1;
+$$;
+grant execute on function public.ai_diag() to anon, authenticated;
+
+-- تشغيل لمرة وحدة بطلب المالك (ما يتكرر إذا طفّاه بعدين)
+do $$ begin
+  if not exists(select 1 from private_settings where key = 'ai_enable_once_v35') then
+    update ai_config set enabled_comments = true, enabled_dms = true,
+      first_provider = case when exists(select 1 from private_settings where key = 'ai_key_gemini') then 'gemini' else first_provider end,
+      updated_at = now()
+    where id = 1;
+    insert into private_settings(key, value) values ('ai_enable_once_v35', now()::text);
+  end if;
+exception when others then raise notice 'ai enable: %', sqlerrm;
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
