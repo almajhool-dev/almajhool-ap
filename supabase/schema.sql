@@ -4369,5 +4369,147 @@ begin
 end $$;
 grant execute on function public.ai_configure2(boolean, boolean, text, text, text, text, boolean, int) to authenticated;
 
+-- =====================================================================
+--  الإصدار 34: مزوّدين مجانيين إضافيين للمساعد (Groq و OpenRouter) كاحتياط
+-- =====================================================================
+alter table public.ai_config add column if not exists model_groq text not null default 'llama-3.3-70b-versatile';
+alter table public.ai_config add column if not exists model_openrouter text not null default 'meta-llama/llama-3.3-70b-instruct:free';
+
+create or replace function public._ai_call(p_provider text, p_model text, p_key text, p_system text, p_msgs jsonb) returns text
+language plpgsql security definer set search_path = public, extensions as $$
+declare r extensions.http_response; body jsonb; out text; url text;
+begin
+  perform set_config('http.timeout_msec', '30000', true);
+  if p_provider = 'anthropic' then
+    body := jsonb_build_object('model', p_model, 'max_tokens', 400, 'system', p_system,
+      'messages', (select jsonb_agg(jsonb_build_object('role', e->>'role', 'content', e->>'text')) from jsonb_array_elements(p_msgs) e));
+    select * into r from extensions.http(('POST', 'https://api.anthropic.com/v1/messages',
+      array[extensions.http_header('x-api-key', p_key), extensions.http_header('anthropic-version', '2023-06-01')],
+      'application/json', body::text)::extensions.http_request);
+    if r.status <> 200 then raise exception 'claude_%: %', r.status, left(r.content, 200); end if;
+    out := (r.content::jsonb)->'content'->0->>'text';
+  elsif p_provider = 'gemini' then
+    body := jsonb_build_object('systemInstruction', jsonb_build_object('parts', jsonb_build_array(jsonb_build_object('text', p_system))),
+      'generationConfig', jsonb_build_object('maxOutputTokens', 400),
+      'contents', (select jsonb_agg(jsonb_build_object('role', case when e->>'role' = 'assistant' then 'model' else 'user' end,
+         'parts', jsonb_build_array(jsonb_build_object('text', e->>'text')))) from jsonb_array_elements(p_msgs) e));
+    select * into r from extensions.http(('POST',
+      'https://generativelanguage.googleapis.com/v1beta/models/' || p_model || ':generateContent?key=' || p_key,
+      array[]::extensions.http_header[], 'application/json', body::text)::extensions.http_request);
+    if r.status <> 200 then raise exception 'gemini_%: %', r.status, left(r.content, 200); end if;
+    out := (r.content::jsonb)->'candidates'->0->'content'->'parts'->0->>'text';
+  else
+    -- Groq و OpenRouter: نفس صيغة OpenAI
+    url := case p_provider when 'groq' then 'https://api.groq.com/openai/v1/chat/completions'
+                           else 'https://openrouter.ai/api/v1/chat/completions' end;
+    body := jsonb_build_object('model', p_model, 'max_tokens', 400,
+      'messages', jsonb_build_array(jsonb_build_object('role', 'system', 'content', p_system)) ||
+        (select jsonb_agg(jsonb_build_object('role', e->>'role', 'content', e->>'text')) from jsonb_array_elements(p_msgs) e));
+    select * into r from extensions.http(('POST', url,
+      array[extensions.http_header('Authorization', 'Bearer ' || p_key),
+            extensions.http_header('X-Title', 'almajhool')],
+      'application/json', body::text)::extensions.http_request);
+    if r.status <> 200 then raise exception '%_%: %', p_provider, r.status, left(r.content, 200); end if;
+    out := (r.content::jsonb)->'choices'->0->'message'->>'content';
+  end if;
+  out := btrim(coalesce(out, ''));
+  if out = '' then raise exception '%_empty', p_provider; end if;
+  return out;
+end $$;
+revoke execute on function public._ai_call(text, text, text, text, jsonb) from public, anon, authenticated;
+
+create or replace function public._ai_complete(p_system text, p_msgs jsonb) returns text
+language plpgsql security definer set search_path = public, extensions as $$
+declare cfg ai_config; msgs jsonb := '[]'::jsonb; m jsonb; last_role text := ''; prov text; k text; errs text := '';
+  order_list text[];
+begin
+  select * into cfg from ai_config where id = 1;
+  for m in select * from jsonb_array_elements(p_msgs) loop
+    if m->>'role' = last_role then
+      msgs := jsonb_set(msgs, array[(jsonb_array_length(msgs) - 1)::text, 'text'],
+        to_jsonb((msgs->(jsonb_array_length(msgs) - 1)->>'text') || E'\n' || (m->>'text')));
+    else
+      msgs := msgs || jsonb_build_array(m);
+      last_role := m->>'role';
+    end if;
+  end loop;
+  if jsonb_array_length(msgs) = 0 or msgs->0->>'role' <> 'user' then
+    msgs := jsonb_build_array(jsonb_build_object('role', 'user', 'text', '...')) || msgs;
+  end if;
+  -- الأساسي أولًا، وبعده الباقين بالترتيب (المجانيين قبل المدفوع)
+  order_list := array[cfg.first_provider] ||
+    array(select x from unnest(array['gemini', 'groq', 'openrouter', 'anthropic']) x where x <> cfg.first_provider);
+  foreach prov in array order_list loop
+    k := (select value from private_settings where key = 'ai_key_' || prov);
+    if k is null then continue; end if;
+    begin
+      return _ai_call(prov, case prov when 'anthropic' then cfg.model_anthropic when 'gemini' then cfg.model_gemini
+                                      when 'groq' then cfg.model_groq else cfg.model_openrouter end,
+                      k, p_system, msgs);
+    exception when others then
+      errs := errs || sqlerrm || ' | ';
+    end;
+  end loop;
+  if errs = '' then raise exception 'no_key: حط مفتاح واحد على الأقل'; end if;
+  raise exception '%', left(errs, 280);
+end $$;
+revoke execute on function public._ai_complete(text, jsonb) from public, anon, authenticated;
+
+create or replace function public.ai_set_key(p_provider text, p_key text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if p_provider not in ('anthropic', 'gemini', 'groq', 'openrouter') then raise exception 'مزوّد غير معروف'; end if;
+  if char_length(coalesce(btrim(p_key), '')) < 20 then raise exception 'المفتاح غير صالح'; end if;
+  insert into private_settings(key, value) values ('ai_key_' || p_provider, btrim(p_key))
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+end $$;
+grant execute on function public.ai_set_key(text, text) to authenticated;
+
+create or replace function public.ai_status() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare c ai_config;
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  select * into c from ai_config where id = 1;
+  return jsonb_build_object(
+    'enabled_comments', c.enabled_comments, 'enabled_dms', c.enabled_dms,
+    'provider', c.first_provider, 'first_provider', c.first_provider,
+    'model_anthropic', c.model_anthropic, 'model_gemini', c.model_gemini,
+    'model_groq', c.model_groq, 'model_openrouter', c.model_openrouter,
+    'persona', c.persona, 'mark_ai', c.mark_ai, 'daily_limit', c.daily_limit,
+    'key_anthropic', exists(select 1 from private_settings where key = 'ai_key_anthropic'),
+    'key_gemini', exists(select 1 from private_settings where key = 'ai_key_gemini'),
+    'key_groq', exists(select 1 from private_settings where key = 'ai_key_groq'),
+    'key_openrouter', exists(select 1 from private_settings where key = 'ai_key_openrouter'),
+    'today', (select count(*) from ai_jobs where status = 'done' and done_at > now() - interval '1 day'),
+    'pending', (select count(*) from ai_jobs where status = 'pending'),
+    'last_error', (select info from ai_jobs where status = 'error' order by id desc limit 1),
+    'last_error_at', (select done_at from ai_jobs where status = 'error' order by id desc limit 1));
+end $$;
+grant execute on function public.ai_status() to authenticated;
+
+create or replace function public.ai_configure3(p_comments boolean, p_dms boolean, p_first text,
+  p_models jsonb, p_persona text, p_mark boolean, p_limit int) returns void
+language plpgsql security definer set search_path = public as $$
+declare k text;
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if p_first not in ('anthropic', 'gemini', 'groq', 'openrouter') then raise exception 'مزوّد غير معروف'; end if;
+  for k in select jsonb_object_keys(coalesce(p_models, '{}'::jsonb)) loop
+    if coalesce(p_models->>k, '') !~ '^[a-zA-Z0-9._:/-]{3,80}$' then raise exception 'اسم النموذج غير صالح'; end if;
+  end loop;
+  update ai_config set enabled_comments = coalesce(p_comments, false), enabled_dms = coalesce(p_dms, false),
+    first_provider = p_first,
+    model_anthropic = coalesce(p_models->>'anthropic', model_anthropic),
+    model_gemini = coalesce(p_models->>'gemini', model_gemini),
+    model_groq = coalesce(p_models->>'groq', model_groq),
+    model_openrouter = coalesce(p_models->>'openrouter', model_openrouter),
+    persona = left(coalesce(p_persona, ''), 1500), mark_ai = coalesce(p_mark, true),
+    daily_limit = least(greatest(coalesce(p_limit, 300), 1), 5000), updated_at = now()
+  where id = 1;
+end $$;
+grant execute on function public.ai_configure3(boolean, boolean, text, jsonb, text, boolean, int) to authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

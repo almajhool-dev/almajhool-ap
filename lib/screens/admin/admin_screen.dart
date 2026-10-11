@@ -1266,7 +1266,13 @@ class _LivesAdminState extends State<_LivesAdmin> {
 
 
 /// المساعد الذكي لحساب المالك: يعلّق على المنشورات ويرد على الرسائل الخاصة.
-/// يستخدم Claude و Gemini سوا: واحد أساسي والثاني احتياط تلقائي.
+/// يستخدم أكثر من مزوّد سوا: الأساسي أولًا، وإذا فشل أو خلص حده يرد بالثاني تلقائيًا.
+class _AiProvider {
+  final String id, title, hint, url;
+  final List<String> models;
+  const _AiProvider(this.id, this.title, this.hint, this.url, this.models);
+}
+
 class AiAssistantCard extends StatefulWidget {
   const AiAssistantCard({super.key});
   @override
@@ -1274,19 +1280,24 @@ class AiAssistantCard extends StatefulWidget {
 }
 
 class _AiAssistantCardState extends State<AiAssistantCard> {
-  static const _claudeModels = ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-4-5-20251001'];
-  static const _geminiModels = ['gemini-2.5-flash', 'gemini-2.5-pro'];
-  static const claudeKeysUrl = 'https://console.anthropic.com/settings/keys';
-  static const geminiKeysUrl = 'https://aistudio.google.com/app/apikey';
+  static const _providers = [
+    _AiProvider('gemini', 'Gemini (Google)', 'مجاني', 'https://aistudio.google.com/app/apikey',
+        ['gemini-2.5-flash', 'gemini-2.5-pro']),
+    _AiProvider('groq', 'Groq', 'مجاني', 'https://console.groq.com/keys',
+        ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'llama-3.1-8b-instant']),
+    _AiProvider('openrouter', 'OpenRouter', 'نماذج مجانية', 'https://openrouter.ai/settings/keys',
+        ['meta-llama/llama-3.3-70b-instruct:free', 'deepseek/deepseek-chat-v3-0324:free', 'qwen/qwen3-235b-a22b:free']),
+    _AiProvider('anthropic', 'Claude (Anthropic)', 'مدفوع', 'https://platform.claude.com/settings/keys',
+        ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-4-5-20251001']),
+  ];
 
   Map<String, dynamic>? _st;
   bool _busy = false;
   bool _comments = false, _dms = false, _mark = true;
-  String _first = 'anthropic';
-  String _mClaude = _claudeModels.first, _mGemini = _geminiModels.first;
+  String _first = 'gemini';
+  final Map<String, String> _model = {for (final p in _providers) p.id: p.models.first};
+  final Map<String, TextEditingController> _keys = {for (final p in _providers) p.id: TextEditingController()};
   final _persona = TextEditingController();
-  final _kClaude = TextEditingController();
-  final _kGemini = TextEditingController();
   final _limit = TextEditingController(text: '300');
 
   @override
@@ -1297,9 +1308,10 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
 
   @override
   void dispose() {
+    for (final c in _keys.values) {
+      c.dispose();
+    }
     _persona.dispose();
-    _kClaude.dispose();
-    _kGemini.dispose();
     _limit.dispose();
     super.dispose();
   }
@@ -1313,11 +1325,12 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
         _comments = r['enabled_comments'] == true;
         _dms = r['enabled_dms'] == true;
         _mark = r['mark_ai'] != false;
-        _first = (r['first_provider'] ?? r['provider'] ?? 'anthropic') as String;
-        final mc = r['model_anthropic'] as String?;
-        final mg = r['model_gemini'] as String?;
-        if (mc != null && _claudeModels.contains(mc)) _mClaude = mc;
-        if (mg != null && _geminiModels.contains(mg)) _mGemini = mg;
+        final f = (r['first_provider'] ?? 'gemini') as String;
+        _first = _providers.any((p) => p.id == f) ? f : 'gemini';
+        for (final p in _providers) {
+          final m = r['model_${p.id}'];
+          if (m is String && p.models.contains(m)) _model[p.id] = m;
+        }
         _persona.text = (r['persona'] ?? '') as String;
         _limit.text = '${r['daily_limit'] ?? 300}';
       });
@@ -1326,7 +1339,7 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
     }
   }
 
-  bool get _anyKey => _st?['key_anthropic'] == true || _st?['key_gemini'] == true;
+  bool get _anyKey => _providers.any((p) => _st?['key_${p.id}'] == true);
 
   Future<void> _open(String url) async {
     try {
@@ -1337,22 +1350,20 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
   Future<void> _save({String? okMsg}) async {
     setState(() => _busy = true);
     try {
-      if (_kClaude.text.trim().isNotEmpty) {
-        await supa.rpc('ai_set_key', params: {'p_provider': 'anthropic', 'p_key': _kClaude.text.trim()});
-        _kClaude.clear();
-      }
-      if (_kGemini.text.trim().isNotEmpty) {
-        await supa.rpc('ai_set_key', params: {'p_provider': 'gemini', 'p_key': _kGemini.text.trim()});
-        _kGemini.clear();
+      for (final p in _providers) {
+        final t = _keys[p.id]!.text.trim();
+        if (t.isNotEmpty) {
+          await supa.rpc('ai_set_key', params: {'p_provider': p.id, 'p_key': t});
+          _keys[p.id]!.clear();
+        }
       }
       await _load();
-      if ((_comments || _dms) && !_anyKey) throw Exception('حط مفتاح Claude أو Gemini أولًا');
-      await supa.rpc('ai_configure2', params: {
+      if ((_comments || _dms) && !_anyKey) throw Exception('حط مفتاح واحد على الأقل');
+      await supa.rpc('ai_configure3', params: {
         'p_comments': _comments,
         'p_dms': _dms,
         'p_first': _first,
-        'p_model_anthropic': _mClaude,
-        'p_model_gemini': _mGemini,
+        'p_models': _model,
         'p_persona': _persona.text,
         'p_mark': _mark,
         'p_limit': int.tryParse(_limit.text) ?? 300,
@@ -1367,16 +1378,8 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
     }
   }
 
-  Widget _keyBox({
-    required String title,
-    required bool saved,
-    required TextEditingController ctrl,
-    required String url,
-    required String hint,
-    required List<String> models,
-    required String model,
-    required ValueChanged<String> onModel,
-  }) {
+  Widget _keyBox(_AiProvider p) {
+    final saved = _st?['key_${p.id}'] == true;
     return Container(
       margin: const EdgeInsets.only(top: 10),
       padding: const EdgeInsets.all(10),
@@ -1386,17 +1389,17 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Row(children: [
-          Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w800))),
+          Expanded(child: Text('${p.title} · ${p.hint}', style: const TextStyle(fontWeight: FontWeight.w800))),
           if (saved) const Chip(label: Text('محفوظ ✅'), visualDensity: VisualDensity.compact),
         ]),
         TextButton.icon(
           style: TextButton.styleFrom(alignment: AlignmentDirectional.centerStart),
-          onPressed: () => _open(url),
+          onPressed: () => _open(p.url),
           icon: const Icon(Icons.open_in_new_rounded, size: 18),
-          label: Text('اضغط هنا وجيب المفتاح ($hint)'),
+          label: const Text('اضغط هنا وجيب المفتاح'),
         ),
         TextField(
-          controller: ctrl,
+          controller: _keys[p.id],
           obscureText: true,
           textDirection: TextDirection.ltr,
           decoration: InputDecoration(
@@ -1406,10 +1409,11 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
         ),
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
-          value: model,
+          value: _model[p.id],
+          isExpanded: true,
           decoration: const InputDecoration(labelText: 'النموذج', isDense: true),
-          items: [for (final m in models) DropdownMenuItem(value: m, child: Text(m, style: const TextStyle(fontSize: 12.5)))],
-          onChanged: (v) => onModel(v ?? model),
+          items: [for (final m in p.models) DropdownMenuItem(value: m, child: Text(m, style: const TextStyle(fontSize: 12)))],
+          onChanged: (v) => setState(() => _model[p.id] = v ?? _model[p.id]!),
         ),
       ]),
     );
@@ -1436,7 +1440,7 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
                   ]),
                   if (st['error'] != null) Text(st['error'] as String, style: const TextStyle(color: Colors.red)),
                   const Text(
-                      'يرد باسمك وبنفس لغة الشخص (كل لغات العالم). يستخدم Claude و Gemini سوا: إذا واحد خلص حده أو تعطل، يرد بالثاني تلقائيًا. يشتغل بالسيرفر حتى لو التطبيق مسدود.',
+                      'يرد باسمك وبنفس لغة الشخص (كل لغات العالم). تكدر تحط أكثر من مفتاح: الأساسي يرد أول، وإذا خلص حده أو تعطل يرد الثاني تلقائيًا. يشتغل بالسيرفر حتى لو التطبيق مسدود.',
                       style: TextStyle(fontSize: 12.5)),
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 8),
@@ -1478,33 +1482,12 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
                   const Divider(),
                   DropdownButtonFormField<String>(
                     value: _first,
-                    decoration: const InputDecoration(labelText: 'الأساسي (والثاني احتياط)', isDense: true),
-                    items: const [
-                      DropdownMenuItem(value: 'anthropic', child: Text('Claude أولًا، وبعده Gemini')),
-                      DropdownMenuItem(value: 'gemini', child: Text('Gemini أولًا، وبعده Claude')),
-                    ],
-                    onChanged: (v) => setState(() => _first = v ?? 'anthropic'),
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'الأساسي (والباقين احتياط)', isDense: true),
+                    items: [for (final p in _providers) DropdownMenuItem(value: p.id, child: Text('${p.title} أولًا'))],
+                    onChanged: (v) => setState(() => _first = v ?? 'gemini'),
                   ),
-                  _keyBox(
-                    title: 'Claude (Anthropic)',
-                    saved: st['key_anthropic'] == true,
-                    ctrl: _kClaude,
-                    url: claudeKeysUrl,
-                    hint: 'مدفوع',
-                    models: _claudeModels,
-                    model: _mClaude,
-                    onModel: (v) => setState(() => _mClaude = v),
-                  ),
-                  _keyBox(
-                    title: 'Gemini (Google)',
-                    saved: st['key_gemini'] == true,
-                    ctrl: _kGemini,
-                    url: geminiKeysUrl,
-                    hint: 'بيه مجاني',
-                    models: _geminiModels,
-                    model: _mGemini,
-                    onModel: (v) => setState(() => _mGemini = v),
-                  ),
+                  for (final p in _providers) _keyBox(p),
                   const SizedBox(height: 10),
                   TextField(
                     controller: _persona,
