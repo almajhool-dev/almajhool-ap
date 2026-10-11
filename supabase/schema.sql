@@ -5411,7 +5411,7 @@ exception when others then raise notice 'minute guard: %', sqlerrm;
 end $$;
 
 -- تقرير السرعة (للصيانة فقط — يحتاج إثبات GitHub): أبطأ الاستعلامات حتى تتسرّع بفهارس
-create or replace function public.perf_report(p_gh text) returns jsonb
+create or replace function public.perf_report(p_gh text default null) returns jsonb
 language plpgsql security definer set search_path = public, extensions as $$
 declare r jsonb;
 begin
