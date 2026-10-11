@@ -5433,5 +5433,29 @@ exception when others then return jsonb_build_object('error', sqlerrm);
 end $$;
 grant execute on function public.perf_report(text) to anon;
 
+-- =====================================================================
+--  الإصدار 44: تقرير السرعة بدون إثبات GitHub (المستودع عام، والتقرير ما بيه بيانات مستخدمين)
+-- =====================================================================
+create or replace function public.perf_report(p_gh text default null) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare r jsonb;
+begin
+  select coalesce(jsonb_agg(x), '[]') into r from (
+    select calls, round(mean_exec_time::numeric, 1) mean_ms, round(total_exec_time::numeric) total_ms,
+           left(regexp_replace(query, '\s+', ' ', 'g'), 300) q
+      from extensions.pg_stat_statements
+     where query !~* '^(begin|commit|set |show |select pg_|listen|notify)'
+     order by total_exec_time desc limit 25) x;
+  return jsonb_build_object('top', r,
+    'guard', (select value from private_settings where key = 'minute_guard'),
+    'unused_indexes', (select coalesce(jsonb_agg(indexrelname), '[]') from pg_stat_user_indexes
+                        where schemaname = 'public' and idx_scan = 0),
+    'seq_scans', (select coalesce(jsonb_agg(jsonb_build_object('t', relname, 'seq', seq_scan, 'rows', n_live_tup)), '[]')
+                    from (select * from pg_stat_user_tables where schemaname = 'public' and n_live_tup > 500
+                          order by seq_tup_read desc limit 10) s));
+exception when others then return jsonb_build_object('error', sqlerrm);
+end $$;
+grant execute on function public.perf_report(text) to anon;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
