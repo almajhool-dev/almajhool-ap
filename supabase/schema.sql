@@ -5205,5 +5205,36 @@ language sql stable security definer set search_path = public as $$
 $$;
 grant execute on function public.push_builds() to anon;
 
+
+-- ============================================================
+--  الإصدار 41: ربط الشريك — إذا الحساب صار مربوط (شريكه دخّل رمزه بنفس الوقت)
+--  نرجّع الربط الموجود بدل رسالة "حسابك مربوط بشريك أصلًا" حتى تتحدث الشاشة
+-- ============================================================
+create or replace function public.couple_link(p_code text) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare me uuid := auth.uid(); other uuid; cid uuid; nm text;
+begin
+  if me is null then raise exception 'not_authenticated'; end if;
+  if is_banned() then raise exception 'حسابك محظور'; end if;
+  perform _rate('couple_link', 8, 600);   -- يمنع تخمين الرموز
+  perform pg_advisory_xact_lock(445566);
+  -- إذا شريكه ربطه قبل شوية والشاشة بعدها قديمة: نرجّع الربط الموجود بدل خطأ
+  cid := _my_couple();
+  if cid is not null then return cid; end if;
+  select user_id into other from couple_codes where code = btrim(coalesce(p_code, '')) and expires_at > now();
+  if other is null then return null; end if;  -- بدون exception حتى تنحسب المحاولة الغلط
+  if other = me then raise exception 'هذا رمزك انت، دخّل رمز شريكك'; end if;
+  if is_blocked_between(me, other) then raise exception 'ما يصير الربط: يوجد حظر'; end if;
+  if exists(select 1 from couples where other in (user_a, user_b)) then raise exception 'هذا الشخص مربوط بشريك ثاني'; end if;
+  insert into couples(user_a, user_b) values (other, me) returning id into cid;
+  insert into couple_watch(couple_id, updated_by) values (cid, me) on conflict do nothing;
+  delete from couple_codes where user_id in (me, other);
+  select display_name into nm from profiles where id = me;
+  insert into notifications(user_id, type, title, body, data)
+    values (other, 'couple', 'صرتوا شركاء 💞', coalesce(nm, '') || ' ربط حسابه وياك بمساحة الشريك', jsonb_build_object('user_id', me));
+  return cid;
+end $$;
+grant execute on function public.couple_link(text) to authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
