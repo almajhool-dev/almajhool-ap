@@ -4546,5 +4546,30 @@ do $$ begin
 exception when others then raise notice 'ai enable: %', sqlerrm;
 end $$;
 
+-- اختبار المساعد بدون ما ينشر شي (النتيجة تبين بالتشخيص)
+create or replace function public.ai_selftest() returns text
+language plpgsql security definer set search_path = public, extensions as $$
+declare t text;
+begin
+  begin
+    t := 'OK: ' || left(_ai_complete(_ai_system('Reply to this test message.'),
+                     jsonb_build_array(jsonb_build_object('role', 'user', 'text', 'هلو شلونك؟'))), 200);
+  exception when others then t := 'ERR: ' || left(sqlerrm, 300);
+  end;
+  insert into private_settings(key, value) values ('ai_selftest', now()::text || ' ' || t)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  return t;
+end $$;
+revoke execute on function public.ai_selftest() from public, anon, authenticated;
+do $$ begin
+  perform cron.schedule('almajhool-ai-selftest', '*/30 * * * *', 'select public.ai_selftest()');
+exception when others then raise notice 'selftest cron: %', sqlerrm;
+end $$;
+create or replace function public.ai_selftest_result() returns text
+language sql stable security definer set search_path = public as $$
+  select value from private_settings where key = 'ai_selftest';
+$$;
+grant execute on function public.ai_selftest_result() to anon, authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
