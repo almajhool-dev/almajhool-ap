@@ -5457,5 +5457,22 @@ exception when others then return jsonb_build_object('error', sqlerrm);
 end $$;
 grant execute on function public.perf_report(text) to anon;
 
+-- =====================================================================
+--  الإصدار 45: تخفيف الحمل — فحص المساعد كل 5 ثواني صار يطلع فورًا إذا ماكو شغل
+-- =====================================================================
+create index if not exists ai_jobs_ready_idx on public.ai_jobs(next_at) where status = 'pending';
+create or replace function public._ai_tick() returns void
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if exists(select 1 from ai_jobs where status = 'pending' and next_at <= now()) then
+    perform _ai_process();
+  end if;
+end $$;
+revoke execute on function public._ai_tick() from public, anon, authenticated;
+do $$ begin
+  perform cron.schedule('almajhool-ai', '5 seconds', 'select public._ai_tick()');
+exception when others then raise notice 'ai tick: %', sqlerrm;
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
