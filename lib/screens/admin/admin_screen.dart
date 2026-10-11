@@ -163,6 +163,10 @@ class _OverviewState extends State<_Overview> {
             ),
           ),
           const SizedBox(height: 12),
+          if (context.read<SessionProvider>().profile?.isOwner ?? false) ...[
+            const AiAssistantCard(),
+            const SizedBox(height: 12),
+          ],
           const _LiveSettingsCard(),
           const SizedBox(height: 12),
           const _OldVersionsCard(),
@@ -1254,6 +1258,226 @@ class _LivesAdminState extends State<_LivesAdmin> {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+
+/// المساعد الذكي لحساب المالك: يعلّق على المنشورات ويرد على الرسائل الخاصة.
+class AiAssistantCard extends StatefulWidget {
+  const AiAssistantCard({super.key});
+  @override
+  State<AiAssistantCard> createState() => _AiAssistantCardState();
+}
+
+class _AiAssistantCardState extends State<AiAssistantCard> {
+  static const _models = {
+    'anthropic': ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-4-5-20251001'],
+    'gemini': ['gemini-2.5-flash', 'gemini-2.5-pro'],
+  };
+  Map<String, dynamic>? _st;
+  bool _busy = false;
+  bool _comments = false, _dms = false, _mark = true;
+  String _provider = 'anthropic', _model = 'claude-sonnet-5-5';
+  final _persona = TextEditingController();
+  final _key = TextEditingController();
+  final _limit = TextEditingController(text: '300');
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _persona.dispose();
+    _key.dispose();
+    _limit.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final r = Map<String, dynamic>.from(await supa.rpc('ai_status') as Map);
+      if (!mounted) return;
+      setState(() {
+        _st = r;
+        _comments = r['enabled_comments'] == true;
+        _dms = r['enabled_dms'] == true;
+        _mark = r['mark_ai'] != false;
+        _provider = (r['provider'] ?? 'anthropic') as String;
+        _model = (r['model'] ?? _models[_provider]!.first) as String;
+        _persona.text = (r['persona'] ?? '') as String;
+        _limit.text = '${r['daily_limit'] ?? 300}';
+      });
+    } catch (e) {
+      if (mounted) setState(() => _st = {'error': friendlyError(e)});
+    }
+  }
+
+  bool get _hasKey => _st?['key_$_provider'] == true;
+
+  Future<void> _save({String? okMsg}) async {
+    setState(() => _busy = true);
+    try {
+      if (_key.text.trim().isNotEmpty) {
+        await supa.rpc('ai_set_key', params: {'p_provider': _provider, 'p_key': _key.text.trim()});
+        _key.clear();
+      }
+      if ((_comments || _dms) && !(_hasKey || _st?['key_$_provider'] == true)) {
+        await _load();
+        if (!_hasKey) throw Exception('حط مفتاح الـ API أولًا');
+      }
+      await supa.rpc('ai_configure', params: {
+        'p_comments': _comments,
+        'p_dms': _dms,
+        'p_provider': _provider,
+        'p_model': _model,
+        'p_persona': _persona.text,
+        'p_mark': _mark,
+        'p_limit': int.tryParse(_limit.text) ?? 300,
+      });
+      await _load();
+      if (mounted) showSnack(context, okMsg ?? 'تم الحفظ ✅');
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+      await _load();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final st = _st;
+    final on = _comments || _dms;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: st == null
+            ? const Center(child: CircularProgressIndicator())
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(children: [
+                    const Icon(Icons.smart_toy_rounded, color: Colors.deepPurple),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                        child: Text('المساعد الذكي لحسابك', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16))),
+                    Chip(
+                      label: Text(on ? 'شغّال ✅' : 'متوقف'),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ]),
+                  if (st['error'] != null) Text(st['error'] as String, style: const TextStyle(color: Colors.red)),
+                  const Text('يرد باسمك وبنفس لغة الشخص (كل لغات العالم). يشتغل بالسيرفر حتى لو التطبيق مسدود.',
+                      style: TextStyle(fontSize: 12.5)),
+                  // زر التشغيل/الإيقاف السريع
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(backgroundColor: on ? Colors.red : Colors.green),
+                      onPressed: _busy
+                          ? null
+                          : () {
+                              setState(() {
+                                final v = !on;
+                                _comments = v;
+                                _dms = v;
+                              });
+                              _save(okMsg: on ? 'تم إيقاف المساعد ⏸' : 'تم تشغيل المساعد 🤖');
+                            },
+                      icon: Icon(on ? Icons.pause_circle_rounded : Icons.play_circle_rounded),
+                      label: Text(on ? 'إيقاف المساعد' : 'تشغيل المساعد'),
+                    ),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('يعلّق على منشورات الناس ويشكرهم'),
+                    value: _comments,
+                    onChanged: _busy ? null : (v) => setState(() => _comments = v),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('يرد على رسائلك الخاصة'),
+                    subtitle: const Text('يسكت لمدة 10 دقايق إذا انت كتبت بنفس المحادثة', style: TextStyle(fontSize: 12)),
+                    value: _dms,
+                    onChanged: _busy ? null : (v) => setState(() => _dms = v),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('يبين إن الرد من المساعد (🤖)'),
+                    value: _mark,
+                    onChanged: _busy ? null : (v) => setState(() => _mark = v),
+                  ),
+                  const Divider(),
+                  Row(children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: _provider,
+                        decoration: const InputDecoration(labelText: 'الشركة', isDense: true),
+                        items: const [
+                          DropdownMenuItem(value: 'anthropic', child: Text('Claude (Anthropic)')),
+                          DropdownMenuItem(value: 'gemini', child: Text('Gemini (Google)')),
+                        ],
+                        onChanged: (v) => setState(() {
+                          _provider = v ?? 'anthropic';
+                          _model = _models[_provider]!.first;
+                        }),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: _models[_provider]!.contains(_model) ? _model : null,
+                        decoration: const InputDecoration(labelText: 'النموذج', isDense: true),
+                        items: [for (final m in _models[_provider]!) DropdownMenuItem(value: m, child: Text(m, style: const TextStyle(fontSize: 12)))],
+                        onChanged: (v) => setState(() => _model = v ?? _model),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _key,
+                    obscureText: true,
+                    textDirection: TextDirection.ltr,
+                    decoration: InputDecoration(
+                      labelText: _hasKey ? 'مفتاح API محفوظ ✅ (اكتب جديد لتغييره)' : 'مفتاح API',
+                      helperText: _provider == 'anthropic' ? 'من console.anthropic.com ← API Keys' : 'من aistudio.google.com ← Get API key',
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _persona,
+                    minLines: 2,
+                    maxLines: 4,
+                    maxLength: 1500,
+                    decoration: const InputDecoration(
+                      labelText: 'تعليمات إضافية لأسلوبه (اختياري)',
+                      hintText: 'مثلاً: احچي باللهجة العراقية، وخلي ردودك مرحة',
+                      isDense: true,
+                    ),
+                  ),
+                  TextField(
+                    controller: _limit,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'حد الردود باليوم', isDense: true),
+                  ),
+                  const SizedBox(height: 8),
+                  Text('اليوم: ${st['today'] ?? 0} رد · بالانتظار: ${st['pending'] ?? 0}', style: const TextStyle(fontSize: 12.5)),
+                  if (st['last_error'] != null)
+                    Text('آخر خطأ: ${st['last_error']}', style: const TextStyle(fontSize: 12, color: Colors.orange)),
+                  const SizedBox(height: 8),
+                  FilledButton.icon(
+                    onPressed: _busy ? null : () => _save(),
+                    icon: const Icon(Icons.lock_rounded),
+                    label: const Text('حفظ الإعدادات'),
+                  ),
+                ],
+              ),
       ),
     );
   }
