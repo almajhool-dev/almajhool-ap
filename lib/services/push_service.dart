@@ -99,10 +99,17 @@ class PushService {
       String? t;
       for (var i = 0; i < 3 && t == null; i++) {
         try {
-          t = await m.getToken().timeout(const Duration(seconds: 25));
+          // إذا Google رفض التسجيل مرتين: نمسح تسجيل الجهاز القديم ونطلب واحد جديد نظيف
+          if (_attempt >= 1 && i == 0 || i == 2) {
+            try {
+              await m.setAutoInitEnabled(true);
+              await m.deleteToken().timeout(const Duration(seconds: 20));
+            } catch (_) {}
+          }
+          t = await m.getToken().timeout(const Duration(seconds: 40));
         } catch (e) {
           if (i == 2) rethrow;
-          await Future<void>.delayed(Duration(seconds: 3 * (i + 1)));
+          await Future<void>.delayed(Duration(seconds: 4 * (i + 1)));
         }
       }
       if (t == null) throw Exception('no token');
@@ -138,6 +145,13 @@ class PushService {
     } finally {
       _starting = false;
     }
+  }
+
+  /// إعادة الربط مع Google يدويًا (زر بشاشة الفحص) — يبدي من جديد بمسح التسجيل القديم.
+  static Future<bool> retryNow() async {
+    _retry?.cancel();
+    if (_attempt == 0) _attempt = 1;
+    return start();
   }
 
   static Future<void> cancelCallNotification() async {

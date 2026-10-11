@@ -9,6 +9,7 @@ import '../../repositories/user_repositories.dart';
 import '../../services/background_service.dart';
 import '../../services/local_notifications.dart';
 import '../../services/sound_service.dart';
+import '../../services/push_service.dart';
 import '../../services/update_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
@@ -466,7 +467,17 @@ class _NotificationCheckScreenState extends State<NotificationCheckScreen> {
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               children: [
-                _row('إشعارات Google (تعمل والتطبيق مغلق)', _s['push']),
+                _row('إشعارات Google (تعمل والتطبيق مغلق)', _s['push'], fix: 'إعادة', onFix: () async {
+                  showSnack(context, 'جاري الربط مع Google… انتظر لحد دقيقة');
+                  await PushService.retryNow();
+                  if (mounted) _load();
+                }),
+                if (_s['push'] != true && PushService.lastError != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Text('سبب التوقف: ${PushService.lastError}\nإذا بقى: حدّث «خدمات Google Play» من المتجر وتأكد إن الوقت والتاريخ تلقائي.',
+                        style: const TextStyle(fontSize: 11.5, color: Colors.orange)),
+                  ),
                 if (_s['push'] == true)
                   const Padding(
                     padding: EdgeInsets.symmetric(horizontal: 16),
