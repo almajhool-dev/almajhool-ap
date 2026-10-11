@@ -4586,5 +4586,7 @@ do $$ begin
 exception when others then null;
 end $$;
 
+do $$ begin perform public.ai_selftest(); exception when others then null; end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
