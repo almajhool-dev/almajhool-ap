@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/theme.dart';
 import '../../models/models.dart';
@@ -1265,6 +1266,7 @@ class _LivesAdminState extends State<_LivesAdmin> {
 
 
 /// المساعد الذكي لحساب المالك: يعلّق على المنشورات ويرد على الرسائل الخاصة.
+/// يستخدم Claude و Gemini سوا: واحد أساسي والثاني احتياط تلقائي.
 class AiAssistantCard extends StatefulWidget {
   const AiAssistantCard({super.key});
   @override
@@ -1272,16 +1274,19 @@ class AiAssistantCard extends StatefulWidget {
 }
 
 class _AiAssistantCardState extends State<AiAssistantCard> {
-  static const _models = {
-    'anthropic': ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-4-5-20251001'],
-    'gemini': ['gemini-2.5-flash', 'gemini-2.5-pro'],
-  };
+  static const _claudeModels = ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-4-5-20251001'];
+  static const _geminiModels = ['gemini-2.5-flash', 'gemini-2.5-pro'];
+  static const claudeKeysUrl = 'https://console.anthropic.com/settings/keys';
+  static const geminiKeysUrl = 'https://aistudio.google.com/app/apikey';
+
   Map<String, dynamic>? _st;
   bool _busy = false;
   bool _comments = false, _dms = false, _mark = true;
-  String _provider = 'anthropic', _model = 'claude-sonnet-5-5';
+  String _first = 'anthropic';
+  String _mClaude = _claudeModels.first, _mGemini = _geminiModels.first;
   final _persona = TextEditingController();
-  final _key = TextEditingController();
+  final _kClaude = TextEditingController();
+  final _kGemini = TextEditingController();
   final _limit = TextEditingController(text: '300');
 
   @override
@@ -1293,7 +1298,8 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
   @override
   void dispose() {
     _persona.dispose();
-    _key.dispose();
+    _kClaude.dispose();
+    _kGemini.dispose();
     _limit.dispose();
     super.dispose();
   }
@@ -1307,8 +1313,11 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
         _comments = r['enabled_comments'] == true;
         _dms = r['enabled_dms'] == true;
         _mark = r['mark_ai'] != false;
-        _provider = (r['provider'] ?? 'anthropic') as String;
-        _model = (r['model'] ?? _models[_provider]!.first) as String;
+        _first = (r['first_provider'] ?? r['provider'] ?? 'anthropic') as String;
+        final mc = r['model_anthropic'] as String?;
+        final mg = r['model_gemini'] as String?;
+        if (mc != null && _claudeModels.contains(mc)) _mClaude = mc;
+        if (mg != null && _geminiModels.contains(mg)) _mGemini = mg;
         _persona.text = (r['persona'] ?? '') as String;
         _limit.text = '${r['daily_limit'] ?? 300}';
       });
@@ -1317,24 +1326,33 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
     }
   }
 
-  bool get _hasKey => _st?['key_$_provider'] == true;
+  bool get _anyKey => _st?['key_anthropic'] == true || _st?['key_gemini'] == true;
+
+  Future<void> _open(String url) async {
+    try {
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
 
   Future<void> _save({String? okMsg}) async {
     setState(() => _busy = true);
     try {
-      if (_key.text.trim().isNotEmpty) {
-        await supa.rpc('ai_set_key', params: {'p_provider': _provider, 'p_key': _key.text.trim()});
-        _key.clear();
+      if (_kClaude.text.trim().isNotEmpty) {
+        await supa.rpc('ai_set_key', params: {'p_provider': 'anthropic', 'p_key': _kClaude.text.trim()});
+        _kClaude.clear();
       }
-      if ((_comments || _dms) && !(_hasKey || _st?['key_$_provider'] == true)) {
-        await _load();
-        if (!_hasKey) throw Exception('حط مفتاح الـ API أولًا');
+      if (_kGemini.text.trim().isNotEmpty) {
+        await supa.rpc('ai_set_key', params: {'p_provider': 'gemini', 'p_key': _kGemini.text.trim()});
+        _kGemini.clear();
       }
-      await supa.rpc('ai_configure', params: {
+      await _load();
+      if ((_comments || _dms) && !_anyKey) throw Exception('حط مفتاح Claude أو Gemini أولًا');
+      await supa.rpc('ai_configure2', params: {
         'p_comments': _comments,
         'p_dms': _dms,
-        'p_provider': _provider,
-        'p_model': _model,
+        'p_first': _first,
+        'p_model_anthropic': _mClaude,
+        'p_model_gemini': _mGemini,
         'p_persona': _persona.text,
         'p_mark': _mark,
         'p_limit': int.tryParse(_limit.text) ?? 300,
@@ -1347,6 +1365,54 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Widget _keyBox({
+    required String title,
+    required bool saved,
+    required TextEditingController ctrl,
+    required String url,
+    required String hint,
+    required List<String> models,
+    required String model,
+    required ValueChanged<String> onModel,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w800))),
+          if (saved) const Chip(label: Text('محفوظ ✅'), visualDensity: VisualDensity.compact),
+        ]),
+        TextButton.icon(
+          style: TextButton.styleFrom(alignment: AlignmentDirectional.centerStart),
+          onPressed: () => _open(url),
+          icon: const Icon(Icons.open_in_new_rounded, size: 18),
+          label: Text('اضغط هنا وجيب المفتاح ($hint)'),
+        ),
+        TextField(
+          controller: ctrl,
+          obscureText: true,
+          textDirection: TextDirection.ltr,
+          decoration: InputDecoration(
+            labelText: saved ? 'المفتاح محفوظ (اكتب جديد لتغييره)' : 'الصق المفتاح هنا',
+            isDense: true,
+          ),
+        ),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String>(
+          value: model,
+          decoration: const InputDecoration(labelText: 'النموذج', isDense: true),
+          items: [for (final m in models) DropdownMenuItem(value: m, child: Text(m, style: const TextStyle(fontSize: 12.5)))],
+          onChanged: (v) => onModel(v ?? model),
+        ),
+      ]),
+    );
   }
 
   @override
@@ -1366,15 +1432,12 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
                     const SizedBox(width: 8),
                     const Expanded(
                         child: Text('المساعد الذكي لحسابك', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16))),
-                    Chip(
-                      label: Text(on ? 'شغّال ✅' : 'متوقف'),
-                      visualDensity: VisualDensity.compact,
-                    ),
+                    Chip(label: Text(on ? 'شغّال ✅' : 'متوقف'), visualDensity: VisualDensity.compact),
                   ]),
                   if (st['error'] != null) Text(st['error'] as String, style: const TextStyle(color: Colors.red)),
-                  const Text('يرد باسمك وبنفس لغة الشخص (كل لغات العالم). يشتغل بالسيرفر حتى لو التطبيق مسدود.',
+                  const Text(
+                      'يرد باسمك وبنفس لغة الشخص (كل لغات العالم). يستخدم Claude و Gemini سوا: إذا واحد خلص حده أو تعطل، يرد بالثاني تلقائيًا. يشتغل بالسيرفر حتى لو التطبيق مسدود.',
                       style: TextStyle(fontSize: 12.5)),
-                  // زر التشغيل/الإيقاف السريع
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     child: FilledButton.icon(
@@ -1402,7 +1465,7 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text('يرد على رسائلك الخاصة'),
-                    subtitle: const Text('يسكت لمدة 10 دقايق إذا انت كتبت بنفس المحادثة', style: TextStyle(fontSize: 12)),
+                    subtitle: const Text('يسكت 10 دقايق إذا انت كتبت بنفس المحادثة', style: TextStyle(fontSize: 12)),
                     value: _dms,
                     onChanged: _busy ? null : (v) => setState(() => _dms = v),
                   ),
@@ -1413,43 +1476,36 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
                     onChanged: _busy ? null : (v) => setState(() => _mark = v),
                   ),
                   const Divider(),
-                  Row(children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        value: _provider,
-                        decoration: const InputDecoration(labelText: 'الشركة', isDense: true),
-                        items: const [
-                          DropdownMenuItem(value: 'anthropic', child: Text('Claude (Anthropic)')),
-                          DropdownMenuItem(value: 'gemini', child: Text('Gemini (Google)')),
-                        ],
-                        onChanged: (v) => setState(() {
-                          _provider = v ?? 'anthropic';
-                          _model = _models[_provider]!.first;
-                        }),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        value: _models[_provider]!.contains(_model) ? _model : null,
-                        decoration: const InputDecoration(labelText: 'النموذج', isDense: true),
-                        items: [for (final m in _models[_provider]!) DropdownMenuItem(value: m, child: Text(m, style: const TextStyle(fontSize: 12)))],
-                        onChanged: (v) => setState(() => _model = v ?? _model),
-                      ),
-                    ),
-                  ]),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _key,
-                    obscureText: true,
-                    textDirection: TextDirection.ltr,
-                    decoration: InputDecoration(
-                      labelText: _hasKey ? 'مفتاح API محفوظ ✅ (اكتب جديد لتغييره)' : 'مفتاح API',
-                      helperText: _provider == 'anthropic' ? 'من console.anthropic.com ← API Keys' : 'من aistudio.google.com ← Get API key',
-                      isDense: true,
-                    ),
+                  DropdownButtonFormField<String>(
+                    value: _first,
+                    decoration: const InputDecoration(labelText: 'الأساسي (والثاني احتياط)', isDense: true),
+                    items: const [
+                      DropdownMenuItem(value: 'anthropic', child: Text('Claude أولًا، وبعده Gemini')),
+                      DropdownMenuItem(value: 'gemini', child: Text('Gemini أولًا، وبعده Claude')),
+                    ],
+                    onChanged: (v) => setState(() => _first = v ?? 'anthropic'),
                   ),
-                  const SizedBox(height: 8),
+                  _keyBox(
+                    title: 'Claude (Anthropic)',
+                    saved: st['key_anthropic'] == true,
+                    ctrl: _kClaude,
+                    url: claudeKeysUrl,
+                    hint: 'مدفوع',
+                    models: _claudeModels,
+                    model: _mClaude,
+                    onModel: (v) => setState(() => _mClaude = v),
+                  ),
+                  _keyBox(
+                    title: 'Gemini (Google)',
+                    saved: st['key_gemini'] == true,
+                    ctrl: _kGemini,
+                    url: geminiKeysUrl,
+                    hint: 'بيه مجاني',
+                    models: _geminiModels,
+                    model: _mGemini,
+                    onModel: (v) => setState(() => _mGemini = v),
+                  ),
+                  const SizedBox(height: 10),
                   TextField(
                     controller: _persona,
                     minLines: 2,
