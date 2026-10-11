@@ -36,6 +36,8 @@ class Avatar extends StatelessWidget {
               height: size,
               fit: BoxFit.cover,
               memCacheWidth: (size * 3).round(),
+              fadeInDuration: Duration.zero,
+              fadeOutDuration: Duration.zero,
               placeholder: (_, __) => placeholder,
               errorWidget: (_, __, ___) => placeholder,
             ),
@@ -115,6 +117,8 @@ class _SignedImageState extends State<SignedImage> {
           width: width,
           height: height,
           fit: fit,
+          fadeInDuration: const Duration(milliseconds: 90),
+          memCacheWidth: width != null && width!.isFinite ? (width! * 3).round() : 1080,
           placeholder: (_, __) => Container(width: width, height: height, color: Colors.black12),
           errorWidget: (_, __, ___) => const Icon(Icons.broken_image_outlined),
         );

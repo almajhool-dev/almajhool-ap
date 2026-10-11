@@ -13,6 +13,9 @@ fi
 
 flutter --version
 
+echo ">> Push guard (Google notifications must never break)"
+python3 tool/check_push.py
+
 echo ">> [1/7] Generating Android platform files"
 if [[ ! -f android/app/src/main/AndroidManifest.xml ]]; then
   flutter create --org com.almajhool --project-name almajhool_app --platforms android --no-pub .

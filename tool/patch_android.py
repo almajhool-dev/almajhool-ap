@@ -27,6 +27,11 @@ def write(p, s):
 def patch_manifest():
     s = read(MANIFEST)
     s = re.sub(r'android:label="[^"]*"', 'android:label="المبرمج المجهول"', s, count=1)
+    # حماية: منع نسخ بيانات الدخول بالنسخ الاحتياطي (حتى ما أحد ينقل جلسة المستخدم لجهاز ثاني)
+    if 'android:allowBackup' not in s:
+        s = s.replace('android:label="المبرمج المجهول"',
+                      'android:label="المبرمج المجهول" android:allowBackup="false" android:fullBackupContent="false"'
+                      ' tools:replace="android:allowBackup"', 1)
     perms = [
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
@@ -376,6 +381,30 @@ class MainActivity : FlutterActivity() {
                         }
                         runOnUiThread { result.success(out) }
                     }.start()
+                } else if (call.method == "hooked") {
+                    // كشف أدوات التلاعب اللي تنحقن داخل التطبيق (Frida / Xposed / LSPosed / Substrate)
+                    val found = mutableListOf<String>()
+                    try {
+                        val maps = java.io.File("/proc/self/maps").readText()
+                        for (k in listOf("frida-agent", "frida-gadget", "libfrida", "gum-js-loop", "XposedBridge",
+                                "liblspd", "lspatch", "libsubstrate", "edxposed", "libriru_edxp")) {
+                            if (maps.contains(k, ignoreCase = true)) found.add(k)
+                        }
+                    } catch (t: Throwable) {}
+                    try {
+                        // منفذ خادم Frida الافتراضي 27042 (69A2)
+                        for (f in listOf("/proc/net/tcp", "/proc/net/tcp6")) {
+                            val txt = java.io.File(f).readText()
+                            if (txt.contains(":69A2 ")) { found.add("frida-port"); break }
+                        }
+                    } catch (t: Throwable) {}
+                    try {
+                        val st = java.io.File("/proc/self/status").readText()
+                        val tp = Regex("TracerPid:\\s*(\\d+)").find(st)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                        if (tp != 0) found.add("tracer")
+                    } catch (t: Throwable) {}
+                    if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) found.add("debuggable")
+                    result.success(found)
                 } else if (call.method == "sdk") {
                     result.success(Build.VERSION.SDK_INT)
                 } else if (call.method == "abis") {

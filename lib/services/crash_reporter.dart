@@ -28,6 +28,7 @@ class CrashReporter {
   static Future<void> sendPendingNativeCrash() async {
     if (IntegrityService.v2Missing) _send('integrity: new signing cert missing');
     if (RtcSafety.healedCache) _send('self-heal: cache cleared after repeated startup crashes');
+    if (IntegrityService.hooks.isNotEmpty) _send('security: hook tools detected ${IntegrityService.hooks.join(',')}');
     try {
       final exit = RtcSafety.pendingExit;
       RtcSafety.pendingExit = null;

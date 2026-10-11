@@ -13,6 +13,7 @@ class IntegrityService {
   static const _official2 = '22241941F8C8FA757AD6F545D21B1376EC4D75800C764B58846DB017270813AD';
 
   static bool tampered = false;
+  static List<String> hooks = const [];
   static bool v2Missing = false;
 
   static Future<void> check() async {
@@ -30,6 +31,16 @@ class IntegrityService {
         } catch (_) {}
         // مرحلة أولى: تبليغ فقط (حتى نتأكد ما يصير حظر غلط على أي جهاز)
         if (sdk >= 28 && !sigs.contains(_official2)) v2Missing = true;
+      }
+    } catch (_) {}
+    // أدوات التلاعب المحقونة داخل التطبيق (Frida / Xposed ...): نوقف التطبيق ونبلّغ
+    try {
+      final h = ((await _ch.invokeMethod<List<dynamic>>('hooked').timeout(const Duration(seconds: 5))) ?? const [])
+          .map((e) => '$e')
+          .toList();
+      if (h.isNotEmpty) {
+        hooks = h;
+        tampered = true;
       }
     } catch (_) {}
   }

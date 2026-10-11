@@ -333,6 +333,8 @@ class PostCard extends StatelessWidget {
                   fit: BoxFit.cover,
                   width: double.infinity,
                   memCacheWidth: 1080,
+                  fadeInDuration: const Duration(milliseconds: 90),
+                  fadeOutDuration: Duration.zero,
                   placeholder: (_, __) => Container(height: 260, color: Colors.black12),
                   errorWidget: (_, __, ___) => const SizedBox(height: 80, child: Icon(Icons.broken_image_outlined)),
                 ),

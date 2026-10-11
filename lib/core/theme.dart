@@ -105,6 +105,10 @@ class AppTheme {
         thickness: 0.6,
       ),
       snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
+      // تنقّل أسرع بين الشاشات (انتقال خفيف وسريع بدل التكبير البطيء)
+      pageTransitionsTheme: const PageTransitionsTheme(builders: {
+        TargetPlatform.android: FadeForwardsPageTransitionsBuilder(),
+      }),
     );
   }
 }

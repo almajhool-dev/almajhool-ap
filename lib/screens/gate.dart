@@ -110,10 +110,14 @@ class _GateState extends State<Gate> {
 
     Widget child;
     if (IntegrityService.tampered) {
+      final hooked = IntegrityService.hooks.isNotEmpty;
       child = _UpdateRequiredScreen(
         icon: Icons.gpp_bad_rounded,
-        title: 'نسخة غير رسمية',
-        message: 'هذه النسخة تم تعديلها ولا يمكن استخدامها. نزّل النسخة الرسمية من قناتنا على تلكرام.',
+        title: hooked ? 'تم كشف أداة تلاعب' : 'نسخة غير رسمية',
+        message: hooked
+            ? 'اكتشفنا أداة اختراق أو تلاعب شغّالة على جهازك (${IntegrityService.hooks.join(', ')}). '
+                'لحماية حسابك والمستخدمين ما يشتغل التطبيق ويّاها. أوقفها وافتح التطبيق من جديد.'
+            : 'هذه النسخة تم تعديلها ولا يمكن استخدامها. نزّل النسخة الرسمية من قناتنا على تلكرام.',
         url: status.updateUrl,
       );
     } else if (!_minSplashDone || session.status == SessionStatus.loading || !status.loaded) {
