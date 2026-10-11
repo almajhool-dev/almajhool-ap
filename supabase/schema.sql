@@ -4396,6 +4396,12 @@ begin
     select * into r from extensions.http(('POST',
       'https://generativelanguage.googleapis.com/v1beta/models/' || p_model || ':generateContent?key=' || p_key,
       array[]::extensions.http_header[], 'application/json', body::text)::extensions.http_request);
+    -- النموذج انسحب (Google تبدّل النماذج)؟ نستخدم آخر نموذج Flash تلقائيًا
+    if r.status = 404 and p_model <> 'gemini-flash-latest' then
+      select * into r from extensions.http(('POST',
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=' || p_key,
+        array[]::extensions.http_header[], 'application/json', body::text)::extensions.http_request);
+    end if;
     if r.status <> 200 then raise exception 'gemini_%: %', r.status, left(r.content, 200); end if;
     out := (r.content::jsonb)->'candidates'->0->'content'->'parts'->0->>'text';
   else
@@ -4570,6 +4576,15 @@ language sql stable security definer set search_path = public as $$
   select value from private_settings where key = 'ai_selftest';
 $$;
 grant execute on function public.ai_selftest_result() to anon, authenticated;
+
+-- النموذج الافتراضي لـ Gemini: الاسم الدائم لآخر نسخة Flash
+alter table public.ai_config alter column model_gemini set default 'gemini-flash-latest';
+update public.ai_config set model_gemini = 'gemini-flash-latest' where id = 1 and model_gemini like 'gemini-2.%';
+-- الفحص الذاتي كل 3 ساعات بدل نص ساعة (حتى ما يصرف من الحد المجاني)
+do $$ begin
+  perform cron.schedule('almajhool-ai-selftest', '7 */3 * * *', 'select public.ai_selftest()');
+exception when others then null;
+end $$;
 
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

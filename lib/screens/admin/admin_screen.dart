@@ -1282,7 +1282,7 @@ class AiAssistantCard extends StatefulWidget {
 class _AiAssistantCardState extends State<AiAssistantCard> {
   static const _providers = [
     _AiProvider('gemini', 'Gemini (Google)', 'مجاني', 'https://aistudio.google.com/app/apikey',
-        ['gemini-2.5-flash', 'gemini-2.5-pro']),
+        ['gemini-flash-latest', 'gemini-pro-latest', 'gemini-flash-lite-latest']),
     _AiProvider('groq', 'Groq', 'مجاني', 'https://console.groq.com/keys',
         ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'llama-3.1-8b-instant']),
     _AiProvider('openrouter', 'OpenRouter', 'نماذج مجانية', 'https://openrouter.ai/settings/keys',
