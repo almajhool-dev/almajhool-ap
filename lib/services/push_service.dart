@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_app_installations/firebase_app_installations.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -54,6 +55,7 @@ class PushService {
 
   static int _attempt = 0;
   static bool _resetDone = false;
+  static String? lastDiag;
   static DateTime? _lastManual;
   static Timer? _retry;
   static bool _starting = false;
@@ -104,8 +106,24 @@ class PushService {
       try {
         t = await m.getToken().timeout(const Duration(seconds: 45));
       } catch (e) {
+        // نجرب من جهة أندرويد مباشرة: يرجع الرمز إذا نجح، أو السبب الحقيقي للرفض
+        String d = '';
+        try {
+          d = await const MethodChannel('almajhool/integrity').invokeMethod<String>('fcmDiag').timeout(const Duration(seconds: 70)) ?? '';
+        } catch (x) {
+          d = 'diag_unavailable: $x';
+        }
+        if (d.startsWith('ok:') && d.length > 20) {
+          t = d.substring(3);
+          _report('native token ok');
+        } else {
+          lastDiag = d;
+          _report('diag ${d.length > 450 ? d.substring(0, 450) : d}');
+        }
+      }
+      if (t == null) {
         // Google رفض: نمسح هوية الجهاز عند Google بالكامل ونسوي هوية جديدة نظيفة، بعدين طلب واحد
-        if (_resetDone) rethrow;
+        if (_resetDone) throw Exception(lastDiag ?? 'FCM Registration failed');
         _resetDone = true;
         stage = 'reset';
         try {

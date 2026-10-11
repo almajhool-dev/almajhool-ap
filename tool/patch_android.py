@@ -95,15 +95,6 @@ def patch_manifest():
             '    </application>',
             1,
         )
-    # إشعارات Google: طريقة التسجيل الجديدة من Google (تشتغل على خدمات Play الحديثة،
-    # وعلى الأجهزة القديمة المكتبة ترجع للطريقة القديمة تلقائيًا)
-    if "firebase_messaging_installation_id_enabled" not in s:
-        s = s.replace(
-            "</application>",
-            '    <meta-data android:name="firebase_messaging_installation_id_enabled" android:value="true"/>\n'
-            '    </application>',
-            1,
-        )
     xml_dir = os.path.join(APP, "src", "main", "res", "xml")
     os.makedirs(xml_dir, exist_ok=True)
     write(os.path.join(xml_dir, "filepaths.xml"),
@@ -162,6 +153,9 @@ def patch_kts(path):
         s = re.sub(r"compileOptions\s*\{", "compileOptions {\n        isCoreLibraryDesugaringEnabled = true", s, count=1)
     if "desugar_jdk_libs" not in s:
         s += '\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n}\n'
+    if "firebase-messaging:" not in s:
+        # للتشخيص من MainActivity (المكتبة موجودة وقت التشغيل عن طريق firebase_messaging)
+        s += '\ndependencies {\n    compileOnly("com.google.firebase:firebase-messaging:25.1.3")\n}\n'
     if "webrtc-sdk" not in s:
         # لفلاتر البث: نحتاج واجهات WebRTC وقت الترجمة فقط (موجودة أصلًا مع flutter_webrtc)
         s += '\ndependencies {\n    compileOnly("io.github.webrtc-sdk:android:150.7871.01")\n}\n'
@@ -352,6 +346,36 @@ class MainActivity : FlutterActivity() {
                     } catch (t: Throwable) {
                         result.success("error:" + t.javaClass.simpleName + ":" + (t.message ?: ""))
                     }
+                } else if (call.method == "fcmDiag") {
+                    // تشخيص إشعارات Google: السبب الحقيقي للرفض + نسخة خدمات Play، وإذا نجح يرجع الرمز
+                    Thread {
+                        val sb = StringBuilder()
+                        try {
+                            val gms = packageManager.getPackageInfo("com.google.android.gms", 0)
+                            @Suppress("DEPRECATION")
+                            val vc = if (Build.VERSION.SDK_INT >= 28) gms.longVersionCode else gms.versionCode.toLong()
+                            sb.append("gms=").append(vc).append(" ")
+                        } catch (t: Throwable) {
+                            sb.append("gms=none ")
+                        }
+                        var out: String
+                        try {
+                            val tok = com.google.android.gms.tasks.Tasks.await(
+                                com.google.firebase.messaging.FirebaseMessaging.getInstance().token,
+                                60, java.util.concurrent.TimeUnit.SECONDS)
+                            out = "ok:" + tok
+                        } catch (e: Throwable) {
+                            var c: Throwable? = e
+                            var d = 0
+                            while (c != null && d < 6) {
+                                sb.append(" <- ").append(c.javaClass.simpleName).append(": ").append(c.message ?: "")
+                                c = c.cause
+                                d++
+                            }
+                            out = "err:" + sb.toString()
+                        }
+                        runOnUiThread { result.success(out) }
+                    }.start()
                 } else if (call.method == "sdk") {
                     result.success(Build.VERSION.SDK_INT)
                 } else if (call.method == "abis") {
