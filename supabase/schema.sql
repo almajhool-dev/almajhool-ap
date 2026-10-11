@@ -5236,5 +5236,55 @@ begin
 end $$;
 grant execute on function public.couple_link(text) to authenticated;
 
+-- =====================================================================
+--  الإصدار 41: الإشعارات ما تضيع أبدًا — إذا Google رفض تسجيل هاتف، خدمة الخلفية تعرض الإشعار بنفسها
+-- =====================================================================
+create or replace function public.bg_poll(p_token text, p_since timestamptz) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare uid uuid; calls jsonb; msgs jsonb; dev_build int; g_ok boolean;
+begin
+  select d.user_id into uid from device_tokens d where d.token = p_token;
+  if uid is null or exists(select 1 from profiles where id = uid and is_banned) then
+    return jsonb_build_object('invalid', true);
+  end if;
+  update device_tokens set last_poll = now() where token = p_token;
+
+  select coalesce(jsonb_agg(jsonb_build_object('id', c.id, 'name', p.display_name, 'video', c.video)), '[]'::jsonb)
+    into calls
+  from call_sessions c join profiles p on p.id = c.caller
+  where c.callee = uid and c.status = 'ringing' and c.created_at > now() - interval '45 seconds';
+
+  select coalesce(jsonb_agg(x order by x->>'created_at'), '[]'::jsonb) into msgs from (
+    select jsonb_build_object(
+      'conversation_id', m.conversation_id,
+      'created_at', to_char(m.created_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+      'title', case when cv.type = 'group' then coalesce(cv.name, 'مجموعة') else coalesce(sp.display_name, 'رسالة جديدة') end,
+      'body', case when cv.type = 'group' then coalesce(sp.display_name, '') || ': ' else '' end ||
+        case when m.deleted then 'رسالة محذوفة'
+             when m.type = 'image' then '📷 صورة'
+             when m.type = 'video' then '🎬 فيديو'
+             when m.type = 'audio' then '🎤 رسالة صوتية'
+             when m.type = 'file' then '📎 ' || coalesce(m.file_name, 'ملف')
+             else left(coalesce(m.content, ''), 200) end
+    ) as x
+    from messages m
+    join conversation_members cm on cm.conversation_id = m.conversation_id and cm.user_id = uid
+    join conversations cv on cv.id = m.conversation_id
+    left join profiles sp on sp.id = m.sender_id
+    where m.created_at > greatest(coalesce(p_since, now()), now() - interval '1 day')
+      and m.sender_id is distinct from uid and m.type <> 'system' and not cm.muted
+      and not exists(select 1 from blocks b where b.blocker_id = uid and b.blocked_id = m.sender_id)
+    order by m.created_at desc limit 20
+  ) t;
+
+  -- Google يعتبر شغال لهذا الجهاز بس إذا الحساب عنده تسجيل Google من نفس نسخة التطبيق أو أحدث
+  -- (إذا Google رفض تسجيل الهاتف، خدمة الخلفية تعرض الإشعار بنفسها — ما تضيع ولا رسالة)
+  select coalesce(substring(info from '^b([0-9]+)')::int, 0) into dev_build from device_tokens where token = p_token;
+  g_ok := push_ready() and exists(select 1 from fcm_tokens f where f.user_id = uid
+            and f.app_build >= coalesce(dev_build, 0) and f.updated_at > now() - interval '60 days');
+  return jsonb_build_object('calls', calls, 'messages', msgs, 'push_ok', g_ok);
+end $$;
+grant execute on function public.bg_poll(text, timestamptz) to anon, authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
