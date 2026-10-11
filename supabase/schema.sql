@@ -5360,5 +5360,78 @@ begin
   return 'pending';
 end $$;
 
+-- =====================================================================
+--  الإصدار 43: حارس كل دقيقة + تقرير السرعة للصيانة
+--  كل دقيقة: يقطع الجلسات العالقة اللي تمسك أقفال، يرجّع مهام المساعد العالقة،
+--  ينظف الرموز المنتهية، ويسجّل صحة النظام. والصيانة كل ساعة تقرا تقرير الاستعلامات البطيئة وتسرّعها.
+-- =====================================================================
+do $$ begin
+  create extension if not exists pg_stat_statements with schema extensions;
+exception when others then raise notice 'pg_stat_statements: %', sqlerrm;
+end $$;
+
+create or replace function public._minute_guard() returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare n_idle int := 0; n_ai int := 0; errs int := 0;
+begin
+  -- (1) جلسات مفتوحة بمعاملة واقفة أكثر من دقيقتين = أقفال تبطّئ الكل → تنقطع
+  begin
+    select count(*) into n_idle from (
+      select pg_terminate_backend(pid) from pg_stat_activity
+       where state = 'idle in transaction' and now() - state_change > interval '2 minutes'
+         and usename in ('authenticator', 'authenticated', 'anon')) x;
+  exception when others then null;
+  end;
+  -- (2) مهام المساعد اللي علكت (عملية انقطعت بالنص) ترجع للطابور
+  begin
+    -- مرة وحدة بس لكل مهمة: اللي فشلت بسبب ازدحام مؤقت قبل 5-6 دقايق ترجع تنحاول
+    update ai_jobs set status = 'pending', next_at = now(), attempts = 5
+     where status = 'error' and done_at between now() - interval '6 minutes' and now() - interval '5 minutes'
+       and info ~* '(busy|503|429|500|502|504|timed out|unavailable|overloaded|demand)';
+    get diagnostics n_ai = row_count;
+  exception when others then null;
+  end;
+  -- (3) تنظيف خفيف
+  begin delete from couple_codes where expires_at < now() - interval '1 hour'; exception when others then null; end;
+  begin delete from ip_events where at < now() - interval '1 day'; exception when others then null; end;
+  -- (4) صحة النظام (عدد الأخطاء اللي شافها المستخدمين آخر دقيقة)
+  begin
+    select count(*) into errs from client_logs where at > now() - interval '1 minute' and info ~ '(err:|exit:|fail)';
+  exception when others then null;
+  end;
+  insert into private_settings(key, value) values ('minute_guard',
+      jsonb_build_object('at', now(), 'idle_killed', n_idle, 'ai_requeued', n_ai, 'errors_1m', errs)::text)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+exception when others then null;
+end $$;
+revoke execute on function public._minute_guard() from public, anon, authenticated;
+do $$ begin
+  perform cron.schedule('almajhool-minute-guard', '* * * * *', 'select public._minute_guard()');
+exception when others then raise notice 'minute guard: %', sqlerrm;
+end $$;
+
+-- تقرير السرعة (للصيانة فقط — يحتاج إثبات GitHub): أبطأ الاستعلامات حتى تتسرّع بفهارس
+create or replace function public.perf_report(p_gh text) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare r jsonb;
+begin
+  if not _gh_verify(p_gh) then return jsonb_build_object('error', 'unauthorized'); end if;
+  select coalesce(jsonb_agg(x), '[]') into r from (
+    select calls, round(mean_exec_time::numeric, 1) mean_ms, round(total_exec_time::numeric) total_ms,
+           left(regexp_replace(query, '\s+', ' ', 'g'), 300) q
+      from extensions.pg_stat_statements
+     where query !~* '^(begin|commit|set |show |select pg_|listen|notify)'
+     order by total_exec_time desc limit 25) x;
+  return jsonb_build_object('top', r,
+    'guard', (select value from private_settings where key = 'minute_guard'),
+    'unused_indexes', (select coalesce(jsonb_agg(indexrelname), '[]') from pg_stat_user_indexes
+                        where schemaname = 'public' and idx_scan = 0),
+    'seq_scans', (select coalesce(jsonb_agg(jsonb_build_object('t', relname, 'seq', seq_scan, 'rows', n_live_tup)), '[]')
+                    from (select * from pg_stat_user_tables where schemaname = 'public' and n_live_tup > 500
+                          order by seq_tup_read desc limit 10) s));
+exception when others then return jsonb_build_object('error', sqlerrm);
+end $$;
+grant execute on function public.perf_report(text) to anon;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
