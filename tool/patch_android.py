@@ -195,6 +195,15 @@ def patch_kts(path):
             s,
             count=1,
         )
+    if "useLegacyPackaging" not in s:
+        # تحديث أسرع: المكتبات مضغوطة داخل الـ APK (84 → ~35 ميگا) وبدون مكتبات x86 اللي ما تحتاجها الهواتف
+        s = re.sub(
+            r"\n    defaultConfig\s*\{",
+            '\n    packaging {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }\n\n'
+            '    defaultConfig {\n        ndk {\n            abiFilters += listOf("armeabi-v7a", "arm64-v8a")\n        }',
+            s,
+            count=1,
+        )
     write(path, s)
     print("build.gradle.kts patched")
 
@@ -239,6 +248,14 @@ def patch_groovy(path):
             "signingConfig signingConfigs.debug",
             "signingConfig keystorePropertiesFile.exists() ? signingConfigs.release : signingConfigs.debug",
             1,
+        )
+    if "useLegacyPackaging" not in s:
+        s = re.sub(
+            r"\n    defaultConfig\s*\{",
+            "\n    packagingOptions {\n        jniLibs {\n            useLegacyPackaging true\n        }\n    }\n\n"
+            "    defaultConfig {\n        ndk {\n            abiFilters 'armeabi-v7a', 'arm64-v8a'\n        }",
+            s,
+            count=1,
         )
     write(path, s)
     print("build.gradle patched")

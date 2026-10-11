@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -307,7 +308,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
 
 /// تنزيل متوازي بأجزاء (Range requests) مع إعادة المحاولة لكل جزء.
 class FastDownloader {
-  static const _parts = 8;
+  static const _parts = 10;
 
   static Future<void> download(String url, File out, void Function(int got, int total) onProgress) async {
     final client = http.Client();
@@ -338,7 +339,14 @@ class FastDownloader {
       final got = List<int>.filled(_parts, 0);
       final size = (total / _parts).ceil();
       var lock = Future<void>.value();
-      void report() => onProgress(got.fold(0, (a, b) => a + b), total);
+      // تحديث شريط التقدم 6 مرات بالثانية بس (التحديث مع كل قطعة كان يبطّئ التنزيل نفسه)
+      var lastReport = DateTime.fromMillisecondsSinceEpoch(0);
+      void report({bool force = false}) {
+        final now = DateTime.now();
+        if (!force && now.difference(lastReport).inMilliseconds < 160) return;
+        lastReport = now;
+        onProgress(got.fold(0, (a, b) => a + b), total);
+      }
 
       Future<void> part(int i) async {
         final start = i * size;
@@ -352,16 +360,30 @@ class FastDownloader {
             final res = await client.send(req).timeout(const Duration(seconds: 30));
             if (res.statusCode != 206) throw Exception('range ${res.statusCode}');
             var pos = from;
-            await for (final chunk in res.stream.timeout(const Duration(seconds: 30))) {
-              final at = pos;
-              pos += chunk.length;
+            // نجمع القطع الصغيرة ونكتبها دفعات كبيرة (أسرع بكثير على الهاتف)
+            var buf = BytesBuilder(copy: false);
+            var bufAt = pos;
+            void flush() {
+              if (buf.isEmpty) return;
+              final data = buf.takeBytes();
+              final at = bufAt;
+              bufAt += data.length;
               // الكتابة بالتسلسل حتى ما تتداخل الأجزاء على نفس الملف
               lock = lock.then((_) async {
                 await raf.setPosition(at);
-                await raf.writeFrom(chunk);
+                await raf.writeFrom(data);
               });
-              got[i] += chunk.length;
-              report();
+            }
+            try {
+              await for (final chunk in res.stream.timeout(const Duration(seconds: 30))) {
+                pos += chunk.length;
+                buf.add(chunk);
+                if (buf.length >= 512 * 1024) flush();
+                got[i] += chunk.length;
+                report();
+              }
+            } finally {
+              flush();
             }
             await lock;
             if (start + got[i] > end) return;
@@ -375,6 +397,7 @@ class FastDownloader {
       try {
         await Future.wait([for (var i = 0; i < _parts; i++) part(i)]);
         await lock;
+        report(force: true);
       } finally {
         await raf.close();
       }
