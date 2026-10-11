@@ -95,6 +95,15 @@ def patch_manifest():
             '    </application>',
             1,
         )
+    # إشعارات Google: طريقة التسجيل الجديدة من Google (تشتغل على خدمات Play الحديثة،
+    # وعلى الأجهزة القديمة المكتبة ترجع للطريقة القديمة تلقائيًا)
+    if "firebase_messaging_installation_id_enabled" not in s:
+        s = s.replace(
+            "</application>",
+            '    <meta-data android:name="firebase_messaging_installation_id_enabled" android:value="true"/>\n'
+            '    </application>',
+            1,
+        )
     xml_dir = os.path.join(APP, "src", "main", "res", "xml")
     os.makedirs(xml_dir, exist_ok=True)
     write(os.path.join(xml_dir, "filepaths.xml"),
