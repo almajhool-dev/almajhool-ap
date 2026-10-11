@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:ota_update/ota_update.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'core_services.dart';
@@ -160,6 +163,8 @@ class _UpdateDialogState extends State<_UpdateDialog> {
     } catch (_) {}
   }
 
+  bool _fastFailed = false;
+
   void _start() {
     _tries++;
     setState(() {
@@ -168,6 +173,59 @@ class _UpdateDialogState extends State<_UpdateDialog> {
       _progress = 0;
       _msg = 'جارٍ التنزيل...';
     });
+    if (!_fastFailed) {
+      _fast();
+      return;
+    }
+    _slow();
+  }
+
+  /// تنزيل سريع: نقسم الملف لأجزاء وننزلها بنفس الوقت (أسرع بكثير على النت البعيد)، ثم نثبّت.
+  Future<void> _fast() async {
+    try {
+      final dir = Directory('${(await getApplicationSupportDirectory()).path}/ota_update');
+      await dir.create(recursive: true);
+      final file = File('${dir.path}/almajhool-fast.apk');
+      final sw = Stopwatch()..start();
+      await FastDownloader.download(widget.url, file, (got, total) {
+        if (!mounted) return;
+        final secs = sw.elapsedMilliseconds / 1000;
+        final speed = secs > 0 ? got / secs / (1024 * 1024) : 0;
+        setState(() {
+          _progress = total > 0 ? got / total : null;
+          _msg = 'جارٍ التنزيل... ${(got / (1024 * 1024)).toStringAsFixed(1)} / ${(total / (1024 * 1024)).toStringAsFixed(1)} ميگا'
+              ' (${speed.toStringAsFixed(1)} ميگا/ثانية)';
+        });
+      });
+      if (!mounted) return;
+      setState(() {
+        _progress = 1;
+        _msg = 'اضغط «تثبيت» أو «تحديث» في الشاشة التي ظهرت';
+      });
+      final r = await const MethodChannel('almajhool/integrity').invokeMethod<String>('installApk', {'path': file.path});
+      if (!mounted) return;
+      if (r == 'need_permission') {
+        setState(() {
+          _working = false;
+          _msg = 'اسمح للتطبيق بتثبيت التحديثات من الشاشة اللي انفتحت، ثم ارجع واضغط «إعادة المحاولة»';
+        });
+      } else if (r != 'ok') {
+        throw Exception('install $r');
+      } else {
+        setState(() => _working = false);
+      }
+    } catch (e) {
+      try {
+        final m = 'b${UpdateService.currentBuild} fast_update_fail: ${'$e'.split('\n').first}';
+        supa.rpc('client_log', params: {'p_info': m.length > 500 ? m.substring(0, 500) : m}).catchError((_) => null);
+      } catch (_) {}
+      // نرجع للطريقة العادية
+      _fastFailed = true;
+      if (mounted) _slow();
+    }
+  }
+
+  void _slow() {
     try {
       OtaUpdate().execute(widget.url, destinationFilename: 'almajhool-update.apk').listen(
         (e) {
@@ -243,5 +301,88 @@ class _UpdateDialogState extends State<_UpdateDialog> {
         ),
       ],
     );
+  }
+}
+
+
+/// تنزيل متوازي بأجزاء (Range requests) مع إعادة المحاولة لكل جزء.
+class FastDownloader {
+  static const _parts = 8;
+
+  static Future<void> download(String url, File out, void Function(int got, int total) onProgress) async {
+    final client = http.Client();
+    try {
+      // نتبع التحويل يدويًا للرابط النهائي (GitHub يحوّل لخادم التنزيل)
+      var u = Uri.parse(url);
+      var total = 0;
+      for (var i = 0; i < 6; i++) {
+        final req = http.Request('GET', u)
+          ..followRedirects = false
+          ..headers['Range'] = 'bytes=0-0';
+        final res = await client.send(req).timeout(const Duration(seconds: 20));
+        await res.stream.drain<void>();
+        final loc = res.headers['location'];
+        if (res.statusCode >= 300 && res.statusCode < 400 && loc != null) {
+          u = u.resolve(loc);
+          continue;
+        }
+        if (res.statusCode != 206) throw Exception('probe ${res.statusCode}');
+        // Content-Range: bytes 0-0/12345
+        total = int.tryParse((res.headers['content-range'] ?? '').split('/').last) ?? 0;
+        break;
+      }
+      if (total < 1024 * 1024) throw Exception('no ranges');
+
+      final raf = await out.open(mode: FileMode.write);
+      await raf.truncate(total);
+      final got = List<int>.filled(_parts, 0);
+      final size = (total / _parts).ceil();
+      var lock = Future<void>.value();
+      void report() => onProgress(got.fold(0, (a, b) => a + b), total);
+
+      Future<void> part(int i) async {
+        final start = i * size;
+        final end = (start + size > total ? total : start + size) - 1;
+        if (start > end) return;
+        for (var attempt = 0; attempt < 4; attempt++) {
+          final from = start + got[i];
+          if (from > end) return;
+          try {
+            final req = http.Request('GET', u)..headers['Range'] = 'bytes=$from-$end';
+            final res = await client.send(req).timeout(const Duration(seconds: 30));
+            if (res.statusCode != 206) throw Exception('range ${res.statusCode}');
+            var pos = from;
+            await for (final chunk in res.stream.timeout(const Duration(seconds: 30))) {
+              final at = pos;
+              pos += chunk.length;
+              // الكتابة بالتسلسل حتى ما تتداخل الأجزاء على نفس الملف
+              lock = lock.then((_) async {
+                await raf.setPosition(at);
+                await raf.writeFrom(chunk);
+              });
+              got[i] += chunk.length;
+              report();
+            }
+            await lock;
+            if (start + got[i] > end) return;
+          } catch (_) {
+            await Future<void>.delayed(Duration(milliseconds: 600 * (attempt + 1)));
+          }
+        }
+        throw Exception('part $i failed');
+      }
+
+      try {
+        await Future.wait([for (var i = 0; i < _parts; i++) part(i)]);
+        await lock;
+      } finally {
+        await raf.close();
+      }
+      if (await out.length() != total || got.fold<int>(0, (a, b) => a + b) < total) {
+        throw Exception('incomplete');
+      }
+    } finally {
+      client.close();
+    }
   }
 }

@@ -306,6 +306,26 @@ class MainActivity : FlutterActivity() {
                     } catch (e: Exception) {
                         result.success(listOf<String>())
                     }
+                } else if (call.method == "installApk") {
+                    // تثبيت ملف التحديث اللي نزّلناه بسرعة (تنزيل متوازي)
+                    try {
+                        val path = call.argument<String>("path") ?: ""
+                        if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
+                            startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                android.net.Uri.parse("package:" + packageName)))
+                            result.success("need_permission")
+                        } else {
+                            val uri = androidx.core.content.FileProvider.getUriForFile(this,
+                                packageName + ".ota_update_provider", java.io.File(path))
+                            val i = android.content.Intent(android.content.Intent.ACTION_VIEW)
+                            i.setDataAndType(uri, "application/vnd.android.package-archive")
+                            i.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(i)
+                            result.success("ok")
+                        }
+                    } catch (t: Throwable) {
+                        result.success("error:" + t.javaClass.simpleName + ":" + (t.message ?: ""))
+                    }
                 } else if (call.method == "sdk") {
                     result.success(Build.VERSION.SDK_INT)
                 } else if (call.method == "abis") {
