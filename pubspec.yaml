@@ -33,6 +33,7 @@ dependencies:
   ota_update: ^7.1.0
   firebase_core: any
   firebase_messaging: any
+  firebase_app_installations: any
   livekit_client: any
   video_player: ^2.9.1
   gal: ^2.3.0

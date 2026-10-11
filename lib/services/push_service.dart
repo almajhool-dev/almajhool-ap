@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:firebase_app_installations/firebase_app_installations.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -52,6 +53,8 @@ class PushService {
   }
 
   static int _attempt = 0;
+  static bool _resetDone = false;
+  static DateTime? _lastManual;
   static Timer? _retry;
   static bool _starting = false;
 
@@ -97,20 +100,27 @@ class PushService {
       } catch (_) {}
       stage = 'token';
       String? t;
-      for (var i = 0; i < 3 && t == null; i++) {
+      // طلب واحد بس بكل محاولة (الطلبات الكثيرة تخلي Google يحظر هوية الجهاز مؤقتًا)
+      try {
+        t = await m.getToken().timeout(const Duration(seconds: 45));
+      } catch (e) {
+        // Google رفض: نمسح هوية الجهاز عند Google بالكامل ونسوي هوية جديدة نظيفة، بعدين طلب واحد
+        if (_resetDone) rethrow;
+        _resetDone = true;
+        stage = 'reset';
         try {
-          // إذا Google رفض التسجيل مرتين: نمسح تسجيل الجهاز القديم ونطلب واحد جديد نظيف
-          if (_attempt >= 1 && i == 0 || i == 2) {
-            try {
-              await m.setAutoInitEnabled(true);
-              await m.deleteToken().timeout(const Duration(seconds: 20));
-            } catch (_) {}
-          }
-          t = await m.getToken().timeout(const Duration(seconds: 40));
-        } catch (e) {
-          if (i == 2) rethrow;
-          await Future<void>.delayed(Duration(seconds: 4 * (i + 1)));
-        }
+          await m.deleteToken().timeout(const Duration(seconds: 20));
+        } catch (_) {}
+        try {
+          await FirebaseInstallations.instance.delete().timeout(const Duration(seconds: 20));
+        } catch (_) {}
+        await Future<void>.delayed(const Duration(seconds: 6));
+        try {
+          await m.setAutoInitEnabled(true);
+        } catch (_) {}
+        stage = 'token2';
+        t = await m.getToken().timeout(const Duration(seconds: 60));
+        _report('new identity ok');
       }
       if (t == null) throw Exception('no token');
       _token = t;
@@ -135,8 +145,10 @@ class PushService {
       active = false;
       _report('fail ${_attempt + 1} $stage: ${'$e'.length > 300 ? '$e'.substring(0, 300) : e}');
       // إعادة محاولة تلقائية: بعد 30 ثانية، دقيقة، دقيقتين... لحد 10 دقايق
+      // محاولات متباعدة (دقيقتين، 10، 30، ساعة...) حتى ما نطوّل الحظر
       if (_attempt < 8) {
-        final wait = Duration(seconds: (30 * (1 << _attempt)).clamp(30, 600));
+        const waits = [120, 600, 1800, 3600, 3600, 7200, 7200, 14400];
+        final wait = Duration(seconds: waits[_attempt]);
         _attempt++;
         _retry?.cancel();
         _retry = Timer(wait, () => start());
@@ -151,6 +163,12 @@ class PushService {
   static Future<bool> retryNow() async {
     _retry?.cancel();
     if (_attempt == 0) _attempt = 1;
+    // زر «إعادة» يسمح بهوية جديدة مرة كل 5 دقايق بس
+    final now = DateTime.now();
+    if (_lastManual == null || now.difference(_lastManual!).inMinutes >= 5) {
+      _resetDone = false;
+      _lastManual = now;
+    }
     return start();
   }
 
