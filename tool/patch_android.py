@@ -400,7 +400,7 @@ class MainActivity : FlutterActivity() {
                     } catch (t: Throwable) {}
                     try {
                         val st = java.io.File("/proc/self/status").readText()
-                        val tp = Regex("TracerPid:\\s*(\\d+)").find(st)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                        val tp = st.substringAfter("TracerPid:", "0").trim().takeWhile { it.isDigit() }.toIntOrNull() ?: 0
                         if (tp != 0) found.add("tracer")
                     } catch (t: Throwable) {}
                     if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) found.add("debuggable")
