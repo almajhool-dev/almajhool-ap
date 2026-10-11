@@ -5474,5 +5474,139 @@ do $$ begin
 exception when others then raise notice 'ai tick: %', sqlerrm;
 end $$;
 
+-- =====================================================================
+--  الإصدار 46: الفلتر الشامل — كل شي يدخل للتطبيق أو يطلع منه يتنظف ويتفحص بالخادم
+--  (1) تنظيف النصوص: أحرف مخفية/تحكم/قلب اتجاه (تستخدم للتزوير وتخرّب العرض)، تكرار مبالغ، أسطر فاضية كثيرة
+--  (2) الأسماء والعناوين: سطر واحد ومسافات مرتبة
+--  (3) منشورات الحسابات المحظورة ما تطلع بالرئيسية
+--  (4) كل ساعة: الصور المحذوفة من التخزين تنشال روابطها حتى ما تطلع صورة مكسورة
+-- =====================================================================
+create or replace function public._clean_text(s text) returns text
+language plpgsql immutable as $$
+begin
+  if s is null then return null; end if;
+  -- أحرف تحكم ومخفية وقلب الاتجاه (نخلي \n و \t و ZWJ/ZWNJ لأنها تلزم للإيموجي والعربي)
+  s := regexp_replace(s, '[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F​⁠﻿‪-‮⁦-⁩￹-￻]', '', 'g');
+  s := replace(s, E'\r\n', E'\n');
+  s := replace(s, E'\r', E'\n');
+  s := regexp_replace(s, '[ \t]+\n', E'\n', 'g');
+  s := regexp_replace(s, '\n{3,}', E'\n\n', 'g');
+  -- تكرار نفس الحرف أكثر من 30 مرة (سبام) يتقلص لـ 30
+  s := regexp_replace(s, '(.)\1{30,}', '\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1\1', 'g');
+  return btrim(s, E' \n\t');
+end $$;
+
+create or replace function public._clean_name(s text) returns text
+language plpgsql immutable as $$
+begin
+  if s is null then return null; end if;
+  s := _clean_text(s);
+  return btrim(regexp_replace(s, '\s+', ' ', 'g'));
+end $$;
+
+create or replace function public._f_posts() returns trigger language plpgsql as $$
+begin new.content := _clean_text(new.content); return new; end $$;
+create or replace function public._f_comments() returns trigger language plpgsql as $$
+begin new.content := _clean_text(new.content); return new; end $$;
+create or replace function public._f_messages() returns trigger language plpgsql as $$
+begin
+  if new.type = 'text' then new.content := _clean_text(new.content); end if;
+  if new.file_name is not null then new.file_name := _clean_name(new.file_name); end if;
+  return new;
+end $$;
+create or replace function public._f_stories() returns trigger language plpgsql as $$
+begin new.content := _clean_text(new.content); return new; end $$;
+create or replace function public._f_live_comments() returns trigger language plpgsql as $$
+begin
+  if coalesce(new.kind, 'text') = 'text' then new.content := _clean_text(new.content); end if;
+  return new;
+end $$;
+create or replace function public._f_lives() returns trigger language plpgsql as $$
+begin new.title := _clean_name(new.title); return new; end $$;
+create or replace function public._f_conversations() returns trigger language plpgsql as $$
+begin
+  new.name := nullif(_clean_name(new.name), '');
+  new.description := coalesce(_clean_text(new.description), '');
+  return new;
+end $$;
+create or replace function public._f_profiles() returns trigger language plpgsql as $$
+begin
+  new.display_name := coalesce(nullif(_clean_name(new.display_name), ''), new.username);
+  new.bio := coalesce(_clean_text(new.bio), '');
+  return new;
+end $$;
+
+do $$
+declare r record;
+begin
+  for r in select * from (values
+      ('posts', '_f_posts', 'content'),
+      ('post_comments', '_f_comments', 'content'),
+      ('messages', '_f_messages', 'content, file_name'),
+      ('stories', '_f_stories', 'content'),
+      ('live_comments', '_f_live_comments', 'content'),
+      ('lives', '_f_lives', 'title'),
+      ('conversations', '_f_conversations', 'name, description'),
+      ('profiles', '_f_profiles', 'display_name, bio')) v(tbl, fn, cols) loop
+    begin
+      execute format('drop trigger if exists aa_filter on public.%I', r.tbl);
+      execute format('create trigger aa_filter before insert or update of %s on public.%I for each row execute function public.%I()',
+                     r.cols, r.tbl, r.fn);
+    exception when others then raise notice 'filter %: %', r.tbl, sqlerrm;
+    end;
+  end loop;
+end $$;
+
+-- الرئيسية: منشورات الحسابات المحظورة ما تطلع (إلا لصاحبها أو للإدارة)
+create or replace function public.feed_page(p_before timestamptz default null, p_author uuid default null, p_limit int default 15)
+returns jsonb language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(x order by (x->>'created_at')::timestamptz desc), '[]'::jsonb) from (
+    select to_jsonb(p) || jsonb_build_object(
+        'author', jsonb_build_object('id', a.id, 'username', a.username, 'display_name', a.display_name,
+          'avatar_url', a.avatar_url, 'xp', a.xp, 'is_verified', a.is_verified, 'is_owner', a.is_owner, 'is_admin', a.is_admin),
+        '_liked', exists(select 1 from post_likes l where l.post_id = p.id and l.user_id = auth.uid())) as x
+    from posts p join profiles a on a.id = p.author_id
+    where auth.uid() is not null and not p.deleted
+      and (not a.is_banned or a.id = auth.uid() or is_admin())
+      and (p_author is null or p.author_id = p_author)
+      and (p_before is null or p.created_at < p_before)
+      and not is_blocked_between(auth.uid(), p.author_id)
+      and can_see_post(p.id, p.author_id, p.visibility)
+    order by p.created_at desc
+    limit least(greatest(coalesce(p_limit, 15), 1), 50)
+  ) t;
+$$;
+grant execute on function public.feed_page(timestamptz, uuid, int) to authenticated;
+
+-- كل ساعة: روابط صور انحذفت من التخزين تنشال (بدل ما تطلع صورة مكسورة)
+create or replace function public._media_filter() returns jsonb
+language plpgsql security definer set search_path = public, storage as $$
+declare n_posts int := 0; n_av int := 0;
+begin
+  update posts p set image_url = null
+   where p.id in (
+     select p2.id from posts p2,
+       lateral regexp_match(split_part(p2.image_url, '?', 1), '/storage/v1/object/public/([^/]+)/([A-Za-z0-9/_.-]+)$') m
+     where p2.image_url is not null and m is not null and p2.created_at < now() - interval '30 minutes'
+       and not exists(select 1 from storage.objects o where o.bucket_id = m[1] and o.name = m[2])
+     limit 300);
+  get diagnostics n_posts = row_count;
+  update profiles pr set avatar_url = null
+   where pr.id in (
+     select p2.id from profiles p2,
+       lateral regexp_match(split_part(p2.avatar_url, '?', 1), '/storage/v1/object/public/([^/]+)/([A-Za-z0-9/_.-]+)$') m
+     where p2.avatar_url is not null and m is not null
+       and not exists(select 1 from storage.objects o where o.bucket_id = m[1] and o.name = m[2])
+     limit 300);
+  get diagnostics n_av = row_count;
+  return jsonb_build_object('posts', n_posts, 'avatars', n_av);
+exception when others then return jsonb_build_object('error', sqlerrm);
+end $$;
+revoke execute on function public._media_filter() from public, anon, authenticated;
+do $$ begin
+  perform cron.schedule('almajhool-media-filter', '41 * * * *', 'select public._media_filter()');
+exception when others then raise notice 'media filter: %', sqlerrm;
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
