@@ -51,25 +51,64 @@ class PushService {
     }
   }
 
-  /// بعد تسجيل الدخول: يسجّل الجهاز. يرجع true إذا صارت إشعارات Google فعّالة.
-  static Future<bool> start() async {
-    if (!_firebaseReady) return false;
+  static int _attempt = 0;
+  static Timer? _retry;
+  static bool _starting = false;
+
+  static void _report(String info) {
     try {
-      final plugin = FlutterLocalNotificationsPlugin();
-      await plugin
-          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-          ?.createNotificationChannel(const AndroidNotificationChannel(
-            msgsChannel,
-            'الرسائل',
-            description: 'إشعار عند وصول رسالة',
-            importance: Importance.high,
-          ));
+      supa.rpc('client_log', params: {'p_info': 'b${UpdateService.currentBuild} push $info'}).catchError((_) => null);
+    } catch (_) {}
+  }
+
+  /// بعد تسجيل الدخول: يسجّل الجهاز. يرجع true إذا صارت إشعارات Google فعّالة.
+  /// كل خطوة محمية بمهلة، وإذا فشلت يعيد المحاولة تلقائيًا (ما تتوقف الإشعارات بسبب أي إضافة بالتطبيق).
+  static Future<bool> start() async {
+    if (_starting) return active;
+    _starting = true;
+    var stage = 'init';
+    try {
+      if (!_firebaseReady) {
+        // إعادة تهيئة Firebase إذا فشلت عند فتح التطبيق
+        if (Firebase.apps.isEmpty) await Firebase.initializeApp(options: firebaseOptions).timeout(const Duration(seconds: 15));
+        try {
+          FirebaseMessaging.onBackgroundMessage(firebaseBackgroundHandler);
+        } catch (_) {}
+        _firebaseReady = true;
+      }
+      stage = 'channel';
+      try {
+        final plugin = FlutterLocalNotificationsPlugin();
+        await plugin
+            .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+            ?.createNotificationChannel(const AndroidNotificationChannel(
+              msgsChannel,
+              'الرسائل',
+              description: 'إشعار عند وصول رسالة',
+              importance: Importance.high,
+            ))
+            .timeout(const Duration(seconds: 5));
+      } catch (_) {}
       final m = FirebaseMessaging.instance;
-      await m.requestPermission(alert: true, sound: true, badge: true);
-      final t = await m.getToken().timeout(const Duration(seconds: 20));
+      // طلب الإذن ما يوقف التسجيل أبدًا (أحيانًا ينتظر للأبد إذا انطلب إذن ثاني بنفس الوقت)
+      stage = 'permission';
+      try {
+        await m.requestPermission(alert: true, sound: true, badge: true).timeout(const Duration(seconds: 8));
+      } catch (_) {}
+      stage = 'token';
+      String? t;
+      for (var i = 0; i < 3 && t == null; i++) {
+        try {
+          t = await m.getToken().timeout(const Duration(seconds: 25));
+        } catch (e) {
+          if (i == 2) rethrow;
+          await Future<void>.delayed(Duration(seconds: 3 * (i + 1)));
+        }
+      }
       if (t == null) throw Exception('no token');
       _token = t;
-      await supa.rpc('register_fcm2', params: {'p_token': t, 'p_build': UpdateService.currentBuild});
+      stage = 'register';
+      await supa.rpc('register_fcm2', params: {'p_token': t, 'p_build': UpdateService.currentBuild}).timeout(const Duration(seconds: 20));
       await CacheService.setString(kFcmTokenPref, t);
       await CacheService.setBool(fcmOkKey, true);
       _refreshSub ??= m.onTokenRefresh.listen((nt) {
@@ -77,14 +116,27 @@ class PushService {
         supa.rpc('register_fcm2', params: {'p_token': nt, 'p_build': UpdateService.currentBuild}).catchError((_) => null);
         CacheService.setString(kFcmTokenPref, nt);
       });
-      final ready = await supa.rpc('push_ready') == true;
+      stage = 'ready';
+      final ready = await supa.rpc('push_ready').timeout(const Duration(seconds: 15)) == true;
       active = ready;
       lastError = ready ? null : 'الخادم لم يُجهّز بعد (ملف حساب الخدمة)';
+      if (_attempt > 0) _report('ok after ${_attempt + 1} tries');
+      _attempt = 0;
       return ready;
     } catch (e) {
-      lastError = 'start: $e';
+      lastError = '$stage: $e';
       active = false;
+      _report('fail ${_attempt + 1} $stage: ${'$e'.length > 300 ? '$e'.substring(0, 300) : e}');
+      // إعادة محاولة تلقائية: بعد 30 ثانية، دقيقة، دقيقتين... لحد 10 دقايق
+      if (_attempt < 8) {
+        final wait = Duration(seconds: (30 * (1 << _attempt)).clamp(30, 600));
+        _attempt++;
+        _retry?.cancel();
+        _retry = Timer(wait, () => start());
+      }
       return false;
+    } finally {
+      _starting = false;
     }
   }
 
@@ -96,6 +148,8 @@ class PushService {
 
   static Future<void> stop() async {
     active = false;
+    _retry?.cancel();
+    _attempt = 0;
     try {
       await CacheService.setBool(fcmOkKey, false);
     } catch (_) {}

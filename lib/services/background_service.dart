@@ -126,7 +126,7 @@ class BackgroundBridge {
       // تقرير حالة بعد 25 ثانية (للتشخيص، بدون بيانات شخصية)
       Future.delayed(const Duration(seconds: 25), () async {
         final st = await status();
-        log('status $st err=$lastError');
+        log('status $st err=$lastError pushErr=${PushService.lastError}');
       });
     } catch (e) {
       lastError = 'start: $e';
