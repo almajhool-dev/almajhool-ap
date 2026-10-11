@@ -5286,5 +5286,79 @@ begin
 end $$;
 grant execute on function public.bg_poll(text, timestamptz) to anon, authenticated;
 
+-- =====================================================================
+--  الإصدار 42: سد الأبواب الخلفية
+--  (1) منع إنشاء حسابات مباشرة من Supabase Auth (يتجاوز حماية الإغراق) — الحسابات بس من التطبيق
+--  (2) سجلات التشخيص: حد لكل عنوان IP حتى ما أحد يغرقها ويخفي الأخطاء الحقيقية
+--  (3) حد لرفع ملف خدمة الإشعارات
+-- =====================================================================
+create or replace function public._guard_direct_signup() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  -- register_user (من التطبيق) يضيف الحساب بصلاحية المالك؛ أي إضافة مباشرة من خدمة الدخول تنرفض
+  if current_user = 'supabase_auth_admin'
+     and coalesce((select value from private_settings where key = 'allow_direct_signup'), '') <> '1' then
+    raise exception 'التسجيل متاح من التطبيق فقط';
+  end if;
+  return new;
+end $$;
+revoke execute on function public._guard_direct_signup() from public, anon, authenticated;
+do $$ begin
+  drop trigger if exists zz_guard_direct_signup on auth.users;
+  create trigger zz_guard_direct_signup before insert on auth.users
+    for each row execute function public._guard_direct_signup();
+exception when others then raise notice 'signup guard: %', sqlerrm;
+end $$;
+
+create table if not exists public.ip_events (
+  ip text not null,
+  kind text not null,
+  at timestamptz not null default now()
+);
+create index if not exists ip_events_idx on public.ip_events(ip, kind, at desc);
+alter table public.ip_events enable row level security;
+revoke all on public.ip_events from anon, authenticated;
+
+create or replace function public._ip_ok(p_kind text, p_max int, p_secs int) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v_ip text := request_ip();
+begin
+  if v_ip = 'unknown' then p_max := p_max * 10; end if;
+  if (select count(*) from ip_events where ip = v_ip and kind = p_kind
+        and at > now() - make_interval(secs => p_secs)) >= p_max then
+    return false;
+  end if;
+  insert into ip_events(ip, kind) values (v_ip, p_kind);
+  if random() < 0.02 then delete from ip_events where at < now() - interval '1 day'; end if;
+  return true;
+end $$;
+revoke execute on function public._ip_ok(text, int, int) from public, anon, authenticated;
+
+create or replace function public.client_log(p_info text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if (select count(*) from client_logs where at > now() - interval '1 minute') > 60 then return; end if;
+  if not _ip_ok('client_log', 12, 60) then return; end if;
+  insert into client_logs(info) values (left(coalesce(p_info, ''), 600));
+  delete from client_logs where id < (select max(id) - 300 from client_logs);
+end $$;
+grant execute on function public.client_log(text) to anon, authenticated;
+
+create or replace function public.push_submit_sa(p_json text) returns text
+language plpgsql security definer set search_path = public as $$
+declare j jsonb;
+begin
+  if not _ip_ok('push_submit_sa', 5, 3600) then return 'rate_limited'; end if;
+  if char_length(coalesce(p_json, '')) > 6000 then return 'too large'; end if;
+  begin j := p_json::jsonb; exception when others then return 'invalid json'; end;
+  if j->>'type' <> 'service_account' or j->>'project_id' <> 'almajhool-aefc9'
+     or j->>'private_key' is null or j->>'client_email' not like '%@almajhool-aefc9.iam.gserviceaccount.com' then
+    return 'rejected';
+  end if;
+  insert into private_settings(key, value) values ('fcm_sa_pending', j::text)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  return 'pending';
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
