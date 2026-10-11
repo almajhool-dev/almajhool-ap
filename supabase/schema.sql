@@ -4726,5 +4726,200 @@ update ai_jobs set status = 'pending', attempts = 1, next_at = now()
   where status = 'error' and created_at > now() - interval '6 hours'
     and info ~* '(busy|503|429|timed out|unavailable|overloaded|empty|demand)';
 
+-- =====================================================================
+--  الإصدار 37: المساعد أسرع + يدير حساب المالك (قبول الصداقات، ترحيب بالمتابعين، رد على التعليقات)
+-- =====================================================================
+alter table public.ai_config add column if not exists auto_accept boolean not null default true;
+alter table public.ai_config add column if not exists welcome_followers boolean not null default true;
+alter table public.ai_config add column if not exists reply_comments boolean not null default true;
+do $$ begin
+  alter table public.ai_jobs drop constraint if exists ai_jobs_kind_check;
+  alter table public.ai_jobs add constraint ai_jobs_kind_check check (kind in ('post', 'dm', 'comment', 'welcome'));
+exception when others then raise notice 'ai kinds: %', sqlerrm;
+end $$;
+
+-- قبول طلبات الصداقة للمالك تلقائيًا
+create or replace function public._ai_on_contact() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.status = 'pending' and new.receiver_id = _owner_id()
+     and coalesce((select auto_accept from ai_config where id = 1), false) then
+    update contact_requests set status = 'accepted', responded_at = now() where id = new.id;
+  end if;
+  return null;
+exception when others then return null;
+end $$;
+drop trigger if exists trg_ai_on_contact on public.contact_requests;
+create trigger trg_ai_on_contact after insert on public.contact_requests for each row execute function public._ai_on_contact();
+
+-- ترحيب بالمتابع الجديد برسالة خاصة
+create or replace function public._ai_on_follow() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.followee_id = _owner_id() and coalesce((select welcome_followers from ai_config where id = 1), false)
+     and not exists(select 1 from ai_jobs where kind = 'welcome' and ref_id = new.follower_id) then
+    insert into ai_jobs(kind, ref_id) values ('welcome', new.follower_id);
+  end if;
+  return null;
+exception when others then return null;
+end $$;
+drop trigger if exists trg_ai_on_follow on public.follows;
+create trigger trg_ai_on_follow after insert on public.follows for each row execute function public._ai_on_follow();
+
+-- رد على التعليقات على منشورات المالك (أو ردود على تعليقه)
+create or replace function public._ai_on_comment() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare own uuid := _owner_id();
+begin
+  if new.author_id = own or not coalesce((select reply_comments from ai_config where id = 1), false) then return null; end if;
+  if exists(select 1 from posts where id = new.post_id and author_id = own)
+     or (new.parent_id is not null and exists(select 1 from post_comments where id = new.parent_id and author_id = own)) then
+    insert into ai_jobs(kind, ref_id) values ('comment', new.id);
+  end if;
+  return null;
+exception when others then return null;
+end $$;
+drop trigger if exists trg_ai_on_comment on public.post_comments;
+create trigger trg_ai_on_comment after insert on public.post_comments for each row execute function public._ai_on_comment();
+
+-- محادثة مباشرة بين المالك وشخص (تنشأ إذا ما موجودة)
+create or replace function public._owner_direct(p_user uuid) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare own uuid := _owner_id(); k text; cid uuid;
+begin
+  k := least(own::text, p_user::text) || '_' || greatest(own::text, p_user::text);
+  select id into cid from conversations where direct_key = k;
+  if cid is null then
+    insert into conversations(type, direct_key, created_by) values ('direct', k, own) returning id into cid;
+    insert into conversation_members(conversation_id, user_id, role) values (cid, own, 'member'), (cid, p_user, 'member');
+  end if;
+  return cid;
+end $$;
+revoke execute on function public._owner_direct(uuid) from public, anon, authenticated;
+
+create or replace function public._ai_process() returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare cfg ai_config; j ai_jobs; own uuid := _owner_id(); txt text; msgs jsonb; pst posts; cm post_comments; an text; conv uuid;
+  pref text;
+begin
+  if not pg_try_advisory_xact_lock(778899) then return; end if;
+  select * into cfg from ai_config where id = 1;
+  pref := case when cfg.mark_ai then '🤖 ' else '' end;
+  -- الرسائل الخاصة أولًا (أهم وأسرع)، بعدها التعليقات والترحيب، بعدها المنشورات
+  for j in select * from ai_jobs where status = 'pending' and next_at <= now()
+           order by case kind when 'dm' then 0 when 'comment' then 1 when 'welcome' then 2 else 3 end, id limit 2 loop
+    begin
+      if (select count(*) from ai_jobs where status = 'done' and done_at > now() - interval '1 day') >= cfg.daily_limit then
+        update ai_jobs set status = 'skipped', info = 'daily_limit', done_at = now() where id = j.id; continue;
+      end if;
+      if j.kind = 'post' then
+        if not cfg.enabled_comments then update ai_jobs set status = 'skipped', info = 'off', done_at = now() where id = j.id; continue; end if;
+        select * into pst from posts where id = j.ref_id;
+        if pst.id is null or pst.deleted or exists(select 1 from post_comments where post_id = pst.id and author_id = own and parent_id is null) then
+          update ai_jobs set status = 'skipped', info = 'n/a', done_at = now() where id = j.id; continue;
+        end if;
+        select display_name into an from profiles where id = pst.author_id;
+        txt := _ai_complete(_ai_system('Write ONE short friendly public comment on this post by "' || coalesce(an, '') ||
+            '": thank them for sharing and react to what the post is actually about. No hashtags.'),
+          jsonb_build_array(jsonb_build_object('role', 'user', 'text',
+            coalesce(nullif(btrim(pst.content), ''), '(صورة بدون نص)') || case when pst.image_url is not null then ' [the post also has a photo]' else '' end)));
+        insert into post_comments(post_id, author_id, content) values (pst.id, own, left(pref || txt, 1000));
+      elsif j.kind = 'comment' then
+        if not cfg.reply_comments then update ai_jobs set status = 'skipped', info = 'off', done_at = now() where id = j.id; continue; end if;
+        select * into cm from post_comments where id = j.ref_id;
+        if cm.id is null then update ai_jobs set status = 'skipped', info = 'n/a', done_at = now() where id = j.id; continue; end if;
+        select * into pst from posts where id = cm.post_id;
+        select display_name into an from profiles where id = cm.author_id;
+        txt := _ai_complete(_ai_system('Someone named "' || coalesce(an, '') || '" commented on the owner''s post. Write ONE short friendly reply to their comment.'),
+          jsonb_build_array(jsonb_build_object('role', 'user', 'text',
+            'Owner''s post: ' || coalesce(nullif(btrim(pst.content), ''), '(photo)') || E'\nTheir comment: ' || cm.content)));
+        insert into post_comments(post_id, author_id, content, parent_id)
+          values (cm.post_id, own, left(pref || txt, 1000), coalesce(cm.parent_id, cm.id));
+      elsif j.kind = 'welcome' then
+        if not cfg.welcome_followers then update ai_jobs set status = 'skipped', info = 'off', done_at = now() where id = j.id; continue; end if;
+        select display_name into an from profiles where id = j.ref_id;
+        if an is null or is_blocked_between(own, j.ref_id) then update ai_jobs set status = 'skipped', info = 'n/a', done_at = now() where id = j.id; continue; end if;
+        conv := _owner_direct(j.ref_id);
+        if exists(select 1 from messages where conversation_id = conv and sender_id = own) then
+          update ai_jobs set status = 'skipped', info = 'already_talked', done_at = now() where id = j.id; continue;
+        end if;
+        txt := _ai_complete(_ai_system('"' || an || '" just followed the owner. Write ONE short warm welcome message thanking them for the follow. Write it in Arabic unless their name is clearly non-Arabic.'),
+          jsonb_build_array(jsonb_build_object('role', 'user', 'text', 'New follower: ' || an)));
+        insert into messages(conversation_id, sender_id, type, content, client_id)
+          values (conv, own, 'text', left(pref || txt, 4000), 'ai-' || gen_random_uuid()::text);
+      else
+        if not cfg.enabled_dms then update ai_jobs set status = 'skipped', info = 'off', done_at = now() where id = j.id; continue; end if;
+        if exists(select 1 from messages where conversation_id = j.ref_id and sender_id = own
+                    and coalesce(client_id, '') not like 'ai-%' and created_at > now() - interval '10 minutes') then
+          update ai_jobs set status = 'skipped', info = 'owner_active', done_at = now() where id = j.id; continue;
+        end if;
+        if (select sender_id from messages where conversation_id = j.ref_id and not deleted and type <> 'system'
+              order by created_at desc limit 1) = own then
+          update ai_jobs set status = 'skipped', info = 'already', done_at = now() where id = j.id; continue;
+        end if;
+        select coalesce(jsonb_agg(jsonb_build_object('role', case when x.sender_id = own then 'assistant' else 'user' end,
+                 'text', case when x.type = 'text' then coalesce(x.content, '') else '[' || x.type || ']' end) order by x.created_at), '[]')
+          into msgs
+          from (select * from messages where conversation_id = j.ref_id and not deleted and type <> 'system'
+                order by created_at desc limit 14) x;
+        txt := _ai_complete(_ai_system('Reply to this private chat message sent to the owner. Be helpful and natural.'), msgs);
+        insert into messages(conversation_id, sender_id, type, content, client_id)
+          values (j.ref_id, own, 'text', left(pref || txt, 4000), 'ai-' || gen_random_uuid()::text);
+      end if;
+      update ai_jobs set status = 'done', done_at = now() where id = j.id;
+    exception when others then
+      if sqlerrm like 'rate_limited%' then
+        null;
+      elsif j.attempts < 6 and sqlerrm ~* '(busy|503|429|500|502|504|timed out|unavailable|overloaded|empty|demand)' then
+        update ai_jobs set attempts = attempts + 1, next_at = now() + make_interval(secs => 20 * (j.attempts + 1)),
+          info = left(sqlerrm, 300) where id = j.id;
+      else
+        update ai_jobs set status = 'error', info = left(sqlerrm, 300), done_at = now() where id = j.id;
+      end if;
+    end;
+  end loop;
+  delete from ai_jobs where created_at < now() - interval '7 days';
+end $$;
+revoke execute on function public._ai_process() from public, anon, authenticated;
+
+-- أسرع: الفحص كل 5 ثواني بدل 20
+do $$ begin
+  perform cron.schedule('almajhool-ai', '5 seconds', 'select public._ai_process()');
+exception when others then raise notice 'ai cron 5s: %', sqlerrm;
+end $$;
+
+create or replace function public.ai_status() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare c ai_config;
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  select * into c from ai_config where id = 1;
+  return jsonb_build_object(
+    'enabled_comments', c.enabled_comments, 'enabled_dms', c.enabled_dms,
+    'auto_accept', c.auto_accept, 'welcome_followers', c.welcome_followers, 'reply_comments', c.reply_comments,
+    'provider', c.first_provider, 'first_provider', c.first_provider,
+    'model_anthropic', c.model_anthropic, 'model_gemini', c.model_gemini,
+    'model_groq', c.model_groq, 'model_openrouter', c.model_openrouter,
+    'persona', c.persona, 'mark_ai', c.mark_ai, 'daily_limit', c.daily_limit,
+    'key_anthropic', exists(select 1 from private_settings where key = 'ai_key_anthropic'),
+    'key_gemini', exists(select 1 from private_settings where key = 'ai_key_gemini'),
+    'key_groq', exists(select 1 from private_settings where key = 'ai_key_groq'),
+    'key_openrouter', exists(select 1 from private_settings where key = 'ai_key_openrouter'),
+    'today', (select count(*) from ai_jobs where status = 'done' and done_at > now() - interval '1 day'),
+    'pending', (select count(*) from ai_jobs where status = 'pending'),
+    'last_error', (select info from ai_jobs where status = 'error' order by id desc limit 1),
+    'last_error_at', (select done_at from ai_jobs where status = 'error' order by id desc limit 1));
+end $$;
+grant execute on function public.ai_status() to authenticated;
+
+create or replace function public.ai_set_extras(p_accept boolean, p_welcome boolean, p_reply_comments boolean) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  update ai_config set auto_accept = coalesce(p_accept, false), welcome_followers = coalesce(p_welcome, false),
+    reply_comments = coalesce(p_reply_comments, false), updated_at = now() where id = 1;
+end $$;
+grant execute on function public.ai_set_extras(boolean, boolean, boolean) to authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
