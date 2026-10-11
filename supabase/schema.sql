@@ -4588,5 +4588,143 @@ end $$;
 
 do $$ begin perform public.ai_selftest(); exception when others then null; end $$;
 
+-- =====================================================================
+--  الإصدار 36: المساعد ما يستسلم — إذا Gemini مزدحم يجرب نموذج ثاني، ويعيد المحاولة لاحقًا
+-- =====================================================================
+alter table public.ai_jobs add column if not exists attempts int not null default 0;
+alter table public.ai_jobs add column if not exists next_at timestamptz not null default now();
+
+create or replace function public._ai_gemini(p_model text, p_key text, p_system text, p_msgs jsonb) returns text
+language plpgsql security definer set search_path = public, extensions as $$
+declare r extensions.http_response; body jsonb; out text; m text; errs text := '';
+begin
+  body := jsonb_build_object('systemInstruction', jsonb_build_object('parts', jsonb_build_array(jsonb_build_object('text', p_system))),
+    'generationConfig', jsonb_build_object('maxOutputTokens', 1500),
+    'contents', (select jsonb_agg(jsonb_build_object('role', case when e->>'role' = 'assistant' then 'model' else 'user' end,
+       'parts', jsonb_build_array(jsonb_build_object('text', e->>'text')))) from jsonb_array_elements(p_msgs) e));
+  -- النموذج المختار، وبعده نماذج احتياط من Google (الخفيف أقل ازدحامًا)
+  foreach m in array (array[p_model] ||
+      case when p_model <> 'gemini-flash-latest' then array['gemini-flash-latest'] else array[]::text[] end ||
+      case when p_model <> 'gemini-flash-lite-latest' then array['gemini-flash-lite-latest'] else array[]::text[] end) loop
+    begin
+      perform set_config('http.timeout_msec', '20000', true);
+      select * into r from extensions.http(('POST',
+        'https://generativelanguage.googleapis.com/v1beta/models/' || m || ':generateContent?key=' || p_key,
+        array[]::extensions.http_header[], 'application/json', body::text)::extensions.http_request);
+      if r.status = 200 then
+        out := btrim(coalesce((r.content::jsonb)->'candidates'->0->'content'->'parts'->0->>'text', ''));
+        if out <> '' then return out; end if;
+        errs := errs || m || ':empty ';
+      else
+        errs := errs || m || ':' || r.status || ' ';
+      end if;
+    exception when others then
+      errs := errs || m || ':' || left(sqlerrm, 60) || ' ';
+    end;
+  end loop;
+  raise exception 'gemini_busy %', errs;
+end $$;
+revoke execute on function public._ai_gemini(text, text, text, jsonb) from public, anon, authenticated;
+
+create or replace function public._ai_call(p_provider text, p_model text, p_key text, p_system text, p_msgs jsonb) returns text
+language plpgsql security definer set search_path = public, extensions as $$
+declare r extensions.http_response; body jsonb; out text; url text;
+begin
+  perform set_config('http.timeout_msec', '30000', true);
+  if p_provider = 'gemini' then
+    return _ai_gemini(p_model, p_key, p_system, p_msgs);
+  elsif p_provider = 'anthropic' then
+    body := jsonb_build_object('model', p_model, 'max_tokens', 400, 'system', p_system,
+      'messages', (select jsonb_agg(jsonb_build_object('role', e->>'role', 'content', e->>'text')) from jsonb_array_elements(p_msgs) e));
+    select * into r from extensions.http(('POST', 'https://api.anthropic.com/v1/messages',
+      array[extensions.http_header('x-api-key', p_key), extensions.http_header('anthropic-version', '2023-06-01')],
+      'application/json', body::text)::extensions.http_request);
+    if r.status <> 200 then raise exception 'claude_%: %', r.status, left(r.content, 200); end if;
+    out := (r.content::jsonb)->'content'->0->>'text';
+  else
+    url := case p_provider when 'groq' then 'https://api.groq.com/openai/v1/chat/completions'
+                           else 'https://openrouter.ai/api/v1/chat/completions' end;
+    body := jsonb_build_object('model', p_model, 'max_tokens', 400,
+      'messages', jsonb_build_array(jsonb_build_object('role', 'system', 'content', p_system)) ||
+        (select jsonb_agg(jsonb_build_object('role', e->>'role', 'content', e->>'text')) from jsonb_array_elements(p_msgs) e));
+    select * into r from extensions.http(('POST', url,
+      array[extensions.http_header('Authorization', 'Bearer ' || p_key), extensions.http_header('X-Title', 'almajhool')],
+      'application/json', body::text)::extensions.http_request);
+    if r.status <> 200 then raise exception '%_%: %', p_provider, r.status, left(r.content, 200); end if;
+    out := (r.content::jsonb)->'choices'->0->'message'->>'content';
+  end if;
+  out := btrim(coalesce(out, ''));
+  if out = '' then raise exception '%_empty', p_provider; end if;
+  return out;
+end $$;
+revoke execute on function public._ai_call(text, text, text, text, jsonb) from public, anon, authenticated;
+
+create or replace function public._ai_process() returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare cfg ai_config; j ai_jobs; own uuid := _owner_id(); txt text; msgs jsonb; pst posts; an text; n int := 0;
+begin
+  if not pg_try_advisory_xact_lock(778899) then return; end if;
+  select * into cfg from ai_config where id = 1;
+  for j in select * from ai_jobs where status = 'pending' and next_at <= now() order by id limit 2 loop
+    begin
+      if (select count(*) from ai_jobs where status = 'done' and done_at > now() - interval '1 day') >= cfg.daily_limit then
+        update ai_jobs set status = 'skipped', info = 'daily_limit', done_at = now() where id = j.id; continue;
+      end if;
+      if j.kind = 'post' then
+        if not cfg.enabled_comments then update ai_jobs set status = 'skipped', info = 'off', done_at = now() where id = j.id; continue; end if;
+        select * into pst from posts where id = j.ref_id;
+        if pst.id is null or pst.deleted or exists(select 1 from post_comments where post_id = pst.id and author_id = own) then
+          update ai_jobs set status = 'skipped', info = 'n/a', done_at = now() where id = j.id; continue;
+        end if;
+        select display_name into an from profiles where id = pst.author_id;
+        txt := _ai_complete(_ai_system('Write ONE short friendly public comment on this post by "' || coalesce(an, '') ||
+            '": thank them for sharing and react to what the post is actually about. No hashtags.'),
+          jsonb_build_array(jsonb_build_object('role', 'user', 'text',
+            coalesce(nullif(btrim(pst.content), ''), '(صورة بدون نص)') || case when pst.image_url is not null then ' [the post also has a photo]' else '' end)));
+        insert into post_comments(post_id, author_id, content)
+          values (pst.id, own, left(case when cfg.mark_ai then '🤖 ' else '' end || txt, 1000));
+      else
+        if not cfg.enabled_dms then update ai_jobs set status = 'skipped', info = 'off', done_at = now() where id = j.id; continue; end if;
+        -- المالك نفسه يكتب بهالمحادثة هسه؟ نخليها إله
+        if exists(select 1 from messages where conversation_id = j.ref_id and sender_id = own
+                    and coalesce(client_id, '') not like 'ai-%' and created_at > now() - interval '10 minutes') then
+          update ai_jobs set status = 'skipped', info = 'owner_active', done_at = now() where id = j.id; continue;
+        end if;
+        if (select sender_id from messages where conversation_id = j.ref_id and not deleted and type <> 'system'
+              order by created_at desc limit 1) = own then
+          update ai_jobs set status = 'skipped', info = 'already', done_at = now() where id = j.id; continue;
+        end if;
+        select coalesce(jsonb_agg(jsonb_build_object('role', case when x.sender_id = own then 'assistant' else 'user' end,
+                 'text', case when x.type = 'text' then coalesce(x.content, '') else '[' || x.type || ']' end) order by x.created_at), '[]')
+          into msgs
+          from (select * from messages where conversation_id = j.ref_id and not deleted and type <> 'system'
+                order by created_at desc limit 14) x;
+        txt := _ai_complete(_ai_system('Reply to this private chat message sent to the owner. Be helpful and natural.'), msgs);
+        insert into messages(conversation_id, sender_id, type, content, client_id)
+          values (j.ref_id, own, 'text', left(case when cfg.mark_ai then '🤖 ' else '' end || txt, 4000), 'ai-' || gen_random_uuid()::text);
+      end if;
+      update ai_jobs set status = 'done', done_at = now() where id = j.id;
+      n := n + 1;
+    exception when others then
+      if sqlerrm like 'rate_limited%' then
+        null; -- نرجعلها بالدورة الجاية
+      elsif j.attempts < 6 and sqlerrm ~* '(busy|503|429|500|502|504|timed out|unavailable|overloaded|empty|demand)' then
+        -- عطل مؤقت بالخدمة: نعيد المحاولة بعد شوية بدل ما نترك الرسالة بدون رد
+        update ai_jobs set attempts = attempts + 1, next_at = now() + make_interval(secs => 30 * (j.attempts + 1)),
+          info = left(sqlerrm, 300) where id = j.id;
+      else
+        update ai_jobs set status = 'error', info = left(sqlerrm, 300), done_at = now() where id = j.id;
+      end if;
+    end;
+  end loop;
+  delete from ai_jobs where created_at < now() - interval '7 days';
+end $$;
+revoke execute on function public._ai_process() from public, anon, authenticated;
+
+-- رسائل اليوم اللي فشل ردها بسبب الازدحام: نرجّعها للانتظار حتى يرد عليها
+update ai_jobs set status = 'pending', attempts = 1, next_at = now()
+  where status = 'error' and created_at > now() - interval '6 hours'
+    and info ~* '(busy|503|429|timed out|unavailable|overloaded|empty|demand)';
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
