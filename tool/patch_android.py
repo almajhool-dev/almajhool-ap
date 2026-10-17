@@ -298,7 +298,59 @@ import java.io.StringWriter
 import java.security.MessageDigest
 
 class MainActivity : FlutterActivity() {
+    // ملف إعدادات Flutter إذا تضخّم (نسخ محادثات/رسائل قديمة) كان يعلّك التطبيق على شاشة الشعار.
+    // هنا نشيل القوائم الكبيرة بس، ونخلي تسجيل الدخول والإعدادات مثل ما هي.
+    private fun slimPrefs() {
+        val dir = java.io.File(applicationInfo.dataDir, "shared_prefs")
+        val f = java.io.File(dir, "FlutterSharedPreferences.xml")
+        if (!f.exists() || f.length() < 1500000L) return
+        val drop = ArrayList<String>()
+        val tmp = java.io.File(dir, "FlutterSharedPreferences.slim")
+        java.io.FileInputStream(f).use { ins ->
+            val p = android.util.Xml.newPullParser()
+            p.setInput(ins, "UTF-8")
+            java.io.FileOutputStream(tmp).use { out ->
+                val w = android.util.Xml.newSerializer()
+                w.setOutput(out, "UTF-8")
+                w.startDocument("UTF-8", true)
+                w.startTag(null, "map")
+                var ev = p.eventType
+                while (ev != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                    if (ev == org.xmlpull.v1.XmlPullParser.START_TAG && p.depth == 2) {
+                        val tag = p.name
+                        val name = p.getAttributeValue(null, "name") ?: ""
+                        val big = name.contains("::msgs_") || name.endsWith("::conversations") || name.endsWith("::feed")
+                        if (tag == "string") {
+                            val text = p.nextText()
+                            if (big) drop.add(name) else {
+                                w.startTag(null, "string"); w.attribute(null, "name", name); w.text(text); w.endTag(null, "string")
+                            }
+                        } else {
+                            val v = p.getAttributeValue(null, "value")
+                            w.startTag(null, tag); w.attribute(null, "name", name)
+                            if (v != null) w.attribute(null, "value", v)
+                            w.endTag(null, tag)
+                        }
+                    }
+                    ev = p.next()
+                }
+                w.endTag(null, "map")
+                w.endDocument()
+            }
+        }
+        if (drop.isEmpty()) { tmp.delete(); return }
+        java.io.File(dir, "FlutterSharedPreferences.xml.bak").delete()
+        if (!tmp.renameTo(f)) { tmp.delete(); return }
+        // إذا الإعدادات محمّلة أصلًا بالذاكرة (خدمة الخلفية شغالة) نشيلها من هناك هم
+        try {
+            val e = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE).edit()
+            for (k in drop) e.remove(k)
+            e.commit()
+        } catch (t: Throwable) {}
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        try { slimPrefs() } catch (t: Throwable) {}
         // حفظ سبب أي انهيار حتى يُرسل للمطوّر عند الفتح التالي
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->

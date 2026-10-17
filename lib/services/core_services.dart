@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -10,29 +12,87 @@ SupabaseClient get supa => Supabase.instance.client;
 String? get myId => Supabase.instance.client.auth.currentUser?.id;
 
 /// تخزين محلي خفيف للعمل بدون إنترنت.
+/// القوائم الكبيرة (المحادثات/الرسائل/المنشورات) تنحفظ بملفات منفصلة — مو بملف الإعدادات —
+/// حتى ملف الإعدادات يبقى صغير وما يعلّك فتح التطبيق مهما كثرت المحادثات.
 class CacheService {
   CacheService._();
   static late SharedPreferences _prefs;
   static const _maxCachedMessages = 60;
+  static const _maxMessageFiles = 40;
+  static Directory? _dir;
+  static final Map<String, List<Map<String, dynamic>>> _mem = {};
 
   static Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
+    try {
+      final base = await getApplicationSupportDirectory();
+      final d = Directory('${base.path}/list_cache');
+      if (!d.existsSync()) d.createSync(recursive: true);
+      _dir = d;
+    } catch (_) {}
+    // نقل/تنظيف القوائم القديمة من ملف الإعدادات (هي اللي جانت تكبّره)
+    try {
+      for (final k in _prefs.getKeys().toList()) {
+        if (!k.contains('::')) continue;
+        final name = k.substring(k.indexOf('::') + 2);
+        if (name == 'outbox') {
+          final raw = _prefs.getString(k);
+          if (raw != null && _dir != null) File(_file(k)).writeAsStringSync(raw, flush: true);
+          await _prefs.remove(k);
+        } else if (name.startsWith('msgs_') || name == 'conversations' || name == 'feed') {
+          await _prefs.remove(k);
+        }
+      }
+    } catch (_) {}
   }
 
   static String _k(String key) => '${myId ?? 'anon'}::$key';
+  static String _file(String fullKey) =>
+      '${_dir!.path}/${fullKey.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}.json';
 
   static List<Map<String, dynamic>> readList(String key) {
-    final raw = _prefs.getString(_k(key));
-    if (raw == null) return [];
+    final k = _k(key);
+    final m = _mem[k];
+    if (m != null) return m;
+    if (_dir == null) return [];
     try {
-      return (jsonDecode(raw) as List).cast<Map>().map((e) => e.cast<String, dynamic>()).toList();
+      final f = File(_file(k));
+      if (!f.existsSync()) return [];
+      final l = (jsonDecode(f.readAsStringSync()) as List).cast<Map>().map((e) => e.cast<String, dynamic>()).toList();
+      _mem[k] = l;
+      return l;
     } catch (_) {
       return [];
     }
   }
 
-  static Future<void> writeList(String key, List<Map<String, dynamic>> list) =>
-      _prefs.setString(_k(key), jsonEncode(list));
+  static Future<void> writeList(String key, List<Map<String, dynamic>> list) async {
+    final k = _k(key);
+    _mem[k] = list;
+    if (_dir == null) return;
+    try {
+      final f = File(_file(k));
+      final tmp = File('${f.path}.tmp');
+      await tmp.writeAsString(jsonEncode(list), flush: true);
+      await tmp.rename(f.path);
+      if (key.startsWith('msgs_')) _trimMessageFiles();
+    } catch (_) {}
+  }
+
+  static int _writes = 0;
+  /// نخلي آخر 40 محادثة بس محفوظة محليًا (الباقي يتحمّل من الخادم)
+  static void _trimMessageFiles() {
+    if (++_writes % 20 != 0) return;
+    try {
+      final files = _dir!.listSync().whereType<File>().where((f) => f.path.contains('__msgs_') && f.path.endsWith('.json')).toList();
+      if (files.length <= _maxMessageFiles) return;
+      files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+      for (final f in files.skip(_maxMessageFiles)) {
+        f.deleteSync();
+      }
+      _mem.removeWhere((k, _) => k.contains('::msgs_'));
+    } catch (_) {}
+  }
 
   static List<Map<String, dynamic>> conversations() => readList('conversations');
   static Future<void> saveConversations(List<Map<String, dynamic>> l) => writeList('conversations', l);
