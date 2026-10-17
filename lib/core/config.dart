@@ -102,6 +102,14 @@ class AppConfig {
     }
   }
 
+  /// إذا تأخر تحميل الإعدادات: نشتغل على الخادم المدمج مباشرة
+  static void useDefaults() {
+    if (url.isEmpty || anonKey.isEmpty) {
+      url = _defaultUrl;
+      anonKey = _defaultKey;
+    }
+  }
+
   static Future<void> clear() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_prefUrl);

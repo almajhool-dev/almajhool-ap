@@ -32,7 +32,7 @@ if '"fcmDiag"' not in patch:
 if "firebase_messaging_installation_id_enabled" in patch:
     errors.append("firebase_messaging_installation_id_enabled يعطّل getToken — لا تضيفه")
 # 4) لازم التطبيق يشغّل الإشعارات بعد الدخول
-if "PushService.start()" not in gate or "PushService.init()" not in main:
+if "PushService.start()" not in gate or not re.search(r"PushService\.init\b", main):
     errors.append("تشغيل PushService (init/start) انشال من main/gate")
 for dep in ("firebase_core", "firebase_messaging"):
     if not re.search(rf"^\s+{dep}:", pubspec, re.M):

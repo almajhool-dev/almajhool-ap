@@ -22,11 +22,22 @@ import 'services/update_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await initializeDateFormatting('ar');
+  // كل خطوة قبل فتح الواجهة إلها حد زمني: التطبيق لازم يفتح مهما صار (ما يعلك على شاشة الشعار)
+  Future<void> step(Future<void> Function() f, int secs) async {
+    try {
+      await f().timeout(Duration(seconds: secs));
+    } catch (_) {}
+  }
+
+  await step(() => initializeDateFormatting('ar'), 3);
   await CacheService.init();
-  await RtcSafety.init();
+  await step(RtcSafety.init, 3);
   // بالتوازي حتى يفتح التطبيق أسرع
-  await Future.wait([AppConfig.load(), PushService.init(), IntegrityService.check()]);
+  await Future.wait([
+    AppConfig.load().timeout(const Duration(seconds: 4)).catchError((_) => AppConfig.useDefaults()),
+    step(PushService.init, 6),
+    step(IntegrityService.check, 4),
+  ]);
   runApp(const RootApp());
 }
 
@@ -53,8 +64,9 @@ class _RootAppState extends State<RootApp> {
       NotifRouter.install();
       CrashReporter.install();
       CrashReporter.sendPendingNativeCrash();
-      await LocalNotifications.init();
-      await BackgroundBridge.configure();
+      // هذني ما لازم يوقفن فتح التطبيق إذا تأخرن
+      await LocalNotifications.init().timeout(const Duration(seconds: 5)).catchError((_) {});
+      await BackgroundBridge.configure().timeout(const Duration(seconds: 6)).catchError((_) {});
       Future.delayed(const Duration(seconds: 4),
           () => UpdateService.autoCheck(() => CallService.instance.navigatorKey.currentContext));
       setState(() {

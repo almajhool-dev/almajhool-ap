@@ -429,6 +429,7 @@ class MainActivity : FlutterActivity() {
                         runOnUiThread { result.success(out) }
                     }.start()
                 } else if (call.method == "hooked") {
+                    Thread {
                     // كشف أدوات التلاعب اللي تنحقن داخل التطبيق (Frida / Xposed / LSPosed / Substrate)
                     val found = mutableListOf<String>()
                     try {
@@ -451,14 +452,20 @@ class MainActivity : FlutterActivity() {
                         if (tp != 0) found.add("tracer")
                     } catch (t: Throwable) {}
                     if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) found.add("debuggable")
-                    result.success(found)
+                    runOnUiThread { result.success(found) }
+                    }.start()
                 } else if (call.method == "sdk") {
                     result.success(Build.VERSION.SDK_INT)
                 } else if (call.method == "abis") {
                     result.success(Build.SUPPORTED_ABIS.toList())
                 } else if (call.method == "lastExit") {
-                    result.success(lastExit())
+                    // بخيط جانبي: قراءة سجل الانهيار ممكن تتأخر، وما نريد شاشة الشعار تعلك
+                    Thread {
+                        val r = try { lastExit() } catch (t: Throwable) { null }
+                        runOnUiThread { result.success(r) }
+                    }.start()
                 } else if (call.method == "recentNativeCrashes") {
+                    Thread {
                     var n = 0
                     try {
                         if (Build.VERSION.SDK_INT >= 30) {
@@ -469,7 +476,8 @@ class MainActivity : FlutterActivity() {
                             }
                         }
                     } catch (t: Throwable) {}
-                    result.success(n)
+                    runOnUiThread { result.success(n) }
+                    }.start()
                 } else {
                     result.notImplemented()
                 }
