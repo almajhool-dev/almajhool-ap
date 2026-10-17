@@ -1,9 +1,11 @@
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/models.dart';
 import '../services/core_services.dart';
 import '../services/couple_service.dart';
 import '../services/privacy_service.dart';
+import '../services/wallet_service.dart';
 
 class AuthRepository {
   Future<bool> usernameAvailable(String username) async {
@@ -63,12 +65,35 @@ class AuthRepository {
 
   Future<bool> hasRecoveryCode() async => (await supa.rpc('has_recovery_code')) == true;
 
+  /// الدخول بحساب Google: تطلع نافذة Google الرسمية لاختيار الحساب (بدون كلمة مرور ولا صلاحيات إضافية).
+  Future<bool> signInWithGoogle(String webClientId) async {
+    final g = GoogleSignIn(serverClientId: webClientId, scopes: const ['email', 'profile']);
+    try {
+      await g.signOut(); // حتى تطلع قائمة الحسابات كل مرة
+    } catch (_) {}
+    final acc = await g.signIn();
+    if (acc == null) return false; // المستخدم سد النافذة
+    final auth = await acc.authentication;
+    final idToken = auth.idToken;
+    if (idToken == null) throw Exception('ما وصل رمز التحقق من Google، تأكد من إعدادات Google');
+    await supa.auth.signInWithIdToken(provider: OAuthProvider.google, idToken: idToken, accessToken: auth.accessToken);
+    return true;
+  }
+
+  /// إرسال رمز تحقق SMS للرقم (بصيغة دولية مثل +9647801234567)
+  Future<void> sendPhoneCode(String phone) => supa.auth.signInWithOtp(phone: phone, shouldCreateUser: true);
+
+  Future<void> verifyPhoneCode(String phone, String code) async {
+    await supa.auth.verifyOTP(type: OtpType.sms, phone: phone, token: code.trim());
+  }
+
   Future<void> signIn(String email, String password) =>
       supa.auth.signInWithPassword(email: email.trim(), password: password);
 
   Future<void> signOut() {
     CoupleService.reset();
     PrivacyService.reset();
+    WalletService.reset();
     return supa.auth.signOut();
   }
 

@@ -131,6 +131,10 @@ class AppStatusProvider extends ChangeNotifier {
   String message = '';
   bool loaded = false;
   int minBuild = 0;
+  /// الدخول بحساب Google (يظهر بس إذا المالك ضبط رقم عميل Google)
+  String? googleClientId;
+  /// الدخول برقم الهاتف (يظهر بس إذا المالك فعّله بعد ربط خدمة SMS)
+  bool phoneLogin = false;
   String updateUrl = 'https://t.me/ikd5n';
   String updateMessage = 'هذه النسخة قديمة ومتوقفة. نزّل النسخة الجديدة من قناتنا على تلكرام.';
   RealtimeChannel? _ch;
@@ -158,6 +162,9 @@ class AppStatusProvider extends ChangeNotifier {
     minBuild = ((m['min_build'] ?? 0) as num).toInt();
     updateUrl = (m['update_url'] ?? updateUrl) as String;
     updateMessage = (m['update_message'] ?? updateMessage) as String;
+    final g = m['google_web_client_id'];
+    googleClientId = g is String && g.isNotEmpty ? g : null;
+    phoneLogin = m['phone_login'] == true;
     loaded = true;
     notifyListeners();
   }

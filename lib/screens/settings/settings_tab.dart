@@ -15,9 +15,11 @@ import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../admin/admin_screen.dart';
 import '../../services/couple_service.dart';
+import '../../services/core_services.dart';
 import '../../services/privacy_service.dart';
 import '../couple/couple_screens.dart';
 import 'suggestions_screen.dart';
+import '../wallet/wallet_screens.dart';
 import '../../repositories/post_repository.dart';
 import '../contacts/contacts_tab.dart';
 import '../profile/profile_screens.dart';
@@ -35,6 +37,51 @@ class _SettingsTabState extends State<SettingsTab> {
   void initState() {
     super.initState();
     PrivacyService.load();
+  }
+
+  Future<void> _loginOptions() async {
+    final st = context.read<AppStatusProvider>();
+    final g = TextEditingController(text: st.googleClientId ?? '');
+    var phone = st.phoneLogin;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => StatefulBuilder(
+        builder: (c, set) => AlertDialog(
+          title: const Text('خيارات تسجيل الدخول'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Google: الصق «Web client ID» من Google Cloud (نفسه اللي حطيته بلوحة Supabase). '
+                  'اتركه فاضي حتى تخفي زر Google.', style: TextStyle(fontSize: 12.5)),
+              TextField(
+                controller: g,
+                textDirection: TextDirection.ltr,
+                decoration: const InputDecoration(hintText: '1234-abc.apps.googleusercontent.com'),
+              ),
+              const SizedBox(height: 10),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('الدخول برقم الهاتف'),
+                subtitle: const Text('فعّله بس بعد ما تربط خدمة رسائل SMS بلوحة Supabase'),
+                value: phone,
+                onChanged: (v) => set(() => phone = v),
+              ),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('إلغاء')),
+            FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('حفظ')),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await supa.rpc('set_login_options', params: {'p_google_client': g.text.trim(), 'p_phone': phone});
+      await st.load();
+      if (mounted) showSnack(context, 'تم الحفظ ✅');
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    }
   }
 
   @override
@@ -111,6 +158,29 @@ class _SettingsTabState extends State<SettingsTab> {
               },
             ),
           ),
+          ListTile(
+            leading: const CoinIcon(size: 26),
+            title: const Text('المحفظة والأرباح 🪙'),
+            subtitle: const Text('شحن العملات، الهدايا، وأرباحك من البث'),
+            trailing: const Icon(Icons.chevron_left),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletScreen())),
+          ),
+          if (p?.isOwner ?? false)
+            ListTile(
+              leading: const Icon(Icons.account_balance_rounded, color: Colors.green),
+              title: const Text('اللوحة المالية 💰'),
+              subtitle: const Text('حصتك، الشحن، الهدايا، طلبات السحب، وربط زين كاش'),
+              trailing: const Icon(Icons.chevron_left),
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FinanceScreen())),
+            ),
+          if (p?.isOwner ?? false)
+            ListTile(
+              leading: const Icon(Icons.login_rounded, color: Colors.blue),
+              title: const Text('خيارات تسجيل الدخول'),
+              subtitle: const Text('تفعيل الدخول بحساب Google ورقم الهاتف'),
+              trailing: const Icon(Icons.chevron_left),
+              onTap: _loginOptions,
+            ),
           ListTile(
             leading: const Icon(Icons.lightbulb_rounded, color: Colors.amber),
             title: Text((p?.isOwner ?? false) ? 'اقتراحات المستخدمين 💡' : 'اقترح ميزة للتطبيق 💡'),

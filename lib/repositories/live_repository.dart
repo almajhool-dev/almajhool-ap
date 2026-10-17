@@ -23,14 +23,18 @@ class LiveSummary {
 class LiveComment {
   final int id;
   final String userId;
-  final String kind; // text | join | system
+  final String kind; // text | join | system | gift
   final String content;
-  LiveComment(this.id, this.userId, this.kind, this.content);
+  final String? giftId;
+  final int giftQty;
+  LiveComment(this.id, this.userId, this.kind, this.content, {this.giftId, this.giftQty = 1});
   factory LiveComment.fromMap(Map<String, dynamic> m) => LiveComment(
         (m['id'] as num).toInt(),
         m['user_id'] as String,
         (m['kind'] ?? 'text') as String,
         (m['content'] ?? '') as String,
+        giftId: m['gift_id'] as String?,
+        giftQty: ((m['gift_qty'] ?? 1) as num).toInt(),
       );
 }
 

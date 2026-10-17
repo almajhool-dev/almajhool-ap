@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 
 import '../../core/config.dart';
+import '../../providers/providers.dart';
 import '../../services/core_services.dart';
 import '../../repositories/user_repositories.dart';
 import '../../utils/helpers.dart';
@@ -28,6 +31,23 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _busy = true);
     try {
       await _repo.signIn(_email.text, _password.text);
+      final p = await ProfileRepository().get(supa.auth.currentUser!.id);
+      if (p?.isBanned ?? false) {
+        await _repo.signOut();
+        throw Exception('هذا الحساب محظور نهائيًا من قبل الإدارة');
+      }
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _google(String clientId) async {
+    setState(() => _busy = true);
+    try {
+      final ok = await _repo.signInWithGoogle(clientId);
+      if (!ok) return;
       final p = await ProfileRepository().get(supa.auth.currentUser!.id);
       if (p?.isBanned ?? false) {
         await _repo.signOut();
@@ -74,7 +94,26 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Center(child: BrandLogo(size: 92)),
+                    // دخول الشعار بحركة ثلاثية الأبعاد
+                    Center(
+                      child: TweenAnimationBuilder<double>(
+                        tween: Tween(begin: 0, end: 1),
+                        duration: const Duration(milliseconds: 1100),
+                        curve: Curves.easeOutBack,
+                        builder: (_, t, child) => Opacity(
+                          opacity: t.clamp(0.0, 1.0),
+                          child: Transform(
+                            alignment: Alignment.center,
+                            transform: Matrix4.identity()
+                              ..setEntry(3, 2, 0.0015)
+                              ..rotateY((1 - t) * 1.6)
+                              ..rotateX((1 - t) * 0.5),
+                            child: child,
+                          ),
+                        ),
+                        child: const BrandLogo(size: 92),
+                      ),
+                    ),
                     const SizedBox(height: 32),
                     Text(widget.adminMode ? 'دخول المدير' : 'تسجيل الدخول',
                         style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
@@ -120,6 +159,41 @@ class _LoginScreenState extends State<LoginScreen> {
                           : const Text('دخول'),
                     ),
                     if (!widget.adminMode) ...[
+                      Builder(builder: (context) {
+                        final st = context.watch<AppStatusProvider>();
+                        if (st.googleClientId == null && !st.phoneLogin) return const SizedBox.shrink();
+                        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                          const SizedBox(height: 18),
+                          Row(children: [
+                            const Expanded(child: Divider()),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 10),
+                              child: Text('أو', style: TextStyle(color: Theme.of(context).hintColor)),
+                            ),
+                            const Expanded(child: Divider()),
+                          ]),
+                          const SizedBox(height: 12),
+                          if (st.googleClientId != null)
+                            OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(50)),
+                              onPressed: _busy ? null : () => _google(st.googleClientId!),
+                              icon: const Text('G',
+                                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Color(0xFF4285F4))),
+                              label: const Text('متابعة بحساب Google'),
+                            ),
+                          if (st.phoneLogin) ...[
+                            const SizedBox(height: 10),
+                            OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(50)),
+                              onPressed: _busy
+                                  ? null
+                                  : () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PhoneLoginScreen())),
+                              icon: const Icon(Icons.phone_iphone_rounded),
+                              label: const Text('الدخول برقم الهاتف'),
+                            ),
+                          ],
+                        ]);
+                      }),
                       const SizedBox(height: 16),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -473,6 +547,176 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+
+/// الدخول برقم الهاتف: رمز تحقق SMS حقيقي، ويدعم كل مفاتيح الدول (الافتراضي العراق +964).
+class PhoneLoginScreen extends StatefulWidget {
+  const PhoneLoginScreen({super.key});
+  @override
+  State<PhoneLoginScreen> createState() => _PhoneLoginScreenState();
+}
+
+class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
+  static const _codes = [
+    ('🇮🇶', 'العراق', '+964'),
+    ('🇸🇦', 'السعودية', '+966'),
+    ('🇦🇪', 'الإمارات', '+971'),
+    ('🇰🇼', 'الكويت', '+965'),
+    ('🇯🇴', 'الأردن', '+962'),
+    ('🇸🇾', 'سوريا', '+963'),
+    ('🇱🇧', 'لبنان', '+961'),
+    ('🇪🇬', 'مصر', '+20'),
+    ('🇹🇷', 'تركيا', '+90'),
+    ('🇮🇷', 'إيران', '+98'),
+    ('🇩🇪', 'ألمانيا', '+49'),
+    ('🇬🇧', 'بريطانيا', '+44'),
+    ('🇺🇸', 'أمريكا', '+1'),
+  ];
+  final _repo = AuthRepository();
+  final _num = TextEditingController();
+  final _code = TextEditingController();
+  String _cc = '+964';
+  String? _sentTo;
+  bool _busy = false;
+  int _wait = 0;
+
+  String get _phone {
+    var n = _num.text.replaceAll(RegExp(r'[^0-9]'), '');
+    if (n.startsWith('00')) return '+${n.substring(2)}';
+    if (n.startsWith('0')) n = n.substring(1);
+    return '$_cc$n';
+  }
+
+  Future<void> _send() async {
+    final p = _phone;
+    if (!RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch(p)) {
+      showSnack(context, 'رقم الهاتف غير صحيح', error: true);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await _repo.sendPhoneCode(p);
+      if (!mounted) return;
+      setState(() {
+        _sentTo = p;
+        _wait = 60;
+      });
+      _tick();
+      showSnack(context, 'وصلك رمز التحقق برسالة SMS');
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _tick() {
+    Future<void>.delayed(const Duration(seconds: 1), () {
+      if (!mounted || _wait <= 0) return;
+      setState(() => _wait--);
+      _tick();
+    });
+  }
+
+  Future<void> _verify() async {
+    final to = _sentTo;
+    if (to == null || _code.text.trim().length < 4) return;
+    setState(() => _busy = true);
+    try {
+      await _repo.verifyPhoneCode(to, _code.text);
+      final p = await ProfileRepository().get(supa.auth.currentUser!.id);
+      if (p?.isBanned ?? false) {
+        await _repo.signOut();
+        throw Exception('هذا الحساب محظور نهائيًا من قبل الإدارة');
+      }
+      if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _num.dispose();
+    _code.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sent = _sentTo != null;
+    return Scaffold(
+      appBar: AppBar(title: const Text('الدخول برقم الهاتف')),
+      body: ListView(padding: const EdgeInsets.all(24), children: [
+        const Icon(Icons.sms_rounded, size: 64),
+        const SizedBox(height: 12),
+        Text(sent ? 'دخّل الرمز اللي وصلك على $_sentTo' : 'راح نرسلك رمز تحقق برسالة SMS',
+            textAlign: TextAlign.center, textDirection: TextDirection.rtl),
+        const SizedBox(height: 20),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          child: !sent
+              ? Row(key: const ValueKey('n'), textDirection: TextDirection.ltr, children: [
+                  DropdownButton<String>(
+                    value: _cc,
+                    items: [
+                      for (final c in _codes) DropdownMenuItem(value: c.$3, child: Text('${c.$1} ${c.$3}')),
+                    ],
+                    onChanged: (v) => setState(() => _cc = v ?? '+964'),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _num,
+                      keyboardType: TextInputType.phone,
+                      textDirection: TextDirection.ltr,
+                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9 ]'))],
+                      decoration: const InputDecoration(hintText: '780 123 4567'),
+                    ),
+                  ),
+                ])
+              : TextField(
+                  key: const ValueKey('c'),
+                  controller: _code,
+                  autofocus: true,
+                  keyboardType: TextInputType.number,
+                  textAlign: TextAlign.center,
+                  maxLength: 8,
+                  style: const TextStyle(fontSize: 26, letterSpacing: 10, fontWeight: FontWeight.w800),
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: const InputDecoration(counterText: '', hintText: '••••••'),
+                  onChanged: (v) {
+                    if (v.length >= 6) _verify();
+                  },
+                ),
+        ),
+        const SizedBox(height: 20),
+        FilledButton(
+          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),
+          onPressed: _busy ? null : (sent ? _verify : _send),
+          child: _busy
+              ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2))
+              : Text(sent ? 'تأكيد' : 'إرسال الرمز'),
+        ),
+        if (sent)
+          TextButton(
+            onPressed: _wait > 0 || _busy ? null : _send,
+            child: Text(_wait > 0 ? 'إعادة الإرسال بعد $_wait ثانية' : 'إعادة إرسال الرمز'),
+          ),
+        if (sent)
+          TextButton(
+            onPressed: () => setState(() {
+              _sentTo = null;
+              _code.clear();
+            }),
+            child: const Text('تغيير الرقم'),
+          ),
+      ]),
     );
   }
 }

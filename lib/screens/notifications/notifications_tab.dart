@@ -11,6 +11,7 @@ import '../home/home_shell.dart';
 import '../profile/profile_screens.dart';
 import '../couple/couple_screens.dart';
 import '../settings/suggestions_screen.dart';
+import '../wallet/wallet_screens.dart';
 import '../../services/couple_service.dart';
 
 class NotificationsTab extends StatefulWidget {
@@ -62,6 +63,9 @@ class _NotificationsTabState extends State<NotificationsTab> {
         'comment_reply' => Icons.reply_rounded,
         'couple' => Icons.favorite_rounded,
         'suggestion' => Icons.lightbulb_rounded,
+        'gift' => Icons.card_giftcard_rounded,
+        'withdraw' => Icons.account_balance_wallet_rounded,
+        'wallet' => Icons.toll_rounded,
         'live' => Icons.live_tv_rounded,
         'follow' => Icons.person_add_rounded,
         'live_penalty' => Icons.gpp_maybe_rounded,
@@ -69,6 +73,16 @@ class _NotificationsTabState extends State<NotificationsTab> {
       };
 
   void _open(AppNotification n) {
+    if (n.type == 'gift' || n.type == 'wallet' || n.type == 'withdraw') {
+      final owner = context.read<SessionProvider>().profile?.isOwner ?? false;
+      Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => n.type == 'withdraw' && owner && n.title.contains('جديد')
+                  ? const FinanceScreen()
+                  : WalletScreen(initialTab: n.type == 'wallet' ? 0 : 1)));
+      return;
+    }
     if (n.type == 'suggestion') {
       Navigator.push(context, MaterialPageRoute(builder: (_) => const SuggestionsScreen()));
       return;

@@ -22,6 +22,8 @@ import '../../repositories/live_repository.dart';
 import '../../repositories/social_repositories.dart';
 import '../../services/call_service.dart';
 import '../../services/live_background.dart';
+import '../../services/wallet_service.dart';
+import '../wallet/wallet_screens.dart';
 import '../../services/core_services.dart';
 import '../../services/filter_service.dart';
 import '../../services/live_recordings.dart';
@@ -307,6 +309,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
       _cover = info['cover_url'] as String?;
 
       _host = await _profile(_hostId!);
+      WalletService.gifts().catchError((_) => <Gift>[]);
       if (await _gone()) return;
       await _connectRealtime();
       if (await _gone()) return;
@@ -641,6 +644,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
               if (_comments.length > 120) _comments.removeRange(0, 40);
             });
             _toBottom();
+            if (c.kind == 'gift') _queueGift(c);
             if (c.kind == 'system' && c.userId == myId && c.content.contains('طرد')) {
               _ended('تم طردك من هذا البث');
             }
@@ -818,6 +822,55 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
 
   void _onPip() {
     if (mounted) setState(() {});
+  }
+
+  // ---- الهدايا ----
+  final List<({String emoji, String text, int tier})> _giftQueue = [];
+  ({String emoji, String text, int tier})? _burst;
+  int _burstSeq = 0;
+
+  void _queueGift(LiveComment c) {
+    final g = WalletService.giftById(c.giftId);
+    final who = _people[c.userId]?.displayName ?? '';
+    final item = (
+      emoji: g?.emoji ?? '🎁',
+      text: '$who أرسل ${g?.name ?? 'هدية'}${c.giftQty > 1 ? ' ×${c.giftQty}' : ''}',
+      tier: g?.tier ?? 1,
+    );
+    if (_giftQueue.length > 15) return; // ما نكدّس حركات كثيرة
+    _giftQueue.add(item);
+    if (_burst == null) _nextGift();
+  }
+
+  void _nextGift() {
+    if (!mounted) return;
+    setState(() {
+      _burst = _giftQueue.isEmpty ? null : _giftQueue.removeAt(0);
+      _burstSeq++;
+    });
+  }
+
+  Widget _giftLayer(Widget child) {
+    final b = _burst;
+    if (b == null) return child;
+    return Stack(fit: StackFit.expand, children: [
+      child,
+      Positioned.fill(
+        child: GiftBurst(
+          key: ValueKey(_burstSeq),
+          emoji: b.emoji,
+          text: b.text,
+          tier: b.tier,
+          onDone: _nextGift,
+        ),
+      ),
+    ]);
+  }
+
+  Future<void> _gift() async {
+    final hid = _hostId;
+    if (hid == null || hid == myId) return;
+    await showGiftSheet(context, toUser: hid, toName: _host?.displayName ?? '', liveId: _liveId);
   }
 
   @override
@@ -1455,6 +1508,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
         _RoundIcon(icon: _micOn ? Icons.mic_rounded : Icons.mic_off_rounded, onTap: _toggleMic),
       ];
       b = [
+        _RoundIcon(icon: Icons.card_giftcard_rounded, color: Colors.amberAccent, onTap: _gift),
         _RoundIcon(icon: Icons.favorite_rounded, color: Colors.pinkAccent, onTap: _tap),
         _RoundIcon(icon: Icons.more_horiz_rounded, onTap: _guestMenu),
       ];
@@ -1466,7 +1520,10 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
           onTap: _guestButton,
         ),
       ];
-      b = [_RoundIcon(icon: Icons.favorite_rounded, color: Colors.pinkAccent, onTap: _tap)];
+      b = [
+        _RoundIcon(icon: Icons.card_giftcard_rounded, color: Colors.amberAccent, onTap: _gift),
+        _RoundIcon(icon: Icons.favorite_rounded, color: Colors.pinkAccent, onTap: _tap),
+      ];
     }
     return first ? a : b;
   }
@@ -1498,7 +1555,8 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
         ]),
       );
     }
-    return PopScope(
+    return _giftLayer(
+      PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _close();
@@ -1732,7 +1790,9 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
                                   decoration: BoxDecoration(
                                     color: c.kind == 'system'
                                         ? Colors.amber.withValues(alpha: 0.35)
-                                        : Colors.black.withValues(alpha: 0.6),
+                                        : c.kind == 'gift'
+                                            ? const Color(0xFFFF2D87).withValues(alpha: 0.55)
+                                            : Colors.black.withValues(alpha: 0.6),
                                     borderRadius: BorderRadius.circular(14),
                                   ),
                                   child: Text.rich(
@@ -1835,7 +1895,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
           ],
         ),
       ),
-    );
+    ));
   }
 }
 
