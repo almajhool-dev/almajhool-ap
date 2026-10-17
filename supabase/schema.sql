@@ -6347,5 +6347,33 @@ begin
 end $$;
 grant execute on function public.set_login_options(text, boolean) to authenticated;
 
+-- =====================================================================
+--  الإصدار 50: حماية الشحن — فحص الدفع يتصل بزين كاش (لحد 15 ثانية لكل طلب)،
+--  فصار عليه حد طلبات حتى ما ينشغل الخادم بطلبات متكررة. + قائمة الداعمين للمسجلين بس.
+-- =====================================================================
+create or replace function public.topup_check(p_intent uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare s text;
+begin
+  if auth.uid() is null then raise exception 'not_authenticated'; end if;
+  if not exists(select 1 from payment_intents where id = p_intent and user_id = auth.uid()) then raise exception 'غير موجود'; end if;
+  -- التطبيق يفحص 12 مرة كحد أقصى لكل دفعة، والفحص التلقائي كل دقيقة يكمّل الباقي
+  perform _rate('topup_check', 40, 60);
+  s := _topup_verify(p_intent);
+  return jsonb_build_object('status', s, 'coins', coalesce((select coins from wallets where user_id = auth.uid()), 0));
+end $$;
+revoke execute on function public.topup_check(uuid) from public, anon;
+grant execute on function public.topup_check(uuid) to authenticated;
+
+create or replace function public.live_top_gifters(p_live uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(x), '[]'::jsonb) from (
+    select jsonb_build_object('id', p.id, 'display_name', p.display_name, 'avatar_url', p.avatar_url, 'coins', sum(e.coins)) x
+      from gift_events e join profiles p on p.id = e.from_user
+     where auth.uid() is not null and e.live_id = p_live group by p.id order by sum(e.coins) desc limit 10) t;
+$$;
+revoke execute on function public.live_top_gifters(uuid) from public, anon;
+grant execute on function public.live_top_gifters(uuid) to authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
