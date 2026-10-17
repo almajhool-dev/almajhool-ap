@@ -6285,5 +6285,67 @@ do $$ begin
 exception when others then raise notice 'topup sweep: %', sqlerrm;
 end $$;
 
+-- =====================================================================
+--  الإصدار 49: الدخول بحساب Google ورقم الهاتف (يتفعّل من المالك بعد إعداد Google/SMS)
+-- =====================================================================
+alter table public.app_settings add column if not exists google_web_client_id text;
+alter table public.app_settings add column if not exists phone_login boolean not null default false;
+
+-- الحسابات تنسوى من التطبيق فقط، أو عن طريق Google/الهاتف إذا المالك فعّلها
+create or replace function public._guard_direct_signup() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare prov text := coalesce(new.raw_app_meta_data->>'provider', '');
+begin
+  if current_user = 'supabase_auth_admin'
+     and coalesce((select value from private_settings where key = 'allow_direct_signup'), '') <> '1' then
+    if prov = 'google' and coalesce((select nullif(google_web_client_id, '') is not null from app_settings where id = 1), false) then
+      return new;
+    end if;
+    if prov = 'phone' and coalesce((select phone_login from app_settings where id = 1), false) then
+      return new;
+    end if;
+    raise exception 'التسجيل متاح من التطبيق فقط';
+  end if;
+  return new;
+end $$;
+
+-- حسابات Google: الاسم والصورة من Google تلقائيًا
+create or replace function public.handle_new_user() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  m jsonb := coalesce(new.raw_user_meta_data, '{}'::jsonb);
+  uname text := lower(coalesce(m->>'username', ''));
+  first_user boolean := not exists(select 1 from profiles);
+  dn text;
+  av text;
+begin
+  if uname !~ '^[a-z0-9_.]{3,24}$' or exists(select 1 from profiles where username = uname) then
+    uname := 'user_' || substr(replace(new.id::text, '-', ''), 1, 10);
+  end if;
+  dn := coalesce(nullif(trim(m->>'display_name'), ''), nullif(trim(m->>'full_name'), ''), nullif(trim(m->>'name'), ''), uname);
+  av := coalesce(nullif(m->>'avatar_url', ''), nullif(m->>'picture', ''));
+  if av is not null and av !~ '^https://' then av := null; end if;
+  insert into profiles(id, username, display_name, avatar_url, is_admin, is_owner, is_verified)
+  values (new.id, uname, left(dn, 50), av, first_user, first_user, first_user);
+  return new;
+end $$;
+
+create or replace function public.set_login_options(p_google_client text default null, p_phone boolean default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if p_google_client is not null then
+    if btrim(p_google_client) <> '' and btrim(p_google_client) !~ '^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$' then
+      raise exception 'رقم عميل Google غير صحيح (لازم ينتهي بـ .apps.googleusercontent.com)';
+    end if;
+    update app_settings set google_web_client_id = nullif(btrim(p_google_client), ''), updated_at = now() where id = 1;
+  end if;
+  if p_phone is not null then
+    update app_settings set phone_login = p_phone, updated_at = now() where id = 1;
+  end if;
+  return (select jsonb_build_object('google', google_web_client_id, 'phone', phone_login) from app_settings where id = 1);
+end $$;
+grant execute on function public.set_login_options(text, boolean) to authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
