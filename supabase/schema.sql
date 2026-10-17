@@ -5758,5 +5758,532 @@ language sql stable security definer set search_path = public as $$
 $$;
 grant execute on function public.suggestions_list(text) to authenticated;
 
+-- =====================================================================
+--  الإصدار 48: العملات والهدايا والأرباح (محسوبة كلها بالخادم + دفتر حسابات)
+--  • العملة: 1 عملة = 10 دينار (قيمة محاسبية). الأسعار تنحسب بالخادم فقط.
+--  • الهدية: تنخصم العملات من المرسل، وقيمتها بالدينار تنقسم 50% للمنصة و50% لصانع المحتوى.
+--  • الأرباح: معلّقة 72 ساعة بعدين تصير متاحة للسحب. السحب بموافقة المالك.
+--  • الشحن الحقيقي بزين كاش: ما ينضاف ولا عملة إلا بعد ما الخادم يتأكد من زين كاش نفسه.
+-- =====================================================================
+create table if not exists public.wallets (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  coins bigint not null default 0 check (coins >= 0),
+  updated_at timestamptz not null default now()
+);
+alter table public.wallets enable row level security;
+revoke all on public.wallets from anon, authenticated;
+
+-- دفتر الحسابات: كل حركة مسجلة وما تنحذف (user_id فارغ = حساب المنصة)
+create table if not exists public.ledger (
+  id bigint generated always as identity primary key,
+  at timestamptz not null default now(),
+  user_id uuid,   -- بدون ربط حتى يبقى السجل المالي حتى لو انحذف الحساب
+  account text not null check (account in ('coins', 'earnings', 'platform', 'cash_in', 'cash_out')),
+  delta bigint not null,
+  kind text not null,
+  ref uuid,
+  note text not null default ''
+);
+create index if not exists ledger_user_idx on public.ledger(user_id, account, at desc);
+create index if not exists ledger_kind_idx on public.ledger(kind, at desc);
+alter table public.ledger enable row level security;
+revoke all on public.ledger from anon, authenticated;
+-- الدفتر ما يتعدل ولا ينحذف أبدًا
+create or replace function public._ledger_immutable() returns trigger language plpgsql as $$
+begin raise exception 'دفتر الحسابات لا يُعدّل'; end $$;
+drop trigger if exists ledger_no_change on public.ledger;
+create trigger ledger_no_change before update or delete on public.ledger
+  for each row execute function public._ledger_immutable();
+
+create table if not exists public.gift_catalog (
+  id text primary key,
+  name text not null,
+  emoji text not null,
+  coins int not null check (coins between 1 and 100000),
+  tier int not null default 1,
+  sort int not null default 0,
+  active boolean not null default true
+);
+alter table public.gift_catalog enable row level security;
+revoke all on public.gift_catalog from anon;
+grant select on public.gift_catalog to authenticated;
+drop policy if exists gift_catalog_read on public.gift_catalog;
+create policy gift_catalog_read on public.gift_catalog for select to authenticated using (active);
+insert into public.gift_catalog(id, name, emoji, coins, tier, sort) values
+  ('rose', 'وردة', '🌹', 1, 1, 1),
+  ('heart', 'قلب', '💖', 5, 1, 2),
+  ('star', 'نجمة', '🌟', 10, 1, 3),
+  ('icecream', 'آيس كريم', '🍦', 20, 1, 4),
+  ('bear', 'دبدوب', '🧸', 50, 2, 5),
+  ('perfume', 'عطر', '🌸', 99, 2, 6),
+  ('crown', 'تاج', '👑', 199, 2, 7),
+  ('car', 'سيارة', '🏎️', 500, 3, 8),
+  ('rocket', 'صاروخ', '🚀', 1000, 3, 9),
+  ('castle', 'قلعة', '🏰', 2500, 4, 10),
+  ('lion', 'أسد', '🦁', 5000, 4, 11),
+  ('universe', 'كون', '🌌', 10000, 5, 12)
+on conflict (id) do nothing;
+
+create table if not exists public.topup_packages (
+  id text primary key,
+  coins int not null check (coins > 0),
+  price_iqd int not null check (price_iqd >= 1000),
+  sort int not null default 0,
+  active boolean not null default true
+);
+alter table public.topup_packages enable row level security;
+revoke all on public.topup_packages from anon;
+grant select on public.topup_packages to authenticated;
+drop policy if exists topup_packages_read on public.topup_packages;
+create policy topup_packages_read on public.topup_packages for select to authenticated using (active);
+insert into public.topup_packages(id, coins, price_iqd, sort) values
+  ('p100', 100, 1000, 1), ('p500', 500, 5000, 2), ('p1000', 1000, 10000, 3),
+  ('p2500', 2500, 25000, 4), ('p5000', 5000, 50000, 5), ('p10000', 10000, 100000, 6)
+on conflict (id) do nothing;
+
+create table if not exists public.gift_events (
+  id uuid primary key default gen_random_uuid(),
+  client_id text not null unique,                -- يمنع تكرار نفس الهدية (ضغطة مزدوجة/إعادة إرسال)
+  from_user uuid not null references public.profiles(id) on delete cascade,
+  to_user uuid not null references public.profiles(id) on delete cascade,
+  live_id uuid,
+  gift_id text not null references public.gift_catalog(id),
+  qty int not null default 1 check (qty between 1 and 99),
+  coins bigint not null,
+  value_iqd bigint not null,
+  creator_iqd bigint not null,
+  platform_iqd bigint not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists gift_events_to_idx on public.gift_events(to_user, created_at desc);
+create index if not exists gift_events_live_idx on public.gift_events(live_id, created_at desc);
+alter table public.gift_events enable row level security;
+revoke all on public.gift_events from anon, authenticated;
+
+create table if not exists public.payment_intents (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  package_id text not null references public.topup_packages(id),
+  coins int not null,
+  amount_iqd int not null,
+  provider text not null default 'zaincash',
+  status text not null default 'pending' check (status in ('pending', 'paid', 'failed', 'expired')),
+  provider_tx text unique,
+  pay_url text,
+  info text not null default '',
+  created_at timestamptz not null default now(),
+  paid_at timestamptz
+);
+create index if not exists payment_intents_user_idx on public.payment_intents(user_id, created_at desc);
+alter table public.payment_intents enable row level security;
+revoke all on public.payment_intents from anon, authenticated;
+
+create table if not exists public.withdrawals (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  amount_iqd bigint not null check (amount_iqd > 0),
+  method text not null default 'zaincash',
+  destination text not null check (destination ~ '^9647[0-9]{9}$'),
+  status text not null default 'pending' check (status in ('pending', 'paid', 'rejected')),
+  note text not null default '',
+  created_at timestamptz not null default now(),
+  processed_at timestamptz
+);
+create index if not exists withdrawals_user_idx on public.withdrawals(user_id, created_at desc);
+alter table public.withdrawals enable row level security;
+revoke all on public.withdrawals from anon, authenticated;
+
+alter table public.live_comments add column if not exists gift_id text;
+alter table public.live_comments add column if not exists gift_qty int;
+do $$ begin
+  alter table public.live_comments drop constraint if exists live_comments_kind_check;
+  alter table public.live_comments add constraint live_comments_kind_check check (kind in ('text', 'join', 'system', 'gift'));
+exception when others then raise notice 'live kinds: %', sqlerrm;
+end $$;
+
+create or replace function public._coin_iqd() returns int language sql immutable as $$ select 10 $$;
+
+-- ---------- محفظتي ----------
+create or replace function public.wallet_me() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare uid uuid := auth.uid(); c bigint; tot bigint; pend bigint; wd bigint; held bigint; gifts bigint;
+begin
+  if uid is null then raise exception 'not_authenticated'; end if;
+  select coalesce((select coins from wallets where user_id = uid), 0) into c;
+  select coalesce(sum(delta), 0) into tot from ledger where user_id = uid and account = 'earnings' and kind = 'gift_recv';
+  select coalesce(sum(delta), 0) into pend from ledger where user_id = uid and account = 'earnings' and kind = 'gift_recv'
+     and at > now() - interval '72 hours';
+  select coalesce(-sum(delta), 0) into wd from ledger where user_id = uid and account = 'earnings' and kind in ('withdraw_req', 'withdraw_back');
+  select coalesce(sum(amount_iqd), 0) into held from withdrawals where user_id = uid and status = 'pending';
+  select count(*) into gifts from gift_events where to_user = uid;
+  return jsonb_build_object(
+    'coins', c, 'coin_iqd', _coin_iqd(),
+    'earn_total', tot, 'earn_pending', pend,
+    'earn_available', greatest(tot - pend - wd, 0),
+    'withdrawn', greatest(wd - held, 0), 'withdraw_pending', held,
+    'gifts_received', gifts,
+    'today', (select coalesce(sum(delta), 0) from ledger where user_id = uid and account = 'earnings' and kind = 'gift_recv'
+               and at > date_trunc('day', now() at time zone 'Asia/Baghdad') at time zone 'Asia/Baghdad'),
+    'month', (select coalesce(sum(delta), 0) from ledger where user_id = uid and account = 'earnings' and kind = 'gift_recv'
+               and at > date_trunc('month', now() at time zone 'Asia/Baghdad') at time zone 'Asia/Baghdad'),
+    'topup_ready', coalesce((select value from private_settings where key = 'zc_enabled'), '0') = '1',
+    'min_withdraw', 25000);
+end $$;
+grant execute on function public.wallet_me() to authenticated;
+
+create or replace function public.wallet_history(p_limit int default 50) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('at', at, 'account', account, 'delta', delta, 'kind', kind, 'note', note)
+           order by at desc), '[]'::jsonb)
+  from (select * from ledger where user_id = auth.uid() and account in ('coins', 'earnings')
+        order by at desc limit least(greatest(coalesce(p_limit, 50), 1), 200)) l;
+$$;
+grant execute on function public.wallet_history(int) to authenticated;
+
+-- ---------- إرسال هدية ----------
+create or replace function public.send_gift(p_to uuid, p_gift text, p_live uuid default null, p_qty int default 1,
+  p_client_id text default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := auth.uid(); g gift_catalog; q int := least(greatest(coalesce(p_qty, 1), 1), 99);
+  cost bigint; val bigint; creator bigint; plat bigint; bal bigint; eid uuid; nm text; cid text;
+begin
+  if uid is null then raise exception 'not_authenticated'; end if;
+  if is_banned() then raise exception 'حسابك محظور'; end if;
+  if p_to is null or p_to = uid then raise exception 'ما تكدر ترسل هدية لنفسك'; end if;
+  if is_blocked_between(uid, p_to) then raise exception 'ما يصير: يوجد حظر'; end if;
+  if exists(select 1 from profiles where id = p_to and is_banned) then raise exception 'هذا الحساب محظور'; end if;
+  cid := coalesce(nullif(btrim(p_client_id), ''), gen_random_uuid()::text);
+  -- نفس الطلب انرسل قبل (إعادة إرسال/ضغطتين): نرجع النتيجة بدون خصم ثاني
+  if exists(select 1 from gift_events where client_id = cid) then
+    return jsonb_build_object('ok', true, 'duplicate', true,
+      'coins', coalesce((select coins from wallets where user_id = uid), 0));
+  end if;
+  perform _rate('gift', 120, 60);
+  select * into g from gift_catalog where id = p_gift and active;
+  if g.id is null then raise exception 'هدية غير موجودة'; end if;
+  cost := g.coins::bigint * q;
+  val := cost * _coin_iqd();
+  creator := val / 2;
+  plat := val - creator;
+  -- قفل المحفظة حتى ما يصير خصم مزدوج بنفس اللحظة
+  select coins into bal from wallets where user_id = uid for update;
+  if coalesce(bal, 0) < cost then raise exception 'رصيدك ما يكفي — اشحن عملات'; end if;
+  update wallets set coins = coins - cost, updated_at = now() where user_id = uid;
+  insert into gift_events(client_id, from_user, to_user, live_id, gift_id, qty, coins, value_iqd, creator_iqd, platform_iqd)
+    values (cid, uid, p_to, p_live, g.id, q, cost, val, creator, plat) returning id into eid;
+  insert into ledger(user_id, account, delta, kind, ref, note) values
+    (uid, 'coins', -cost, 'gift_sent', eid, g.name || ' ×' || q),
+    (p_to, 'earnings', creator, 'gift_recv', eid, g.name || ' ×' || q),
+    (null, 'platform', plat, 'gift_fee', eid, g.name || ' ×' || q);
+  select display_name into nm from profiles where id = uid;
+  if p_live is not null then
+    begin
+      insert into live_comments(live_id, user_id, kind, content, gift_id, gift_qty)
+        values (p_live, uid, 'gift', g.emoji || ' أرسل ' || g.name || case when q > 1 then ' ×' || q else '' end, g.id, q);
+    exception when others then null;
+    end;
+  end if;
+  insert into notifications(user_id, type, title, body, data)
+    values (p_to, 'gift', g.emoji || ' وصلتك هدية!', coalesce(nm, '') || ' أرسلك ' || g.name ||
+            case when q > 1 then ' ×' || q else '' end || ' (+' || creator || ' د.ع أرباح)',
+            jsonb_build_object('user_id', uid, 'gift', g.id));
+  return jsonb_build_object('ok', true, 'coins', bal - cost, 'event', eid, 'emoji', g.emoji, 'name', g.name, 'tier', g.tier);
+end $$;
+grant execute on function public.send_gift(uuid, text, uuid, int, text) to authenticated;
+
+-- أكثر الداعمين بالبث
+create or replace function public.live_top_gifters(p_live uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(x), '[]'::jsonb) from (
+    select jsonb_build_object('id', p.id, 'display_name', p.display_name, 'avatar_url', p.avatar_url, 'coins', sum(e.coins)) x
+      from gift_events e join profiles p on p.id = e.from_user
+     where e.live_id = p_live group by p.id order by sum(e.coins) desc limit 10) t;
+$$;
+grant execute on function public.live_top_gifters(uuid) to authenticated;
+
+-- ---------- طلب سحب الأرباح ----------
+create or replace function public.request_withdrawal(p_amount bigint, p_wallet text) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := auth.uid(); w jsonb; avail bigint; wid uuid; dest text;
+begin
+  if uid is null then raise exception 'not_authenticated'; end if;
+  if is_banned() then raise exception 'حسابك محظور'; end if;
+  perform pg_advisory_xact_lock(hashtext('wd' || uid::text));
+  dest := regexp_replace(coalesce(p_wallet, ''), '[^0-9]', '', 'g');
+  if dest ~ '^07[0-9]{9}$' then dest := '964' || substr(dest, 2); end if;
+  if dest !~ '^9647[0-9]{9}$' then raise exception 'رقم محفظة زين كاش غير صحيح (مثال: 07801234567)'; end if;
+  if exists(select 1 from withdrawals where user_id = uid and status = 'pending') then
+    raise exception 'عندك طلب سحب قيد المراجعة';
+  end if;
+  w := wallet_me();
+  avail := (w->>'earn_available')::bigint;
+  if coalesce(p_amount, 0) < 25000 then raise exception 'أقل مبلغ للسحب 25,000 دينار'; end if;
+  if p_amount > avail then raise exception 'المبلغ أكثر من رصيدك المتاح'; end if;
+  insert into withdrawals(user_id, amount_iqd, destination) values (uid, p_amount, dest) returning id into wid;
+  insert into ledger(user_id, account, delta, kind, ref, note) values (uid, 'earnings', -p_amount, 'withdraw_req', wid, 'طلب سحب');
+  if _owner_id() is not null then
+    insert into notifications(user_id, type, title, body, data)
+      values (_owner_id(), 'withdraw', '💸 طلب سحب أرباح جديد', p_amount || ' دينار', jsonb_build_object('withdrawal_id', wid));
+  end if;
+  return wid;
+end $$;
+grant execute on function public.request_withdrawal(bigint, text) to authenticated;
+
+create or replace function public.my_withdrawals() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', id, 'amount', amount_iqd, 'status', status, 'note', note,
+           'created_at', created_at, 'processed_at', processed_at,
+           'destination', '****' || right(destination, 4)) order by created_at desc), '[]'::jsonb)
+  from withdrawals where user_id = auth.uid();
+$$;
+grant execute on function public.my_withdrawals() to authenticated;
+
+-- ---------- للمالك: لوحة مالية ----------
+create or replace function public.finance_summary() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  return jsonb_build_object(
+    'topups_iqd', (select coalesce(sum(amount_iqd), 0) from payment_intents where status = 'paid'),
+    'topups_count', (select count(*) from payment_intents where status = 'paid'),
+    'topups_failed', (select count(*) from payment_intents where status = 'failed'),
+    'gifts_value_iqd', (select coalesce(sum(value_iqd), 0) from gift_events),
+    'gifts_count', (select count(*) from gift_events),
+    'platform_iqd', (select coalesce(sum(delta), 0) from ledger where account = 'platform'),
+    'creators_owed_iqd', (select coalesce(sum(delta), 0) from ledger where account = 'earnings'),
+    'withdraw_pending_iqd', (select coalesce(sum(amount_iqd), 0) from withdrawals where status = 'pending'),
+    'withdraw_paid_iqd', (select coalesce(sum(amount_iqd), 0) from withdrawals where status = 'paid'),
+    'coins_outstanding', (select coalesce(sum(coins), 0) from wallets),
+    'today_gifts_iqd', (select coalesce(sum(value_iqd), 0) from gift_events
+                         where created_at > date_trunc('day', now() at time zone 'Asia/Baghdad') at time zone 'Asia/Baghdad'),
+    'zc', jsonb_build_object(
+      'enabled', coalesce((select value from private_settings where key = 'zc_enabled'), '0') = '1',
+      'live', coalesce((select value from private_settings where key = 'zc_live'), '0') = '1',
+      'client_set', exists(select 1 from private_settings where key = 'zc_client_id'),
+      'secret_set', exists(select 1 from private_settings where key = 'zc_client_secret'),
+      'wallet_set', exists(select 1 from private_settings where key = 'ZAINCASH_SETTLEMENT_WALLET')),
+    'top_creators', (select coalesce(jsonb_agg(x), '[]'::jsonb) from (
+        select jsonb_build_object('id', p.id, 'display_name', p.display_name, 'iqd', sum(e.creator_iqd)) x
+          from gift_events e join profiles p on p.id = e.to_user group by p.id order by sum(e.creator_iqd) desc limit 10) t));
+end $$;
+grant execute on function public.finance_summary() to authenticated;
+
+create or replace function public.finance_withdrawals(p_status text default 'pending') returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  return (select coalesce(jsonb_agg(jsonb_build_object('id', w.id, 'amount', w.amount_iqd, 'status', w.status,
+            'destination', w.destination, 'note', w.note, 'created_at', w.created_at,
+            'user', jsonb_build_object('id', p.id, 'display_name', p.display_name, 'username', p.username, 'avatar_url', p.avatar_url))
+            order by w.created_at desc), '[]'::jsonb)
+    from withdrawals w join profiles p on p.id = w.user_id
+   where p_status is null or w.status = p_status);
+end $$;
+grant execute on function public.finance_withdrawals(text) to authenticated;
+
+-- المالك يأكد إنه حوّل المبلغ (paid) أو يرفض (ترجع الأرباح لصاحبها)
+create or replace function public.finance_process_withdrawal(p_id uuid, p_paid boolean, p_note text default '') returns void
+language plpgsql security definer set search_path = public as $$
+declare w withdrawals;
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  select * into w from withdrawals where id = p_id for update;
+  if w.id is null or w.status <> 'pending' then raise exception 'الطلب مو قيد المراجعة'; end if;
+  update withdrawals set status = case when p_paid then 'paid' else 'rejected' end,
+    note = left(coalesce(p_note, ''), 300), processed_at = now() where id = p_id;
+  if p_paid then
+    insert into ledger(user_id, account, delta, kind, ref, note) values (w.user_id, 'cash_out', w.amount_iqd, 'withdraw_paid', w.id, 'تم التحويل');
+  else
+    insert into ledger(user_id, account, delta, kind, ref, note) values (w.user_id, 'earnings', w.amount_iqd, 'withdraw_back', w.id, 'رفض السحب: ' || coalesce(p_note, ''));
+  end if;
+  insert into notifications(user_id, type, title, body, data)
+    values (w.user_id, 'withdraw', case when p_paid then '✅ تم تحويل أرباحك' else 'طلب السحب انرفض' end,
+            w.amount_iqd || ' دينار' || case when coalesce(p_note, '') <> '' then ' — ' || p_note else '' end,
+            jsonb_build_object('withdrawal_id', w.id));
+end $$;
+grant execute on function public.finance_process_withdrawal(uuid, boolean, text) to authenticated;
+
+-- المالك يضيف عملات لحساب (هدية/تعويض) — تنسجل بالدفتر باسمه
+create or replace function public.finance_grant_coins(p_user uuid, p_coins int, p_reason text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if coalesce(p_coins, 0) = 0 or abs(p_coins) > 1000000 then raise exception 'عدد غير صحيح'; end if;
+  insert into wallets(user_id, coins) values (p_user, 0) on conflict do nothing;
+  update wallets set coins = coins + p_coins, updated_at = now() where user_id = p_user;
+  insert into ledger(user_id, account, delta, kind, note) values (p_user, 'coins', p_coins, 'owner_grant', left(coalesce(p_reason, ''), 200));
+end $$;
+grant execute on function public.finance_grant_coins(uuid, int, text) to authenticated;
+
+-- إعدادات زين كاش (تنكتب بس — ما ترجع لأي أحد، حتى للمالك)
+create or replace function public.finance_set_zaincash(p_client_id text default null, p_client_secret text default null,
+  p_wallet text default null, p_live boolean default null, p_enabled boolean default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if nullif(btrim(p_client_id), '') is not null then
+    insert into private_settings(key, value) values ('zc_client_id', btrim(p_client_id))
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end if;
+  if nullif(btrim(p_client_secret), '') is not null then
+    insert into private_settings(key, value) values ('zc_client_secret', btrim(p_client_secret))
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end if;
+  if nullif(btrim(p_wallet), '') is not null then
+    insert into private_settings(key, value) values ('ZAINCASH_SETTLEMENT_WALLET', regexp_replace(p_wallet, '[^0-9]', '', 'g'))
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end if;
+  if p_live is not null then
+    insert into private_settings(key, value) values ('zc_live', case when p_live then '1' else '0' end)
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+    delete from private_settings where key in ('zc_token', 'zc_token_exp');
+  end if;
+  if p_enabled is not null then
+    insert into private_settings(key, value) values ('zc_enabled', case when p_enabled then '1' else '0' end)
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end if;
+  return finance_summary()->'zc';
+end $$;
+grant execute on function public.finance_set_zaincash(text, text, text, boolean, boolean) to authenticated;
+
+-- ---------- زين كاش (API v2: OAuth2 + init + inquiry) ----------
+create or replace function public._zc_base() returns text language sql stable security definer set search_path = public as $$
+  select case when coalesce((select value from private_settings where key = 'zc_live'), '0') = '1'
+              then 'https://pg-api.zaincash.iq' else 'https://pg-api-uat.zaincash.iq' end;
+$$;
+revoke execute on function public._zc_base() from public, anon, authenticated;
+
+create or replace function public._zc_token() returns text
+language plpgsql security definer set search_path = public, extensions as $$
+declare tok text; r extensions.http_response; j jsonb; cid text; sec text;
+begin
+  select value into tok from private_settings where key = 'zc_token'
+    and coalesce((select value::bigint from private_settings where key = 'zc_token_exp'), 0) > extract(epoch from now())::bigint + 60;
+  if tok is not null then return tok; end if;
+  select value into cid from private_settings where key = 'zc_client_id';
+  select value into sec from private_settings where key = 'zc_client_secret';
+  if cid is null or sec is null then raise exception 'الدفع غير مفعّل بعد'; end if;
+  perform set_config('http.timeout_msec', '15000', true);
+  r := extensions.http(('POST', _zc_base() || '/oauth2/token', array[extensions.http_header('Accept', 'application/json')],
+        'application/x-www-form-urlencoded',
+        'grant_type=client_credentials&client_id=' || extensions.urlencode(cid) || '&client_secret=' || extensions.urlencode(sec) ||
+        '&scope=' || extensions.urlencode('payment:read payment:write'))::extensions.http_request);
+  if r.status <> 200 then raise exception 'zaincash_auth %', r.status; end if;
+  j := r.content::jsonb;
+  tok := j->>'access_token';
+  if tok is null then raise exception 'zaincash_auth_empty'; end if;
+  insert into private_settings(key, value) values ('zc_token', tok)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  insert into private_settings(key, value) values ('zc_token_exp', (extract(epoch from now())::bigint + coalesce((j->>'expires_in')::int, 300))::text)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  return tok;
+end $$;
+revoke execute on function public._zc_token() from public, anon, authenticated;
+
+-- المستخدم يختار باقة → نسوي عملية دفع ونرجع رابط صفحة زين كاش
+create or replace function public.topup_start(p_package text) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare uid uuid := auth.uid(); pk topup_packages; pid uuid; r extensions.http_response; j jsonb; url text; tx text;
+begin
+  if uid is null then raise exception 'not_authenticated'; end if;
+  if is_banned() then raise exception 'حسابك محظور'; end if;
+  if coalesce((select value from private_settings where key = 'zc_enabled'), '0') <> '1' then
+    raise exception 'الشحن يتفعّل قريبًا';
+  end if;
+  perform _rate('topup', 10, 3600);
+  select * into pk from topup_packages where id = p_package and active;
+  if pk.id is null then raise exception 'باقة غير موجودة'; end if;
+  -- حد يومي للحماية من الاحتيال
+  if (select coalesce(sum(amount_iqd), 0) from payment_intents where user_id = uid and status = 'paid'
+        and paid_at > now() - interval '1 day') + pk.price_iqd > 1000000 then
+    raise exception 'وصلت حد الشحن اليومي';
+  end if;
+  insert into payment_intents(user_id, package_id, coins, amount_iqd) values (uid, pk.id, pk.coins, pk.price_iqd) returning id into pid;
+  perform set_config('http.timeout_msec', '20000', true);
+  r := extensions.http(('POST', _zc_base() || '/api/v2/payment-gateway/transaction/init',
+        array[extensions.http_header('Authorization', 'Bearer ' || _zc_token())],
+        'application/json',
+        jsonb_build_object('language', 'ar', 'externalReferenceId', pid::text, 'orderId', 'almajhool_' || pid::text,
+          'amount', jsonb_build_object('value', pk.price_iqd::text, 'currency', 'IQD'),
+          'serviceType', 'شحن عملات المبرمج المجهول',
+          'redirectUrls', jsonb_build_object('successUrl', 'https://almajhool.app/pay/done?i=' || pid,
+                                             'failureUrl', 'https://almajhool.app/pay/fail?i=' || pid))::text)::extensions.http_request);
+  if r.status not between 200 and 299 then
+    update payment_intents set status = 'failed', info = left('init ' || r.status || ' ' || coalesce(r.content, ''), 300) where id = pid;
+    raise exception 'تعذر بدء الدفع، حاول بعد شوية';
+  end if;
+  j := r.content::jsonb;
+  url := coalesce(j->>'redirectUrl', j#>>'{data,redirectUrl}');
+  tx := coalesce(j->>'transactionId', j#>>'{data,transactionId}', j->>'id');
+  update payment_intents set pay_url = url, provider_tx = tx, info = left(r.content, 300) where id = pid;
+  if url is null then raise exception 'تعذر بدء الدفع'; end if;
+  return jsonb_build_object('intent', pid, 'url', url, 'coins', pk.coins, 'price', pk.price_iqd);
+end $$;
+grant execute on function public.topup_start(text) to authenticated;
+
+-- نتأكد من زين كاش نفسه (inquiry) قبل إضافة أي عملة — مرة وحدة بس لكل عملية
+create or replace function public._topup_verify(p_intent uuid) returns text
+language plpgsql security definer set search_path = public, extensions as $$
+declare pi payment_intents; r extensions.http_response; j jsonb; st text; amt numeric;
+begin
+  select * into pi from payment_intents where id = p_intent for update;
+  if pi.id is null then return 'missing'; end if;
+  if pi.status <> 'pending' then return pi.status; end if;
+  if pi.provider_tx is null then return 'pending'; end if;
+  perform set_config('http.timeout_msec', '15000', true);
+  r := extensions.http(('GET', _zc_base() || '/api/v2/payment-gateway/transaction/inquiry/' || pi.provider_tx,
+        array[extensions.http_header('Authorization', 'Bearer ' || _zc_token())], null, null)::extensions.http_request);
+  if r.status not between 200 and 299 then return 'pending'; end if;
+  j := r.content::jsonb;
+  st := upper(coalesce(j->>'currentStatus', j#>>'{data,currentStatus}', j->>'status', j#>>'{data,status}', ''));
+  amt := coalesce(j#>>'{amount,value}', j#>>'{data,amount,value}')::numeric;
+  if st in ('SUCCESS', 'COMPLETED', 'PAID') and (amt is null or amt >= pi.amount_iqd) then
+    update payment_intents set status = 'paid', paid_at = now(), info = left(r.content, 300) where id = pi.id;
+    insert into wallets(user_id, coins) values (pi.user_id, 0) on conflict do nothing;
+    update wallets set coins = coins + pi.coins, updated_at = now() where user_id = pi.user_id;
+    insert into ledger(user_id, account, delta, kind, ref, note) values
+      (pi.user_id, 'coins', pi.coins, 'topup', pi.id, 'شحن ' || pi.coins || ' عملة'),
+      (pi.user_id, 'cash_in', pi.amount_iqd, 'topup', pi.id, 'زين كاش ' || coalesce(pi.provider_tx, ''));
+    insert into notifications(user_id, type, title, body, data)
+      values (pi.user_id, 'wallet', '🪙 تم شحن ' || pi.coins || ' عملة', 'شكرًا لك! رقم العملية: ' || left(pi.id::text, 8),
+              jsonb_build_object('intent', pi.id));
+    return 'paid';
+  elsif st in ('FAILED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'DECLINED', 'REJECTED') then
+    update payment_intents set status = 'failed', info = left(r.content, 300) where id = pi.id;
+    return 'failed';
+  end if;
+  return 'pending';
+exception when others then return 'pending';
+end $$;
+revoke execute on function public._topup_verify(uuid) from public, anon, authenticated;
+
+create or replace function public.topup_check(p_intent uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare s text;
+begin
+  if not exists(select 1 from payment_intents where id = p_intent and user_id = auth.uid()) then raise exception 'غير موجود'; end if;
+  s := _topup_verify(p_intent);
+  return jsonb_build_object('status', s, 'coins', coalesce((select coins from wallets where user_id = auth.uid()), 0));
+end $$;
+grant execute on function public.topup_check(uuid) to authenticated;
+
+-- كل دقيقة: نتأكد من العمليات المعلقة (حتى لو المستخدم سد التطبيق بعد الدفع)
+create or replace function public._topup_sweep() returns void
+language plpgsql security definer set search_path = public as $$
+declare i uuid;
+begin
+  update payment_intents set status = 'expired' where status = 'pending' and created_at < now() - interval '2 hours';
+  for i in select id from payment_intents where status = 'pending' and provider_tx is not null
+             and created_at > now() - interval '2 hours' order by created_at limit 10 loop
+    perform _topup_verify(i);
+  end loop;
+exception when others then null;
+end $$;
+revoke execute on function public._topup_sweep() from public, anon, authenticated;
+do $$ begin
+  perform cron.schedule('almajhool-topup-sweep', '* * * * *', 'select public._topup_sweep()');
+exception when others then raise notice 'topup sweep: %', sqlerrm;
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
