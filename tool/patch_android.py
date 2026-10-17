@@ -135,6 +135,10 @@ def patch_manifest():
     if "WRITE_EXTERNAL_STORAGE" not in s:
         s = s.replace("<application",
                       '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>\n    <application', 1)
+    # نافذة البث الصغيرة العائمة (Picture-in-Picture) مثل تيك توك
+    if "supportsPictureInPicture" not in s:
+        s = s.replace('android:name=".MainActivity"',
+                      'android:name=".MainActivity"\n            android:supportsPictureInPicture="true"\n            android:resizeableActivity="true"', 1)
     # عرض شاشة المكالمة فوق قفل الشاشة
     if "showWhenLocked" not in s:
         s = s.replace('android:name=".MainActivity"',
@@ -312,8 +316,51 @@ class MainActivity : FlutterActivity() {
             android.view.WindowManager.LayoutParams.FLAG_SECURE)
     }
 
+    // ---- نافذة البث الصغيرة (PiP) ----
+    private var pipChannel: MethodChannel? = null
+    private var autoPip = false
+
+    private fun pipParams(): android.app.PictureInPictureParams? {
+        if (Build.VERSION.SDK_INT < 26) return null
+        val b = android.app.PictureInPictureParams.Builder().setAspectRatio(android.util.Rational(9, 16))
+        if (Build.VERSION.SDK_INT >= 31) b.setAutoEnterEnabled(autoPip)
+        return b.build()
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (autoPip && Build.VERSION.SDK_INT >= 26 && Build.VERSION.SDK_INT < 31) {
+            try {
+                val p = pipParams()
+                if (p != null) enterPictureInPictureMode(p)
+            } catch (t: Throwable) {}
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        try {
+            pipChannel?.invokeMethod("pip", isInPictureInPictureMode)
+        } catch (t: Throwable) {}
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        pipChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "almajhool/pip")
+        pipChannel?.setMethodCallHandler { call, result ->
+            if (call.method == "setAuto") {
+                val want = call.argument<Boolean>("on") ?: false
+                autoPip = want && Build.VERSION.SDK_INT >= 26 &&
+                    packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+                try {
+                    val p = pipParams()
+                    if (p != null) setPictureInPictureParams(p)
+                } catch (t: Throwable) {}
+                result.success(autoPip)
+            } else {
+                result.notImplemented()
+            }
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "almajhool/filters")
             .setMethodCallHandler { call, result ->
                 if (call.method == "set") {

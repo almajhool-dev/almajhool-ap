@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -290,6 +291,10 @@ class PostCard extends StatelessWidget {
               icon: const Icon(Icons.more_horiz),
               onSelected: (v) => _menu(context, v),
               itemBuilder: (_) => [
+                if (post.content.isNotEmpty)
+                  const PopupMenuItem(
+                      value: 'copy',
+                      child: Row(children: [Icon(Icons.copy_rounded, size: 20), SizedBox(width: 10), Text('نسخ المنشور')])),
                 if (mine) const PopupMenuItem(value: 'edit', child: Text('تعديل المنشور')),
                 if (mine || isAdmin) const PopupMenuItem(value: 'delete', child: Text('حذف المنشور')),
                 if (!mine) const PopupMenuItem(value: 'report', child: Text('الإبلاغ عن المنشور')),
@@ -382,6 +387,9 @@ class PostCard extends StatelessWidget {
   Future<void> _menu(BuildContext context, String v) async {
     try {
       switch (v) {
+        case 'copy':
+          await Clipboard.setData(ClipboardData(text: post.content));
+          if (context.mounted) showSnack(context, 'تم نسخ المنشور 📋');
         case 'edit':
           final ok = await Navigator.push<bool>(
               context, MaterialPageRoute(builder: (_) => ComposePostScreen(editing: post)));

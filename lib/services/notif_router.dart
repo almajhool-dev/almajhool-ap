@@ -9,6 +9,7 @@ import '../screens/call/call_screen.dart';
 import '../screens/home/home_shell.dart';
 import '../screens/live/live_screens.dart';
 import 'call_service.dart';
+import 'live_background.dart';
 import 'local_notifications.dart';
 import 'notif_actions.dart';
 
@@ -84,6 +85,11 @@ class NotifRouter {
 
   static Future<void> handle(NotificationResponse r) async {
     final p = parsePayload(r.payload);
+    if (p['t'] == 'live_bg') {
+      // إشعار «تسمع البث الآن»: إيقاف يطلّع من البث، والضغط يرجّع للبث (التطبيق انفتح أصلًا)
+      if (r.actionId == LiveBackground.actStop) LiveBackground.onStop?.call();
+      return;
+    }
     final ctx = CallService.instance.navigatorKey.currentContext;
     if (p['t'] == 'msg' && p['conv'] is String) {
       final conv = p['conv'] as String;

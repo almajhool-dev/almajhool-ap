@@ -17,6 +17,7 @@ import '../../providers/providers.dart';
 import '../../repositories/live_repository.dart';
 import '../../repositories/story_repository.dart';
 import '../../services/core_services.dart';
+import '../../services/privacy_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../live/live_screens.dart';
@@ -347,7 +348,8 @@ class _StoryViewerState extends State<StoryViewer> with SingleTickerProviderStat
     }
     if (!st.seen && !_mine) {
       st.seen = true;
-      _repo.markSeen(st.id).catchError((_) {});
+      // نسجّل المشاهدة بعد ما نعرف إذا الوضع المخفي مفعّل (الخادم يخفيها عن صاحب الستوري)
+      PrivacyService.load().whenComplete(() => _repo.markSeen(st.id).catchError((_) {}));
     }
     if (mounted) setState(() {});
   }
@@ -520,10 +522,32 @@ class _StoryViewerState extends State<StoryViewer> with SingleTickerProviderStat
                       if (u.isOwner) ...[const SizedBox(width: 6), const OwnerChip()],
                     ]),
                     subtitle: Text(Fmt.chatListTime(st.createdAt), style: const TextStyle(color: Colors.white70)),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white),
-                      onPressed: () => Navigator.pop(context),
-                    ),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      if (!_mine)
+                        ValueListenableBuilder<bool>(
+                          valueListenable: PrivacyService.storyGhost,
+                          builder: (context, ghost, _) => IconButton(
+                            tooltip: ghost ? 'مشاهدة مخفية مفعّلة' : 'مشاهدة ظاهرة',
+                            icon: Icon(ghost ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                                color: ghost ? Colors.amberAccent : Colors.white70),
+                            onPressed: () async {
+                              try {
+                                await PrivacyService.setStoryGhost(!ghost);
+                                if (context.mounted) {
+                                  showSnack(context,
+                                      !ghost ? 'صرت تشوف الستوريات مخفي 👻 (من الستوري الجاي)' : 'رجعت مشاهدتك ظاهرة 👀');
+                                }
+                              } catch (e) {
+                                if (context.mounted) showSnack(context, friendlyError(e), error: true);
+                              }
+                            },
+                          ),
+                        ),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.white),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ]),
                   ),
                   const Spacer(),
                   if (_mine)

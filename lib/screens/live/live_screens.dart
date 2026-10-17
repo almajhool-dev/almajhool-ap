@@ -21,6 +21,7 @@ import '../../providers/providers.dart';
 import '../../repositories/live_repository.dart';
 import '../../repositories/social_repositories.dart';
 import '../../services/call_service.dart';
+import '../../services/live_background.dart';
 import '../../services/core_services.dart';
 import '../../services/filter_service.dart';
 import '../../services/live_recordings.dart';
@@ -276,6 +277,14 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
     super.initState();
     CallService.instance.inCall = true; // لا مكالمات أثناء البث
     WidgetsBinding.instance.addObserver(this);
+    if (!widget.isHost) {
+      // المشاهد يكدر يطلع من التطبيق ويكمل البث بنافذة صغيرة أو يسمعه من الإشعار
+      LiveBackground.enable(true);
+      LiveBackground.pip.addListener(_onPip);
+      LiveBackground.onStop = () {
+        if (mounted) Navigator.of(context).maybePop();
+      };
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _start());
   }
 
@@ -807,8 +816,20 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
     if (mounted) Navigator.pop(context);
   }
 
+  void _onPip() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // المشاهد طلع من التطبيق: الصوت يكمل، ويطلع إشعار «تسمع البث الآن»
+    if (!widget.isHost && !_amGuest && _endedMsg == null) {
+      if (state == AppLifecycleState.paused) {
+        LiveBackground.showNotification(host: _host?.displayName ?? '', title: _title);
+      } else if (state == AppLifecycleState.resumed) {
+        LiveBackground.hideNotification();
+      }
+    }
     // الضيف/صاحب البث طلع من التطبيق: يظهر للآخرين أنه غير متصل
     if (!_publishing) return;
     final away = state == AppLifecycleState.paused || state == AppLifecycleState.detached;
@@ -820,6 +841,12 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    if (!widget.isHost) {
+      LiveBackground.pip.removeListener(_onPip);
+      LiveBackground.enable(false);
+      LiveBackground.hideNotification();
+      LiveBackground.onStop = null;
+    }
     _awayTimer?.cancel();
     _stopRecording();
     CallService.instance.inCall = false;
@@ -1448,6 +1475,29 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
   Widget build(BuildContext context) {
     final video = _hostVideo();
     final host = _host;
+    // نافذة صغيرة عائمة: الفيديو بس بدون أزرار
+    if (!widget.isHost && LiveBackground.pip.value) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(fit: StackFit.expand, children: [
+          if (video != null)
+            lk.VideoTrackRenderer(video, fit: lk.VideoViewFit.cover)
+          else if (_cover != null)
+            Image.network(_cover!, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox())
+          else
+            Center(child: Avatar(url: host?.avatarUrl, name: host?.displayName ?? '', size: 56)),
+          Positioned(
+            top: 6,
+            left: 6,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(6)),
+              child: const Text('LIVE', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w900)),
+            ),
+          ),
+        ]),
+      );
+    }
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {

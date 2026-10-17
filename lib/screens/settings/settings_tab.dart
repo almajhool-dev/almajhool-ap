@@ -15,7 +15,9 @@ import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../admin/admin_screen.dart';
 import '../../services/couple_service.dart';
+import '../../services/privacy_service.dart';
 import '../couple/couple_screens.dart';
+import 'suggestions_screen.dart';
 import '../../repositories/post_repository.dart';
 import '../contacts/contacts_tab.dart';
 import '../profile/profile_screens.dart';
@@ -28,6 +30,12 @@ class SettingsTab extends StatefulWidget {
 
 class _SettingsTabState extends State<SettingsTab> {
   bool _localNotifs = LocalNotifications.enabled;
+
+  @override
+  void initState() {
+    super.initState();
+    PrivacyService.load();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -86,6 +94,29 @@ class _SettingsTabState extends State<SettingsTab> {
             leading: const Icon(Icons.block),
             title: const Text('المستخدمون المحظورون'),
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BlockedUsersScreen())),
+          ),
+          ValueListenableBuilder<bool>(
+            valueListenable: PrivacyService.storyGhost,
+            builder: (context, ghost, _) => SwitchListTile(
+              secondary: Icon(ghost ? Icons.visibility_off_rounded : Icons.visibility_rounded),
+              title: const Text('مشاهدة الستوري بشكل مخفي 👻'),
+              subtitle: const Text('صاحب الستوري ما يشوف اسمك بقائمة المشاهدين'),
+              value: ghost,
+              onChanged: (v) async {
+                try {
+                  await PrivacyService.setStoryGhost(v);
+                } catch (e) {
+                  if (context.mounted) showSnack(context, friendlyError(e), error: true);
+                }
+              },
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.lightbulb_rounded, color: Colors.amber),
+            title: Text((p?.isOwner ?? false) ? 'اقتراحات المستخدمين 💡' : 'اقترح ميزة للتطبيق 💡'),
+            subtitle: Text((p?.isOwner ?? false) ? 'الميزات اللي يريدها المستخدمين' : 'اكتب الميزة اللي تريدها وتوصل لمالك التطبيق'),
+            trailing: const Icon(Icons.chevron_left),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SuggestionsScreen())),
           ),
           _section('مساحة الشريك 💞'),
           ValueListenableBuilder<bool>(

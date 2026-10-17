@@ -5635,5 +5635,128 @@ begin
   return btrim(coalesce(s, ''), E' \n\t');
 end $$;
 
+-- =====================================================================
+--  الإصدار 47: مشاهدة الستوري بشكل مخفي + اقتراحات الميزات لمالك التطبيق
+-- =====================================================================
+-- إعدادات خصوصية (كل شخص يشوف إعداده بس — محد يعرف منو مفعّل الوضع المخفي)
+create table if not exists public.user_privacy (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  story_ghost boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+alter table public.user_privacy enable row level security;
+revoke all on public.user_privacy from anon, authenticated;
+
+alter table public.story_views add column if not exists hidden boolean not null default false;
+
+create or replace function public._story_view_ghost() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  new.hidden := coalesce((select story_ghost from user_privacy where user_id = new.viewer_id), false);
+  return new;
+end $$;
+drop trigger if exists aa_story_ghost on public.story_views;
+create trigger aa_story_ghost before insert on public.story_views
+  for each row execute function public._story_view_ghost();
+
+-- صاحب الستوري يشوف المشاهدات الظاهرة بس، والمشاهد يشوف مشاهداته (حتى تتلوّن الدائرة كمشاهدة)
+drop policy if exists story_views_select on public.story_views;
+create policy story_views_select on public.story_views for select to authenticated
+  using (viewer_id = auth.uid()
+         or (not hidden and exists(select 1 from stories s where s.id = story_id and s.user_id = auth.uid())));
+
+create or replace function public.set_story_ghost(p_on boolean) returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then raise exception 'not_authenticated'; end if;
+  insert into user_privacy(user_id, story_ghost) values (auth.uid(), coalesce(p_on, false))
+    on conflict (user_id) do update set story_ghost = excluded.story_ghost, updated_at = now();
+  return coalesce(p_on, false);
+end $$;
+grant execute on function public.set_story_ghost(boolean) to authenticated;
+
+create or replace function public.get_story_ghost() returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select story_ghost from user_privacy where user_id = auth.uid()), false);
+$$;
+grant execute on function public.get_story_ghost() to authenticated;
+
+-- ---------- اقتراحات الميزات ----------
+create table if not exists public.feature_suggestions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  content text not null check (char_length(content) between 3 and 1000),
+  status text not null default 'new' check (status in ('new', 'accepted', 'rejected', 'done')),
+  owner_note text not null default '' check (char_length(owner_note) <= 500),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists feature_suggestions_idx on public.feature_suggestions(created_at desc);
+alter table public.feature_suggestions enable row level security;
+revoke insert, update, delete on public.feature_suggestions from anon, authenticated;
+revoke all on public.feature_suggestions from anon;
+grant select on public.feature_suggestions to authenticated;
+drop policy if exists fs_select on public.feature_suggestions;
+create policy fs_select on public.feature_suggestions for select to authenticated
+  using (user_id = auth.uid() or _is_owner_me());
+drop trigger if exists aa_filter on public.feature_suggestions;
+create or replace function public._f_suggestions() returns trigger language plpgsql as $$
+begin new.content := _clean_text(new.content); new.owner_note := coalesce(_clean_text(new.owner_note), ''); return new; end $$;
+create trigger aa_filter before insert or update of content, owner_note on public.feature_suggestions
+  for each row execute function public._f_suggestions();
+
+create or replace function public.suggest_feature(p_text text) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare sid uuid; nm text;
+begin
+  if auth.uid() is null then raise exception 'not_authenticated'; end if;
+  if is_banned() then raise exception 'حسابك محظور'; end if;
+  if char_length(btrim(coalesce(p_text, ''))) < 3 then raise exception 'اكتب اقتراحك بشكل أوضح'; end if;
+  perform _rate('suggest', 5, 86400);
+  insert into feature_suggestions(user_id, content) values (auth.uid(), left(btrim(p_text), 1000)) returning id into sid;
+  select display_name into nm from profiles where id = auth.uid();
+  if _owner_id() is not null and _owner_id() <> auth.uid() then
+    insert into notifications(user_id, type, title, body, data)
+      values (_owner_id(), 'suggestion', 'اقتراح ميزة جديد 💡', coalesce(nm, '') || ': ' || left(btrim(p_text), 120),
+              jsonb_build_object('suggestion_id', sid));
+  end if;
+  return sid;
+end $$;
+grant execute on function public.suggest_feature(text) to authenticated;
+
+-- للمالك: قبول/رفض/تم التنفيذ مع ملاحظة، ويوصل إشعار لصاحب الاقتراح
+create or replace function public.suggestion_set_status(p_id uuid, p_status text, p_note text default '') returns void
+language plpgsql security definer set search_path = public as $$
+declare uid uuid; t text;
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if p_status not in ('new', 'accepted', 'rejected', 'done') then raise exception 'حالة غير صحيحة'; end if;
+  update feature_suggestions set status = p_status, owner_note = left(coalesce(p_note, ''), 500), updated_at = now()
+   where id = p_id returning user_id into uid;
+  if uid is null then return; end if;
+  t := case p_status when 'accepted' then 'انقبل اقتراحك 🎉 وراح ينضاف للتطبيق'
+                     when 'done' then 'اقتراحك صار بالتطبيق ✅ شكرًا إلك'
+                     when 'rejected' then 'شكرًا على اقتراحك 🙏 ما راح ينضاف حاليًا'
+                     else null end;
+  if t is not null and uid <> auth.uid() then
+    insert into notifications(user_id, type, title, body, data)
+      values (uid, 'suggestion', t, coalesce(nullif(p_note, ''), ''), jsonb_build_object('suggestion_id', p_id));
+  end if;
+end $$;
+grant execute on function public.suggestion_set_status(uuid, text, text) to authenticated;
+
+create or replace function public.suggestions_list(p_status text default null) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(x order by x->>'created_at' desc), '[]'::jsonb) from (
+    select jsonb_build_object('id', s.id, 'content', s.content, 'status', s.status, 'owner_note', s.owner_note,
+             'created_at', s.created_at, 'user', jsonb_build_object('id', p.id, 'display_name', p.display_name,
+             'username', p.username, 'avatar_url', p.avatar_url)) x
+      from feature_suggestions s join profiles p on p.id = s.user_id
+     where (s.user_id = auth.uid() or _is_owner_me())
+       and (p_status is null or s.status = p_status)
+     order by s.created_at desc limit 300) t;
+$$;
+grant execute on function public.suggestions_list(text) to authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
