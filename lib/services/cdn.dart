@@ -21,12 +21,29 @@ class Cdn {
     return 'https://wsrv.nl/?url=${Uri.encodeComponent(url)}&w=$w&we&output=webp&q=$quality';
   }
 
+  /// الشبكة الاحتياطية الثانية: Photon من WordPress (شبكة عالمية مجانية بدون حساب، 3 مداخل i0/i1/i2)
+  static String photon(String url, {int width = 1080}) {
+    if (!eligible(url)) return url;
+    final w = width.clamp(48, 1600);
+    final host = 'i${url.hashCode.abs() % 3}.wp.com';
+    return 'https://$host/${url.replaceFirst('https://', '')}?w=$w&quality=78&strip=all';
+  }
+
+  /// كل المصادر بالترتيب: شبكة ١ ← شبكة ٢ ← السيرفر الأصلي
+  static List<String> chain(String url, {int width = 1080}) {
+    if (!eligible(url)) return [url];
+    return [image(url, width: width), photon(url, width: width), url];
+  }
+
   /// تحميل مسبق لصور المنشورات الجاية حتى تطلع فورًا لما توصلها
   static void prefetch(Iterable<String?> urls, {int width = 1080}) {
     for (final u in urls) {
       if (u == null || u.isEmpty) continue;
       final f = image(u, width: width);
-      DefaultCacheManager().getSingleFile(f, key: f).catchError((_) => DefaultCacheManager().getSingleFile(u));
+      DefaultCacheManager()
+          .getSingleFile(f, key: f)
+          .catchError((_) => DefaultCacheManager().getSingleFile(photon(u, width: width)))
+          .catchError((_) => DefaultCacheManager().getSingleFile(u));
     }
   }
 }
@@ -56,25 +73,12 @@ class FastImage extends StatelessWidget {
     this.error,
   });
 
-  Widget _orig(BuildContext context) => CachedNetworkImage(
-        imageUrl: url,
-        width: w,
-        height: h,
-        fit: fit,
-        memCacheWidth: memCacheWidth,
-        fadeInDuration: fadeIn,
-        fadeOutDuration: Duration.zero,
-        placeholder: placeholder == null ? null : (c, _) => placeholder!(c),
-        errorWidget: (c, _, __) => error?.call(c) ?? const SizedBox.shrink(),
-      );
-
-  @override
-  Widget build(BuildContext context) {
-    final fast = Cdn.image(url, width: width);
-    if (fast == url) return _orig(context);
+  Widget _at(BuildContext context, List<String> urls, int i) {
+    final u = urls[i];
+    final last = i == urls.length - 1;
     return CachedNetworkImage(
-      imageUrl: fast,
-      cacheKey: fast,
+      imageUrl: u,
+      cacheKey: u,
       width: w,
       height: h,
       fit: fit,
@@ -82,7 +86,10 @@ class FastImage extends StatelessWidget {
       fadeInDuration: fadeIn,
       fadeOutDuration: Duration.zero,
       placeholder: placeholder == null ? null : (c, _) => placeholder!(c),
-      errorWidget: (c, _, __) => _orig(c),
+      errorWidget: (c, _, __) => last ? (error?.call(c) ?? const SizedBox.shrink()) : _at(c, urls, i + 1),
     );
   }
+
+  @override
+  Widget build(BuildContext context) => _at(context, Cdn.chain(url, width: width), 0);
 }
