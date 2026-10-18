@@ -168,6 +168,8 @@ class _OverviewState extends State<_Overview> {
           if (context.read<SessionProvider>().profile?.isOwner ?? false) ...[
             const AiAssistantCard(),
             const SizedBox(height: 12),
+            const AiAutoPostCard(),
+            const SizedBox(height: 12),
           ],
           const _LiveSettingsCard(),
           const SizedBox(height: 12),
@@ -1521,6 +1523,230 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
                     icon: const Icon(Icons.lock_rounded),
                     label: const Text('حفظ الإعدادات'),
                   ),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+/// المنشور التلقائي: المساعد ينشر من حساب المالك منشور عن الأمن السيبراني كل فترة، مع صورة من ChatGPT.
+class AiAutoPostCard extends StatefulWidget {
+  const AiAutoPostCard({super.key});
+  @override
+  State<AiAutoPostCard> createState() => _AiAutoPostCardState();
+}
+
+class _AiAutoPostCardState extends State<AiAutoPostCard> {
+  static const _intervals = {30: 'كل نص ساعة', 60: 'كل ساعة', 120: 'كل ساعتين', 180: 'كل 3 ساعات', 360: 'كل 6 ساعات'};
+  static const _qualities = {'low': 'عادية (أرخص)', 'medium': 'متوسطة', 'high': 'عالية (أغلى)'};
+
+  Map<String, dynamic>? _st;
+  bool _busy = false, _on = false, _image = true;
+  int _minutes = 60;
+  String _quality = 'medium';
+  final _key = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _key.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final r = Map<String, dynamic>.from(await supa.rpc('ai_autopost_status') as Map);
+      if (!mounted) return;
+      setState(() {
+        _st = r;
+        _on = r['on'] == true;
+        _image = r['image'] != false;
+        final m = (r['minutes'] as num?)?.toInt() ?? 60;
+        _minutes = _intervals.containsKey(m) ? m : 60;
+        final q = (r['quality'] ?? 'medium') as String;
+        _quality = _qualities.containsKey(q) ? q : 'medium';
+      });
+    } catch (e) {
+      if (mounted) setState(() => _st = {'error': friendlyError(e)});
+    }
+  }
+
+  Future<void> _save({String? okMsg}) async {
+    setState(() => _busy = true);
+    try {
+      final k = _key.text.trim();
+      if (k.isNotEmpty) {
+        await supa.rpc('ai_set_key', params: {'p_provider': 'openai', 'p_key': k});
+        _key.clear();
+      }
+      await supa.rpc('ai_autopost_configure', params: {
+        'p_on': _on,
+        'p_minutes': _minutes,
+        'p_image': _image,
+        'p_quality': _quality,
+      });
+      await _load();
+      if (mounted) showSnack(context, okMsg ?? 'تم الحفظ ✅');
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+      await _load();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _postNow() async {
+    setState(() => _busy = true);
+    try {
+      await supa.rpc('ai_autopost_now');
+      if (mounted) showSnack(context, 'خلال دقيقة إلى 3 دقايق ينزل منشور جديد بحسابك 📝');
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  String _ago(dynamic v) {
+    final t = DateTime.tryParse('${v ?? ''}');
+    if (t == null) return '—';
+    final d = DateTime.now().difference(t.toLocal());
+    if (d.inMinutes < 1) return 'هسه';
+    if (d.inMinutes < 60) return 'قبل ${d.inMinutes} دقيقة';
+    if (d.inHours < 24) return 'قبل ${d.inHours} ساعة';
+    return 'قبل ${d.inDays} يوم';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final st = _st;
+    final workerAge = DateTime.tryParse('${st?['worker_seen'] ?? ''}');
+    final workerOk = workerAge != null && DateTime.now().difference(workerAge.toLocal()).inMinutes < 90;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: st == null
+            ? const Center(child: CircularProgressIndicator())
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(children: [
+                    const Icon(Icons.shield_rounded, color: Colors.teal),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                        child: Text('منشورات الأمن السيبراني التلقائية',
+                            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16))),
+                    Chip(label: Text(_on ? 'شغّال ✅' : 'متوقف'), visualDensity: VisualDensity.compact),
+                  ]),
+                  if (st['error'] != null) Text(st['error'] as String, style: const TextStyle(color: Colors.red)),
+                  const Text(
+                      'المساعد يجيب أخبار حقيقية من مواقع الأمن العالمية (ويخلط وياها نصائح متنوعة)، يكتب منشور مرتب بالإيموجي والأقسام، '
+                      'يراجعه مرة ثانية ويصحح الأغلاط، وينشره من حسابك مع صورة من ChatGPT تناسب الموضوع.',
+                      style: TextStyle(fontSize: 12.5)),
+                  if (st['text_ready'] != true)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 6),
+                      child: Text('⚠️ لازم تحط مفتاح واحد على الأقل بكارت «المساعد الذكي» حتى يكتب المنشورات.',
+                          style: TextStyle(fontSize: 12.5, color: Colors.orange)),
+                    ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('النشر التلقائي'),
+                    value: _on,
+                    onChanged: _busy
+                        ? null
+                        : (v) {
+                            setState(() => _on = v);
+                            _save(okMsg: v ? 'تم التشغيل 🛡️' : 'تم الإيقاف ⏸');
+                          },
+                  ),
+                  DropdownButtonFormField<int>(
+                    value: _minutes,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'كل قدّيش ينشر', isDense: true),
+                    items: [for (final e in _intervals.entries) DropdownMenuItem(value: e.key, child: Text(e.value))],
+                    onChanged: _busy ? null : (v) => setState(() => _minutes = v ?? 60),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('صورة من ChatGPT لكل منشور'),
+                    subtitle: const Text('تحتاج مفتاح OpenAI برصيد (الصورة تكلف تقريبًا سنتات قليلة)',
+                        style: TextStyle(fontSize: 12)),
+                    value: _image,
+                    onChanged: _busy ? null : (v) => setState(() => _image = v),
+                  ),
+                  if (_image) ...[
+                    DropdownButtonFormField<String>(
+                      value: _quality,
+                      isExpanded: true,
+                      decoration: const InputDecoration(labelText: 'جودة الصورة', isDense: true),
+                      items: [
+                        for (final e in _qualities.entries) DropdownMenuItem(value: e.key, child: Text(e.value))
+                      ],
+                      onChanged: _busy ? null : (v) => setState(() => _quality = v ?? 'medium'),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(children: [
+                      const Expanded(
+                          child: Text('مفتاح OpenAI (ChatGPT)', style: TextStyle(fontWeight: FontWeight.w800))),
+                      if (st['key_openai'] == true)
+                        const Chip(label: Text('محفوظ ✅'), visualDensity: VisualDensity.compact),
+                    ]),
+                    TextButton.icon(
+                      style: TextButton.styleFrom(alignment: AlignmentDirectional.centerStart),
+                      onPressed: () => launchUrl(Uri.parse('https://platform.openai.com/api-keys'),
+                          mode: LaunchMode.externalApplication),
+                      icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                      label: const Text('اضغط هنا وجيب المفتاح'),
+                    ),
+                    TextField(
+                      controller: _key,
+                      obscureText: true,
+                      textDirection: TextDirection.ltr,
+                      decoration: InputDecoration(
+                        labelText: st['key_openai'] == true ? 'المفتاح محفوظ (اكتب جديد لتغييره)' : 'الصق المفتاح هنا (sk-...)',
+                        isDense: true,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  Text(
+                      'آخر منشور: ${_ago(st['last_post_at'])} · اليوم: ${st['today'] ?? 0} '
+                      '(بصورة ${st['with_image'] ?? 0}) · أخبار جاهزة: ${st['news_ready'] ?? 0}',
+                      style: const TextStyle(fontSize: 12.5)),
+                  Text(workerOk ? 'عامل الأخبار والصور: شغّال ✅' : 'عامل الأخبار والصور: ما وصل بعد (ينشر نصائح بدون صورة لحد ما يشتغل)',
+                      style: TextStyle(fontSize: 12, color: workerOk ? Colors.green : Colors.orange)),
+                  if ((st['waiting'] ?? 0) != 0)
+                    Text('بالانتظار: ${st['waiting']} منشور يجهز صورته', style: const TextStyle(fontSize: 12)),
+                  if (st['last_note'] != null)
+                    Text('آخر منشور: ${st['last_note']}', style: const TextStyle(fontSize: 12, color: Colors.orange)),
+                  if (st['last_error'] != null)
+                    Text('آخر خطأ (${_ago(st['last_error_at'])}): ${st['last_error']}',
+                        style: const TextStyle(fontSize: 12, color: Colors.orange)),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _busy ? null : _postNow,
+                        icon: const Icon(Icons.bolt_rounded),
+                        label: const Text('انشر واحد هسه'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: _busy ? null : () => _save(),
+                        icon: const Icon(Icons.lock_rounded),
+                        label: const Text('حفظ'),
+                      ),
+                    ),
+                  ]),
                 ],
               ),
       ),

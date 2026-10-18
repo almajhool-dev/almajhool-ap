@@ -11,6 +11,8 @@ on:
       - 'admin/**'
       - '.github/workflows/push-refresh.yml'
       - 'tool/push_refresh.py'
+      - '.github/workflows/ai-worker.yml'
+      - 'tool/ai_worker.py'
       - 'supabase/**'
       - 'tool/rotation-test/**'
       - 'tool/startup-test/**'

@@ -1,0 +1,41 @@
+name: AI autopost worker
+
+# عامل المنشورات التلقائية للمساعد الذكي:
+#  - يجيب أخبار الأمن السيبراني العالمية كل نص ساعة
+#  - يسوي صورة من ChatGPT لكل منشور جديد ويرفعها
+# كل تشغيل يبقى ~5 ساعات و20 دقيقة ثم يشغّل نفسه من جديد،
+# والجدولة كل ساعة احتياط لإعادة السلسلة إذا توقفت (تنتظر بالدور، ما تقطع الشغال).
+on:
+  schedule:
+    - cron: '43 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/ai-worker.yml', 'tool/ai_worker.py']
+
+permissions:
+  contents: write   # مطلوب لإثبات الهوية عند السيرفر
+  actions: write    # حتى يشغّل نفسه من جديد
+
+concurrency:
+  group: ai-worker
+  cancel-in-progress: false
+
+jobs:
+  work:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v4
+      - name: Worker loop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tool/ai_worker.py
+      - name: Continue chain
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/ai-worker.yml/dispatches" \
+            -d '{"ref":"main"}' && echo "next run dispatched"
