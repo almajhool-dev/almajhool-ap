@@ -7773,5 +7773,14 @@ begin
 exception when others then raise notice 'openai key move: %', sqlerrm;
 end $$;
 
+-- المالك طلب صور المنشورات التلقائية بأعلى دقة (مرة وحدة؛ بعدها يغيّرها من لوحة التحكم)
+do $$ begin
+  if not exists(select 1 from private_settings where key = 'v60_img_high') then
+    update ai_config set image_quality = 'high', updated_at = now() where id = 1;
+    insert into private_settings(key, value) values ('v60_img_high', '1');
+  end if;
+exception when others then raise notice 'v60 img: %', sqlerrm;
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
