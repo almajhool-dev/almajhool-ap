@@ -8799,5 +8799,119 @@ language sql stable security definer set search_path = public as $$
 $$;
 grant execute on function public.market_list(text, text, timestamptz, uuid, int) to authenticated;
 
+-- =====================================================================
+--  الإصدار 64: إعجاب بالتعليقات + إشعارات مثل فيسبوك:
+--  «فلان تفاعل مع منشورك 😂» · «فلان أعجبه تعليقك» · مشاركة · تعليق · ونشر جديد يوصل لأصدقائك ومتابعينك
+-- =====================================================================
+alter table public.post_comments add column if not exists like_count int not null default 0;
+
+create table if not exists public.comment_likes (
+  comment_id uuid not null references public.post_comments(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (comment_id, user_id)
+);
+create index if not exists comment_likes_user_idx on public.comment_likes(user_id);
+alter table public.comment_likes enable row level security;
+drop policy if exists comment_likes_select on public.comment_likes;
+create policy comment_likes_select on public.comment_likes for select to authenticated using (true);
+drop policy if exists comment_likes_insert on public.comment_likes;
+create policy comment_likes_insert on public.comment_likes for insert to authenticated
+  with check (user_id = auth.uid() and exists(
+    select 1 from post_comments c join posts p on p.id = c.post_id
+    where c.id = comment_id and not p.deleted and can_see_post(p.id, p.author_id, p.visibility)
+      and not is_blocked_between(auth.uid(), c.author_id)));
+drop policy if exists comment_likes_delete on public.comment_likes;
+create policy comment_likes_delete on public.comment_likes for delete to authenticated using (user_id = auth.uid());
+
+create or replace function public._comment_like_change() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare a uuid; pid uuid; nm text;
+begin
+  if tg_op = 'INSERT' then
+    update post_comments set like_count = like_count + 1 where id = new.comment_id returning author_id, post_id into a, pid;
+    if a is not null and a <> new.user_id then
+      select display_name into nm from profiles where id = new.user_id;
+      perform notify_user(a, 'comment_like', 'إعجاب بتعليقك',
+        coalesce(nm, '') || ' أعجبه تعليقك 👍', jsonb_build_object('post_id', pid));
+    end if;
+  else
+    update post_comments set like_count = greatest(0, like_count - 1) where id = old.comment_id;
+  end if;
+  return null;
+end $$;
+revoke execute on function public._comment_like_change() from public, anon, authenticated;
+drop trigger if exists zz_comment_like_change on public.comment_likes;
+create trigger zz_comment_like_change after insert or delete on public.comment_likes
+  for each row execute function public._comment_like_change();
+
+-- عدّاد إعجابات التعليق ما ينكتب من التطبيق
+create or replace function public._comment_guard_counts() returns trigger
+language plpgsql as $$
+begin
+  new.like_count := 0;
+  return new;
+end $$;
+drop trigger if exists aa_comment_guard_counts on public.post_comments;
+create trigger aa_comment_guard_counts before insert on public.post_comments
+  for each row execute function public._comment_guard_counts();
+
+-- إشعار التفاعل يذكر نوع التفاعل (مثل فيسبوك)
+create or replace function public.on_like_change() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare author uuid; liker_name text; v text;
+begin
+  if tg_op = 'INSERT' then
+    update posts set like_count = like_count + 1 where id = new.post_id returning author_id into author;
+    if author is not null and author <> new.user_id then
+      perform add_xp(author, 2);
+      select display_name into liker_name from profiles where id = new.user_id;
+      v := case new.reaction
+        when 'love' then ' أحبّ منشورك ❤️' when 'care' then ' يدعم منشورك 🥰'
+        when 'haha' then ' ضحك على منشورك 😂' when 'wow' then ' اندهش من منشورك 😮'
+        when 'sad' then ' حزن من منشورك 😢' when 'angry' then ' غضب من منشورك 😡'
+        else ' أعجبه منشورك 👍' end;
+      perform notify_user(author, 'post_like', 'تفاعل جديد', coalesce(liker_name, '') || v,
+        jsonb_build_object('post_id', new.post_id, 'reaction', new.reaction));
+    end if;
+    return new;
+  else
+    update posts set like_count = greatest(0, like_count - 1) where id = old.post_id;
+    return old;
+  end if;
+end $$;
+
+-- منشور جديد من مستخدم: إشعار لأصدقائه ومتابعينه (المنشورات التلقائية من الخادم ما تبلّغ حتى ما تزعج)
+create or replace function public._notify_new_post() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare nm text; preview text; r record; n int := 0;
+begin
+  if current_user <> 'authenticated' or new.visibility not in ('public', 'friends') then return null; end if;
+  select display_name into nm from profiles where id = new.author_id;
+  preview := nullif(left(regexp_replace(coalesce(new.content, ''), '\s+', ' ', 'g'), 80), '');
+  for r in
+    select distinct uid from (
+      select case when sender_id = new.author_id then receiver_id else sender_id end uid
+        from contact_requests where status = 'accepted' and (sender_id = new.author_id or receiver_id = new.author_id)
+      union
+      select follower_id from follows where followee_id = new.author_id and new.visibility = 'public'
+    ) z
+    where uid <> new.author_id and not is_blocked_between(uid, new.author_id)
+    limit 1000
+  loop
+    perform notify_user(r.uid, 'new_post',
+      case when new.shared_post_id is not null then 'مشاركة جديدة' else 'منشور جديد' end,
+      coalesce(nm, '') || case when new.shared_post_id is not null then ' شارك منشورًا' else ' نشر منشورًا جديدًا' end ||
+        coalesce(': ' || preview, ''),
+      jsonb_build_object('post_id', new.id));
+    n := n + 1;
+  end loop;
+  return null;
+end $$;
+revoke execute on function public._notify_new_post() from public, anon, authenticated;
+drop trigger if exists zz_notify_new_post on public.posts;
+create trigger zz_notify_new_post after insert on public.posts
+  for each row execute function public._notify_new_post();
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

@@ -520,6 +520,8 @@ class PostComment {
   final Profile? author;
   final String? parentId; // رد على تعليق
   final int replyCount;
+  final int likeCount;
+  final bool likedByMe;
 
   const PostComment({
     required this.id,
@@ -530,7 +532,22 @@ class PostComment {
     this.author,
     this.parentId,
     this.replyCount = 0,
+    this.likeCount = 0,
+    this.likedByMe = false,
   });
+
+  PostComment withLike(bool liked) => PostComment(
+        id: id,
+        postId: postId,
+        authorId: authorId,
+        content: content,
+        createdAt: createdAt,
+        author: author,
+        parentId: parentId,
+        replyCount: replyCount,
+        likeCount: (likeCount + (liked == likedByMe ? 0 : (liked ? 1 : -1))).clamp(0, 1 << 30),
+        likedByMe: liked,
+      );
 
   factory PostComment.fromMap(Map<String, dynamic> m) => PostComment(
         id: m['id'] as String,
@@ -541,5 +558,7 @@ class PostComment {
         author: m['author'] is Map<String, dynamic> ? Profile.fromMap(m['author'] as Map<String, dynamic>) : null,
         parentId: m['parent_id'] as String?,
         replyCount: ((m['reply_count'] ?? 0) as num).toInt(),
+        likeCount: ((m['like_count'] ?? 0) as num).toInt(),
+        likedByMe: m['_liked'] == true,
       );
 }

@@ -1175,6 +1175,22 @@ class _PostScreenState extends State<PostScreen> {
     }
   }
 
+  Future<void> _likeComment(PostComment c) async {
+    final liked = !c.likedByMe;
+    void put(PostComment x) {
+      final i = _comments.indexWhere((e) => e.id == x.id);
+      if (i >= 0 && mounted) setState(() => _comments[i] = x);
+    }
+
+    put(c.withLike(liked));
+    try {
+      await PostRepository().likeComment(c.id, liked);
+    } catch (e) {
+      put(c);
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    }
+  }
+
   Widget _commentTile(PostComment c, bool isAdmin, {required bool reply}) {
     final canDelete = c.authorId == myId || _post!.authorId == myId || isAdmin;
     return Padding(
@@ -1218,6 +1234,24 @@ class _PostScreenState extends State<PostScreen> {
                 Row(children: [
                   const SizedBox(width: 10),
                   Text(Fmt.chatListTime(c.createdAt), style: const TextStyle(fontSize: 11.5)),
+                  TextButton(
+                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact, minimumSize: const Size(40, 30)),
+                    onPressed: () => _likeComment(c),
+                    child: Text('أعجبني',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: c.likedByMe ? const Color(0xFF1877F2) : Theme.of(context).hintColor)),
+                  ),
+                  if (c.likeCount > 0)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).cardColor,
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 3)],
+                      ),
+                      child: Text('👍 ${c.likeCount}', style: const TextStyle(fontSize: 12)),
+                    ),
                   TextButton(
                     style: TextButton.styleFrom(visualDensity: VisualDensity.compact, minimumSize: const Size(40, 30)),
                     onPressed: () => _startReply(c),

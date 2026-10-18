@@ -200,8 +200,20 @@ class PostRepository {
         .eq('post_id', postId)
         .order('created_at')
         .limit(500);
-    return r.map(PostComment.fromMap).toList();
+    final ids = [for (final c in r) c['id'] as String];
+    var mine = <String>{};
+    if (ids.isNotEmpty) {
+      try {
+        final l = await supa.from('comment_likes').select('comment_id').eq('user_id', myId!).inFilter('comment_id', ids);
+        mine = {for (final e in l) e['comment_id'] as String};
+      } catch (_) {}
+    }
+    return [for (final c in r) PostComment.fromMap({...c, '_liked': mine.contains(c['id'])})];
   }
+
+  Future<void> likeComment(String id, bool like) => like
+      ? supa.from('comment_likes').upsert({'comment_id': id, 'user_id': myId!})
+      : supa.from('comment_likes').delete().eq('comment_id', id).eq('user_id', myId!);
 
   Future<void> comment(String postId, String content, {String? parentId}) => supa.from('post_comments').insert({
         'post_id': postId,
