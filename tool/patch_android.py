@@ -280,7 +280,15 @@ def write_proguard():
              "-keep class com.twilio.audioswitch.** { *; }\n-keep class com.almajhool.** { *; }\n")
     existing = read(p) if os.path.exists(p) else ""
     if "io.livekit" not in existing:
-        write(p, existing + rules)
+        existing += rules
+    # حماية فتح التطبيق: إضافات فلاتر (مثل shared_preferences) تنادي كودها عبر JNI بالاسم،
+    # فإذا R8 غيّر الأسماء يعلق التطبيق على الشعار. نحافظ عليها دائمًا.
+    plugin_rules = ("-keep class io.flutter.plugins.** { *; }\n-keep class dev.flutter.** { *; }\n"
+                    "-keep class io.flutter.plugin.** { *; }\n-keep class com.github.dart_lang.jni.** { *; }\n"
+                    "-keepclassmembers class * { @androidx.annotation.Keep *; }\n")
+    if "io.flutter.plugins.**" not in existing:
+        existing += plugin_rules
+    write(p, existing)
     print("proguard rules written")
 
 

@@ -38,6 +38,11 @@ for dep in ("firebase_core", "firebase_messaging"):
     if not re.search(rf"^\s+{dep}:", pubspec, re.M):
         errors.append(f"{dep} انشال من pubspec.yaml")
 
+# 5) حارس فتح التطبيق: قواعد R8 لإضافات فلاتر لازم تبقى (بدونها التطبيق يعلق على الشعار)
+_pa = open("tool/patch_android.py", encoding="utf-8").read()
+if "-keep class io.flutter.plugins.** { *; }" not in _pa:
+    errors.append("قاعدة حماية إضافات فلاتر (io.flutter.plugins) انشالت من patch_android.py — التطبيق راح يعلق على الشعار")
+
 if errors:
     print("❌ حارس الإشعارات أوقف البناء:")
     for e in errors:

@@ -18,4 +18,10 @@ for v in "$@"; do
   echo "--- logcat ($v) ---"
   adb logcat -d | grep -E "flutter|Flutter|AndroidRuntime|FATAL|almajhool|ANR|E/|W/System.err|DartVM|libc|DEBUG|Choreographer|ActivityManager" | grep -vE "chatty|GoogleApiManager|Finsky|Gmscore" | head -250
 done
-echo DONE
+
+# نتيجة الفحص: يفشل إذا التطبيق طاح أو علق بخطأ إضافة
+L=$(adb logcat -d)
+if [ -z "$PID" ] || echo "$L" | grep -qE "FATAL EXCEPTION|NoSuchMethodError|ClassNotFoundException|UnsatisfiedLinkError"; then
+  echo "STARTUP: FAIL"; exit 1
+fi
+echo "STARTUP: OK"

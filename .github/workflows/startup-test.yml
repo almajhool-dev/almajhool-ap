@@ -7,6 +7,8 @@ on:
     paths:
       - 'tool/startup-test/**'
       - '.github/workflows/startup-test.yml'
+      - 'tool/patch_android.py'
+      - 'pubspec.yaml'
 
 permissions:
   contents: write
@@ -18,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: [v1.0.79, main]
+        ref: [main]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -66,7 +68,7 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
-          script: bash _t/tool/startup-test/run.sh app > startup.log 2>&1; adb exec-out screencap -p > shot.png; cat startup.log
+          script: bash _t/tool/startup-test/run.sh app > startup.log 2>&1; R=$?; adb exec-out screencap -p > shot.png; cat startup.log; exit $R
       - name: Save result
         if: always()
         run: |
