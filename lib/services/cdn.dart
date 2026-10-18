@@ -99,6 +99,14 @@ class Cdn {
     Future.delayed(const Duration(seconds: 3), rank);
   }
 
+  /// مكان صورة غلاف الفيديو: نفس اسم الفيديو بس .poster.jpg
+  static String? posterOf(String? videoUrl) {
+    if (videoUrl == null || !videoUrl.contains('/storage/v1/object/public/posts/')) return null;
+    final dot = videoUrl.lastIndexOf('.');
+    if (dot < videoUrl.lastIndexOf('/')) return null;
+    return '${videoUrl.substring(0, dot)}.poster.jpg';
+  }
+
   /// تحميل مسبق لصور المنشورات الجاية حتى تطلع فورًا لما توصلها
   static void prefetch(Iterable<String?> urls, {int width = 1080}) {
     for (final u in urls) {

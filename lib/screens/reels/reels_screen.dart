@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
@@ -7,6 +8,7 @@ import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../../widgets/reactions.dart';
 import '../../services/video_cache.dart';
+import '../../services/cdn.dart';
 import '../feed/feed_screens.dart';
 import '../profile/profile_screens.dart';
 
@@ -213,7 +215,18 @@ class _ReelPageState extends State<_ReelPage> {
           alignment: Alignment.center,
           child: _ready && v != null
               ? AspectRatio(aspectRatio: v.value.aspectRatio, child: VideoPlayer(v))
-              : const CircularProgressIndicator(color: Colors.white),
+              : Stack(alignment: Alignment.center, children: [
+                  if (Cdn.posterOf(widget.post.videoUrl) != null)
+                    Positioned.fill(
+                      child: CachedNetworkImage(
+                        imageUrl: Cdn.image(Cdn.posterOf(widget.post.videoUrl)!, width: 720),
+                        fit: BoxFit.contain,
+                        fadeInDuration: Duration.zero,
+                        errorWidget: (_, __, ___) => const SizedBox.shrink(),
+                      ),
+                    ),
+                  const CircularProgressIndicator(color: Colors.white),
+                ]),
         ),
       ),
       if (_paused)

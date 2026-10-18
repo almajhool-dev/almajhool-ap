@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 
+import '../../services/cdn.dart';
 import '../../services/video_cache.dart';
 import '../../services/core_services.dart';
 import '../../services/xfile_util.dart';
@@ -278,10 +279,20 @@ class _PostVideoState extends State<PostVideo> {
 
   Widget _body(BuildContext context) {
     final c = _c;
+    final poster = widget.url == null ? null : Cdn.posterOf(widget.url);
+    Widget posterLayer() => poster == null
+        ? const ColoredBox(color: Colors.black)
+        : CachedNetworkImage(
+            imageUrl: Cdn.image(poster, width: 720),
+            fit: BoxFit.cover,
+            fadeInDuration: Duration.zero,
+            placeholder: (_, __) => const ColoredBox(color: Colors.black),
+            errorWidget: (_, __, ___) => const ColoredBox(color: Colors.black),
+          );
     if (c == null) {
       return ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 520),
-        child: const AspectRatio(aspectRatio: 9 / 16, child: ColoredBox(color: Colors.black)),
+        child: AspectRatio(aspectRatio: 9 / 16, child: posterLayer()),
       );
     }
     final ready = c.value.isInitialized;
@@ -293,7 +304,7 @@ class _PostVideoState extends State<PostVideo> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Container(color: Colors.black),
+            if (ready) Container(color: Colors.black) else posterLayer(),
             if (ready) FittedBox(fit: BoxFit.contain, child: SizedBox(width: c.value.size.width, height: c.value.size.height, child: VideoPlayer(c))),
             if (!ready && !_failed) const Center(child: CircularProgressIndicator(color: Colors.white)),
             if (_failed) const Center(child: Icon(Icons.videocam_off_rounded, color: Colors.white70, size: 40)),

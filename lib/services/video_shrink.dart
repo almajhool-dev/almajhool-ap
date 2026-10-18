@@ -9,6 +9,17 @@ class VideoShrink {
   VideoShrink._();
   static const maxBytes = 48 * 1024 * 1024;
 
+  /// صورة غلاف للفيديو (مثل فيسبوك): تطلع فورًا قبل لا يتحمّل الفيديو
+  static Future<Uint8List?> poster(XFile x) async {
+    if (kIsWeb) return null;
+    try {
+      return await VideoCompress.getByteThumbnail(x.path, quality: 70, position: -1)
+          .timeout(const Duration(seconds: 15));
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// ضغط بدون نوافذ (للنشر بالخلفية). onProgress من 0 إلى 1.
   static Future<XFile> compress(XFile x, {void Function(double)? onProgress}) async {
     if (kIsWeb || await x.length() <= maxBytes) return x;

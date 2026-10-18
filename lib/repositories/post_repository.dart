@@ -109,6 +109,7 @@ class PostRepository {
     XFile? newVideo,
     String? keepVideoUrl,
     bool capcut = false,
+    Uint8List? videoPoster,
   }) async {
     var url = keepImageUrl;
     var video = keepVideoUrl;
@@ -120,6 +121,15 @@ class PostRepository {
       final path = '${myId!}/${const Uuid().v4()}.$ext';
       await uploadXFile('posts', path, newVideo, ext == 'mov' ? 'video/quicktime' : 'video/$ext');
       video = supa.storage.from('posts').getPublicUrl(path);
+      if (videoPoster != null) {
+        try {
+          await supa.storage.from('posts').uploadBinary(
+                path.replaceFirst(RegExp(r'\.[a-z0-9]+$'), '.poster.jpg'),
+                videoPoster,
+                fileOptions: const FileOptions(contentType: 'image/jpeg', upsert: true),
+              );
+        } catch (_) {}
+      }
     }
     if (newImage != null) {
       final path = '${myId!}/${const Uuid().v4()}.jpg';

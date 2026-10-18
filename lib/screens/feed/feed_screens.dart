@@ -808,12 +808,14 @@ class _ComposePostScreenState extends State<ComposePostScreen> {
       final vis = _visibility, aud = [..._audience];
       PostUploader.start('فيديو', (report) async {
         report(-1, 'نجهّز الفيديو...');
+        final poster = await VideoShrink.poster(video);
         final ready = await VideoShrink.compress(video, onProgress: (v) => report(v * 0.7, 'نضغط الفيديو...'));
         report(-1, 'نرفع الفيديو...');
         await PostRepository().save(
           id: id,
           content: content,
           newVideo: ready,
+          videoPoster: poster,
           capcut: capcut,
           textColor: tc,
           visibility: vis,
