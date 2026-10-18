@@ -6666,7 +6666,8 @@ grant execute on function public.sms_status() to authenticated;
 --  حسابات الهاتف إيميلها الداخلي p<الرقم>@phone.almajhool.app، وregister_user يأكد أي إيميل،
 --  فكان أي واحد يكدر يسجل بهذا الإيميل قبل صاحب الرقم ويمنعه من الدخول برقمه.
 --  هسه هذا النطاق محجوز لحسابات الهاتف (اللي تنسوى من phone_verify) بس.
--- ==============================================================create or replace function public._guard_phone_domain() returns trigger
+-- =====================================================================
+create or replace function public._guard_phone_domain() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   if lower(coalesce(new.email, '')) like '%@phone.almajhool.app'
@@ -6682,7 +6683,8 @@ do $$ begin
     for each row execute function public._guard_phone_domain();
 exception when others then raise notice 'phone domain guard: %', sqlerrm;
 end $$;
-=======
+
+-- =====================================================================
 --  الإصدار 55: الدخول برقم الهاتف «مجانًا» عن طريق هاتف أندرويد خاص بالمالك
 --  (تطبيق SMS Gateway المجاني): الخادم يولّد الرمز بنفسه، ويطلب من هاتف المالك يدزه
 --  من شريحته. إذا ما مربوط، يرجع لـ Twilio إذا كان مربوط.
