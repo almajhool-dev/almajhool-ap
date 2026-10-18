@@ -31,5 +31,13 @@ jobs:
           req = urllib.request.Request("https://smjkxsqvdpywumghvnfv.supabase.co/rest/v1/rpc/ai_autopost_gh",
               data=json.dumps({"p_gh": os.environ["GH_TOKEN"], "p_force": os.environ.get("FORCE") == "true"}).encode(),
               headers={"apikey": "sb_publishable_xqWRKqnOIKKqKgPJrdP5TA_GA7PCSiV", "Content-Type": "application/json"}, method="POST")
-          print(json.dumps(json.loads(urllib.request.urlopen(req, timeout=60).read()), ensure_ascii=False, indent=1))
+          out = json.dumps(json.loads(urllib.request.urlopen(req, timeout=60).read()), ensure_ascii=False, indent=1)
+          print(out)
+          open("/tmp/ai_status.json", "w").write(out)
           PY
+      - name: Save status
+        if: always()
+        run: |
+          mkdir -p /tmp/o && cp /tmp/ai_status.json /tmp/o/ 2>/dev/null || echo '{}' > /tmp/o/ai_status.json
+          cd /tmp/o && git init -q -b r && git config user.name ci && git config user.email ci@users.noreply.github.com
+          git add -A && git commit -qm status && git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" r:ci-ai || true
