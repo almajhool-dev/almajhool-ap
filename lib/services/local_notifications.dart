@@ -57,7 +57,7 @@ class LocalNotifications {
       android: AndroidNotificationDetails(
         'messages',
         'الرسائل والإشعارات',
-        channelDescription: 'إشعارات المبرمج المجهول',
+        channelDescription: 'إشعارات وهج',
         importance: Importance.high,
         priority: Priority.high,
       ),

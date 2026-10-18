@@ -15,6 +15,7 @@ import '../services/push_service.dart';
 import '../services/call_service.dart';
 import '../services/core_services.dart';
 import '../widgets/common.dart';
+import '../widgets/fx.dart';
 import 'auth/auth_screens.dart';
 import 'home/home_shell.dart';
 
@@ -38,13 +39,14 @@ class _SplashViewState extends State<SplashView> with SingleTickerProviderStateM
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.darkBg,
-      body: Center(
+      body: AuroraBackground(
+        child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ScaleTransition(
               scale: Tween(begin: 0.94, end: 1.04).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut)),
-              child: const BrandLogo(size: 120),
+              child: const FloatingLogo3D(child: BrandLogo(size: 120)),
             ),
             const SizedBox(height: 28),
             const SizedBox(
@@ -53,6 +55,7 @@ class _SplashViewState extends State<SplashView> with SingleTickerProviderStateM
             ),
           ],
         ),
+      ),
       ),
     );
   }

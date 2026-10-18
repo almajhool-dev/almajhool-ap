@@ -4,11 +4,13 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/config.dart';
+import '../../core/theme.dart';
 import '../../providers/providers.dart';
 import '../../services/core_services.dart';
 import '../../repositories/user_repositories.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
+import '../../widgets/fx.dart';
 
 class LoginScreen extends StatefulWidget {
   final VoidCallback? onBack;
@@ -92,7 +94,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return AuroraScaffold(
       appBar: widget.onBack == null
           ? null
           : AppBar(leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: widget.onBack)),
@@ -124,7 +126,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             child: child,
                           ),
                         ),
-                        child: const BrandLogo(size: 92),
+                        child: const FloatingLogo3D(child: BrandLogo(size: 92)),
                       ),
                     ),
                     const SizedBox(height: 32),
@@ -165,11 +167,12 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    FilledButton(
-                      onPressed: _busy ? null : _submit,
-                      child: _busy
-                          ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Text('دخول'),
+                    GlowButton(
+                      filled: true,
+                      busy: _busy,
+                      onPressed: _submit,
+                      colors: const [AppColors.cyan, AppColors.violet, AppColors.pink, AppColors.cyan],
+                      label: const Text('دخول'),
                     ),
                     if (!widget.adminMode) ...[
                       Builder(builder: (context) {
@@ -187,17 +190,23 @@ class _LoginScreenState extends State<LoginScreen> {
                           ]),
                           const SizedBox(height: 12),
                           if (st.googleClientId != null)
-                            OutlinedButton.icon(
-                              style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(50)),
+                            GlowButton(
                               onPressed: _busy ? null : () => _google(st.googleClientId!),
+                              colors: const [
+                                Color(0xFF4285F4),
+                                Color(0xFFEA4335),
+                                Color(0xFFFBBC05),
+                                Color(0xFF34A853),
+                                Color(0xFF4285F4),
+                              ],
                               icon: const Text('G',
-                                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Color(0xFF4285F4))),
+                                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF4285F4))),
                               label: const Text('متابعة بحساب Google'),
                             ),
                           if (st.phoneLogin) ...[
                             const SizedBox(height: 10),
-                            OutlinedButton.icon(
-                              style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(50)),
+                            GlowButton(
+                              colors: const [AppColors.green, AppColors.cyan, Color(0xFF29B6F6), AppColors.green],
                               onPressed: _busy
                                   ? null
                                   : () => Navigator.push(
@@ -205,7 +214,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                       MaterialPageRoute(
                                           builder: (_) =>
                                               st.tgBot != null ? const TelegramPhoneScreen() : const PhoneLoginScreen())),
-                              icon: const Icon(Icons.phone_iphone_rounded),
+                              icon: const Icon(Icons.phone_iphone_rounded, color: AppColors.green),
                               label: const Text('الدخول برقم الهاتف'),
                             ),
                           ],
@@ -285,7 +294,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return AuroraScaffold(
       appBar: AppBar(title: const Text('إنشاء حساب')),
       body: SafeArea(
         child: Form(
@@ -522,7 +531,7 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return AuroraScaffold(
       appBar: AppBar(title: const Text('تأكيد الحساب')),
       body: ListView(
         padding: const EdgeInsets.all(24),
@@ -667,7 +676,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
   @override
   Widget build(BuildContext context) {
     final sent = _sentTo != null;
-    return Scaffold(
+    return AuroraScaffold(
       appBar: AppBar(title: const Text('الدخول برقم الهاتف')),
       body: ListView(padding: const EdgeInsets.all(24), children: [
         const Icon(Icons.sms_rounded, size: 64),
@@ -835,12 +844,12 @@ class _TelegramPhoneScreenState extends State<TelegramPhoneScreen> with WidgetsB
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Scaffold(
+    return AuroraScaffold(
       appBar: AppBar(title: const Text('الدخول برقم الهاتف')),
       body: SafeArea(
         child: ListView(padding: const EdgeInsets.all(24), children: [
           const SizedBox(height: 12),
-          Icon(Icons.verified_user_rounded, size: 72, color: cs.primary),
+          FloatingLogo3D(child: Icon(Icons.verified_user_rounded, size: 72, color: cs.primary)),
           const SizedBox(height: 16),
           const Text('نأكد رقمك مجانًا عن طريق تيليكرام',
               textAlign: TextAlign.center, style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
@@ -853,12 +862,12 @@ class _TelegramPhoneScreenState extends State<TelegramPhoneScreen> with WidgetsB
             style: TextStyle(fontSize: 15, height: 1.9),
           ),
           const SizedBox(height: 24),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-            onPressed: _busy ? null : _start,
-            icon: _busy
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.send_rounded),
+          GlowButton(
+            filled: true,
+            busy: _busy,
+            onPressed: _start,
+            colors: const [Color(0xFF29B6F6), Color(0xFF0088CC), AppColors.cyan, Color(0xFF29B6F6)],
+            icon: const Icon(Icons.send_rounded, color: Colors.white),
             label: Text(_waiting ? 'افتح تيليكرام مرة ثانية' : 'تحقق عبر تيليكرام'),
           ),
           if (_waiting) ...[
