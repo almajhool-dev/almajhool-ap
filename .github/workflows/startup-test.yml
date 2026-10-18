@@ -1,0 +1,50 @@
+name: Startup test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'tool/startup-test/**'
+      - '.github/workflows/startup-test.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Download APKs
+        run: |
+          REL=https://github.com/${{ github.repository }}/releases/download
+          for v in 79 80 83; do curl -sL "$REL/v1.0.$v/almajhool-app.apk" -o "v$v.apk"; done
+          ls -la *.apk
+      - name: Launch on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          script: bash tool/startup-test/run.sh v79 v80 v83 > startup.log 2>&1; cat startup.log
+      - name: Save result
+        if: always()
+        run: |
+          mkdir -p /tmp/logs
+          cp startup.log /tmp/logs/startup.log 2>/dev/null || echo "no log" > /tmp/logs/startup.log
+          cd /tmp/logs
+          git init -q -b r
+          git config user.name ci
+          git config user.email ci@users.noreply.github.com
+          git add -A
+          git commit -qm "startup test"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "r:ci-startup" || true
