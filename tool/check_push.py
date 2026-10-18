@@ -43,6 +43,9 @@ _pa = open("tool/patch_android.py", encoding="utf-8").read()
 if "-keep class io.flutter.plugins.** { *; }" not in _pa:
     errors.append("قاعدة حماية إضافات فلاتر (io.flutter.plugins) انشالت من patch_android.py — التطبيق راح يعلق على الشعار")
 
+if not re.search(r'shared_preferences_android:\s*">=2\.4\.0 <2\.5\.0"', pubspec):
+    errors.append("تثبيت shared_preferences_android (<2.5.0) انشال — هاي النسخة تعلّق التطبيق على الشعار")
+
 if errors:
     print("❌ حارس الإشعارات أوقف البناء:")
     for e in errors:

@@ -42,6 +42,10 @@ dependencies:
   webview_flutter: ^4.10.0
   webview_flutter_android: any
 
+# تثبيت نسخ إضافات حساسة: shared_preferences_android 2.5.0 خلّى التطبيق يعلق على الشعار
+dependency_overrides:
+  shared_preferences_android: ">=2.4.0 <2.5.0"
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -68,7 +68,7 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
-          script: bash _t/tool/startup-test/run.sh app > startup.log 2>&1; R=$?; adb exec-out screencap -p > shot.png; cat startup.log; exit $R
+          script: bash _t/tool/startup-test/run.sh app > startup.log 2>&1; R=$?; adb exec-out screencap -p > shot.png; cat startup.log; if grep -qE 'NoSuchMethodError|FATAL EXCEPTION|STARTUP: FAIL' startup.log; then exit 1; fi; exit $R
       - name: Save result
         if: always()
         run: |
