@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
+import 'package:visibility_detector/visibility_detector.dart';
 
 import '../../services/core_services.dart';
 import '../../services/xfile_util.dart';
@@ -196,21 +197,56 @@ class PostVideo extends StatefulWidget {
 class _PostVideoState extends State<PostVideo> {
   VideoPlayerController? _c;
   bool _failed = false;
+  bool _userPaused = false;
+  bool _visible = false;
+  final _key = UniqueKey();
+
+  /// فيديو واحد يشتغل بالمرة (مثل فيسبوك)
+  static _PostVideoState? _playing;
+
+  bool get _auto => widget.file == null; // فيديو المنشورات يشتغل وحده، معاينة النشر لا
 
   @override
   void initState() {
     super.initState();
+    if (!_auto) _init();
+  }
+
+  void _init() {
+    if (_c != null) return;
     final c = widget.file != null
         ? videoFromXFile(widget.file!)
         : VideoPlayerController.networkUrl(Uri.parse(widget.url!));
     _c = c;
     c.setLooping(true);
+    if (_auto) c.setVolume(0); // يبدي بدون صوت، وتضغط السماعة تشغّل الصوت
     c.initialize().then((_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      setState(() {});
+      if (_visible && !_userPaused) _play();
     }).catchError((_) {
       if (mounted) setState(() => _failed = true);
     });
     c.addListener(_tick);
+  }
+
+  void _play() {
+    final c = _c;
+    if (c == null || !c.value.isInitialized) return;
+    if (_playing != null && _playing != this) _playing!._c?.pause();
+    _playing = this;
+    c.play();
+  }
+
+  void _onVisible(double f) {
+    if (!mounted || !_auto) return;
+    _visible = f >= 0.6;
+    if (f > 0.05) _init();
+    if (_visible && !_userPaused) {
+      _play();
+    } else if (f < 0.6) {
+      _c?.pause();
+    }
   }
 
   void _tick() {
@@ -219,6 +255,7 @@ class _PostVideoState extends State<PostVideo> {
 
   @override
   void dispose() {
+    if (_playing == this) _playing = null;
     _c?.removeListener(_tick);
     _c?.dispose();
     super.dispose();
@@ -226,7 +263,21 @@ class _PostVideoState extends State<PostVideo> {
 
   @override
   Widget build(BuildContext context) {
-    final c = _c!;
+    return VisibilityDetector(
+      key: _key,
+      onVisibilityChanged: (i) => _onVisible(i.visibleFraction),
+      child: _body(context),
+    );
+  }
+
+  Widget _body(BuildContext context) {
+    final c = _c;
+    if (c == null) {
+      return ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 520),
+        child: const AspectRatio(aspectRatio: 9 / 16, child: ColoredBox(color: Colors.black)),
+      );
+    }
     final ready = c.value.isInitialized;
     final ratio = ready && c.value.aspectRatio > 0 ? c.value.aspectRatio : 9 / 16;
     return ConstrainedBox(
@@ -242,7 +293,17 @@ class _PostVideoState extends State<PostVideo> {
             if (_failed) const Center(child: Icon(Icons.videocam_off_rounded, color: Colors.white70, size: 40)),
             Positioned.fill(
               child: GestureDetector(
-                onTap: !ready ? null : () => c.value.isPlaying ? c.pause() : c.play(),
+                onTap: !ready
+                    ? null
+                    : () {
+                        if (c.value.isPlaying) {
+                          _userPaused = true;
+                          c.pause();
+                        } else {
+                          _userPaused = false;
+                          _play();
+                        }
+                      },
                 child: AnimatedOpacity(
                   opacity: ready && !c.value.isPlaying ? 1 : 0,
                   duration: const Duration(milliseconds: 150),

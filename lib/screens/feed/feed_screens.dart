@@ -26,6 +26,7 @@ import 'community.dart';
 import 'image_editor.dart';
 import 'stories.dart';
 import '../../services/video_shrink.dart';
+import '../../services/post_uploader.dart';
 import '../reels/reels_screen.dart';
 import '../market/market_screens.dart';
 
@@ -147,6 +148,12 @@ class _FeedTabState extends State<FeedTab> {
     _scroll.addListener(() {
       if (_scroll.position.pixels > _scroll.position.maxScrollExtent - 600) _ctrl.loadMore();
     });
+    PostUploader.onPublished = () {
+      if (mounted) _ctrl.refresh();
+    };
+    PostUploader.notify = (m, {bool error = false}) {
+      if (mounted) showSnack(context, m, error: error);
+    };
     FeedTab._toTop = () {
       if (!_scroll.hasClients) return;
       if (_scroll.offset < 40) {
@@ -227,6 +234,35 @@ class _FeedTabState extends State<FeedTab> {
                         ),
                     ],
                   ),
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: ValueListenableBuilder<List<UploadJob>>(
+                  valueListenable: PostUploader.jobs,
+                  builder: (_, jobs, __) => Column(children: [
+                    for (final j in jobs)
+                      Card(
+                        margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Row(children: [
+                            Icon(j.error != null ? Icons.error_outline : Icons.cloud_upload_rounded,
+                                color: j.error != null ? Colors.redAccent : AppColors.cyan),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                Text(j.error ?? 'دا ننشر منشورك (${j.label}) — ${j.stage}',
+                                    style: const TextStyle(fontWeight: FontWeight.w700)),
+                                if (j.error == null) ...[
+                                  const SizedBox(height: 8),
+                                  LinearProgressIndicator(value: j.progress < 0 ? null : j.progress, minHeight: 4),
+                                ],
+                              ]),
+                            ),
+                          ]),
+                        ),
+                      ),
+                  ]),
                 ),
               ),
               SliverToBoxAdapter(child: StoryBar(key: _stories)),
@@ -686,13 +722,7 @@ class _ComposePostScreenState extends State<ComposePostScreen> {
   Future<void> _pickVideo() async {
     final x = await ImagePicker().pickVideo(source: ImageSource.gallery);
     if (x == null) return;
-    XFile f;
-    try {
-      f = await VideoShrink.fit(context, x);
-    } catch (e) {
-      if (mounted) showSnack(context, friendlyError(e), error: true);
-      return;
-    }
+    final f = x; // الضغط (إذا لزم) يصير بالخلفية بعد ما تضغط «نشر»
     if (mounted) {
       setState(() {
         _newVideo = f;
@@ -765,10 +795,31 @@ class _ComposePostScreenState extends State<ComposePostScreen> {
       showSnack(context, 'اختر الأشخاص الذين يرون المنشور', error: true);
       return;
     }
+    // منشور فيه فيديو جديد: ينشر بالخلفية (مثل فيسبوك) وترجع فورًا
+    if (_newVideo != null) {
+      final video = _newVideo!;
+      final id = widget.editing?.id, content = _text.text, capcut = _capcut, tc = _textColor;
+      final vis = _visibility, aud = [..._audience];
+      PostUploader.start('فيديو', (report) async {
+        report(-1, 'نجهّز الفيديو...');
+        final ready = await VideoShrink.compress(video, onProgress: (v) => report(v * 0.7, 'نضغط الفيديو...'));
+        report(-1, 'نرفع الفيديو...');
+        await PostRepository().save(
+          id: id,
+          content: content,
+          newVideo: ready,
+          capcut: capcut,
+          textColor: tc,
+          visibility: vis,
+          audience: aud,
+        );
+      });
+      context.read<SessionProvider>().refresh();
+      Navigator.pop(context, true);
+      return;
+    }
     setState(() => _busy = true);
     try {
-      // فيديو مشارك من CapCut أو غيره وحجمه كبير: ينضغط تلقائيًا
-      if (_newVideo != null) _newVideo = await VideoShrink.fit(context, _newVideo!);
       await PostRepository().save(
         id: widget.editing?.id,
         content: _text.text,
