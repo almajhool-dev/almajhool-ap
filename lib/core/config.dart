@@ -81,6 +81,7 @@ class AppConfig {
     // 3) القيم المدمجة
     url = _defaultUrl;
     anonKey = _defaultKey;
+    useDefaults();
   }
 
   static Future<void> _refreshRemote(SharedPreferences prefs) async {
@@ -105,10 +106,14 @@ class AppConfig {
   /// إذا تأخر تحميل الإعدادات: نشتغل على الخادم المدمج مباشرة
   static void useDefaults() {
     if (url.isEmpty || anonKey.isEmpty) {
-      url = _defaultUrl;
-      anonKey = _defaultKey;
+      url = _defaultUrl.isNotEmpty ? _defaultUrl : _fallbackUrl;
+      anonKey = _defaultKey.isNotEmpty ? _defaultKey : _fallbackKey;
     }
   }
+
+  // الخادم الأساسي مدمج دائمًا — المستخدم ما يشوف شاشة «ربط الخادم» أبدًا
+  static const _fallbackUrl = 'https://smjkxsqvdpywumghvnfv.supabase.co';
+  static const _fallbackKey = 'sb_publishable_xqWRKqnOIKKqKgPJrdP5TA_GA7PCSiV';
 
   static Future<void> clear() async {
     final prefs = await SharedPreferences.getInstance();

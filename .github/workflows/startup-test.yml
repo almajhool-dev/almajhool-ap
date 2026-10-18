@@ -60,8 +60,7 @@ jobs:
           flutter pub get
           dart run flutter_launcher_icons || true
           dart run flutter_native_splash:create || true
-          flutter build apk --release --target-platform android-x64 --build-number=999 --build-name=1.0.999 --dart-define=APP_BUILD=999 \
-            --dart-define=SUPABASE_URL=$SUPABASE_URL --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY
+          flutter build apk --release --target-platform android-x64 --build-number=999 --build-name=1.0.999 --dart-define=APP_BUILD=999
           cp build/app/outputs/flutter-apk/app-release.apk app.apk
           ls -la app.apk
       - name: Enable KVM

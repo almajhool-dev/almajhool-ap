@@ -8,7 +8,6 @@ import 'core/config.dart';
 import 'core/theme.dart';
 import 'providers/providers.dart';
 import 'screens/gate.dart';
-import 'screens/setup_screen.dart';
 import 'services/background_service.dart';
 import 'services/call_service.dart';
 import 'services/core_services.dart';
@@ -55,8 +54,11 @@ class _RootAppState extends State<RootApp> {
   @override
   void initState() {
     super.initState();
-    if (AppConfig.isConfigured) _init();
+    AppConfig.useDefaults();
+    _init();
   }
+
+  int _retries = 0;
 
   Future<void> _init() async {
     try {
@@ -74,7 +76,13 @@ class _RootAppState extends State<RootApp> {
         _error = null;
       });
     } catch (e) {
-      setState(() => _error = 'تعذّر الاتصال بالخادم: $e');
+      // ما نطلع شاشة إعدادات للمستخدم: نبقى على شاشة البداية ونعيد المحاولة وحدنا
+      _error = '$e';
+      final wait = Duration(seconds: (2 << _retries.clamp(0, 4)).clamp(2, 30));
+      _retries++;
+      Future.delayed(wait, () {
+        if (mounted && !_ready) _init();
+      });
     }
   }
 
@@ -99,17 +107,7 @@ class _RootAppState extends State<RootApp> {
           ],
           // المزوّدات فوق الـ Navigator حتى تصل لكل الشاشات
           builder: (context, child) => _ready ? _Providers(child: child!) : child!,
-          home: _ready
-              ? const Gate()
-              : (AppConfig.isConfigured && _error == null)
-                  ? const SplashView()
-                  : SetupScreen(
-                  error: _error,
-                  onSaved: () async {
-                    setState(() => _error = null);
-                    await _init();
-                  },
-                ),
+          home: _ready ? const Gate() : const SplashView(),
         ),
       ),
     );
