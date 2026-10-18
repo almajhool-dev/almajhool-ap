@@ -189,7 +189,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             const Expanded(child: Divider()),
                           ]),
                           const SizedBox(height: 12),
-                          if (st.googleClientId != null)
+                          if (st.googleClientId != null && defaultTargetPlatform != TargetPlatform.iOS)
                             GlowButton(
                               onPressed: _busy ? null : () => _google(st.googleClientId!),
                               colors: const [
