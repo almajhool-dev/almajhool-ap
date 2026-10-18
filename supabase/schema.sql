@@ -6485,5 +6485,17 @@ end $$;
 revoke execute on function public.google_login(text) from public;
 grant execute on function public.google_login(text) to anon, authenticated;
 
+-- =====================================================================
+--  الإصدار 52: الدخول برقم الهاتف يتطفّى مرة وحدة (خدمة الرسائل SMS ما مربوطة بالخادم بعد،
+--  فكان يطلع «Unsupported phone provider»). المالك يكدر يرجّعه بعدين من التطبيق.
+-- =====================================================================
+do $$ begin
+  if not exists(select 1 from private_settings where key = 'v52_phone_off') then
+    update app_settings set phone_login = false, updated_at = now() where id = 1;
+    insert into private_settings(key, value) values ('v52_phone_off', '1');
+  end if;
+exception when others then raise notice 'v52: %', sqlerrm;
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

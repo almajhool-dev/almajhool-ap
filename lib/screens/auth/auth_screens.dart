@@ -54,7 +54,19 @@ class _LoginScreenState extends State<LoginScreen> {
         throw Exception('هذا الحساب محظور نهائيًا من قبل الإدارة');
       }
     } catch (e) {
-      if (mounted) showSnack(context, friendlyError(e), error: true);
+      final t = e.toString();
+      String msg;
+      if (t.contains('sign_in_failed') && RegExp(r'\b10\b').hasMatch(t)) {
+        msg = 'إعداد Google ناقص (10): المفتاح الملصوق لازم يكون نوعه Web، ومفتاح Android لازم يكون بنفس المشروع';
+      } else if (t.contains('sign_in_failed') && t.contains('12500')) {
+        msg = 'Google رفض الدخول (12500): كمّل معلومات صفحة Branding بكوكل وحاول مرة ثانية';
+      } else if (t.contains('network_error') || t.contains(': 7:')) {
+        msg = 'ماكو اتصال بـ Google، تأكد من الإنترنت';
+      } else {
+        msg = friendlyError(e);
+      }
+      supa.rpc('client_log', params: {'p_info': 'google_login: ${t.length > 300 ? t.substring(0, 300) : t}'}).catchError((_) => null);
+      if (mounted) showSnack(context, msg, error: true);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
