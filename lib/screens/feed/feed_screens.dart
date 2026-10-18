@@ -27,6 +27,7 @@ import 'image_editor.dart';
 import 'stories.dart';
 import '../../services/video_shrink.dart';
 import '../../services/post_uploader.dart';
+import '../../services/cdn.dart';
 import '../reels/reels_screen.dart';
 import '../market/market_screens.dart';
 
@@ -57,12 +58,19 @@ class PostsController extends ChangeNotifier {
     try {
       posts = await repo.feed(authorId: authorId);
       hasMore = posts.length >= PostRepository.pageSize;
+      _prefetch(posts);
       error = null;
     } catch (e) {
       error = friendlyError(e);
     }
     loading = false;
     notifyListeners();
+  }
+
+  /// نحمّل صور المنشورات الجاية من قبل حتى تطلع فورًا
+  void _prefetch(List<Post> list) {
+    Cdn.prefetch(list.take(12).map((p) => p.imageUrl ?? p.shared?.imageUrl));
+    Cdn.prefetch(list.take(12).map((p) => p.author?.avatarUrl), width: 144);
   }
 
   Future<void> loadMore() async {
@@ -72,6 +80,7 @@ class PostsController extends ChangeNotifier {
     try {
       final more = await repo.feed(authorId: authorId, before: posts.last.createdAt);
       posts.addAll(more.where((m) => !posts.any((p) => p.id == m.id)));
+      _prefetch(more);
       hasMore = more.length >= PostRepository.pageSize;
     } catch (_) {}
     loadingMore = false;
@@ -413,15 +422,12 @@ class PostCard extends StatelessWidget {
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => _NetImageViewer(url: post.imageUrl!))),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 420),
-                child: CachedNetworkImage(
-                  imageUrl: post.imageUrl!,
-                  fit: BoxFit.cover,
-                  width: double.infinity,
+                child: FastImage(
+                  post.imageUrl!,
+                  w: double.infinity,
                   memCacheWidth: 1080,
-                  fadeInDuration: const Duration(milliseconds: 90),
-                  fadeOutDuration: Duration.zero,
-                  placeholder: (_, __) => Container(height: 260, color: Colors.black12),
-                  errorWidget: (_, __, ___) => const SizedBox(height: 80, child: Icon(Icons.broken_image_outlined)),
+                  placeholder: (_) => Container(height: 260, color: Colors.black12),
+                  error: (_) => const SizedBox(height: 80, child: Icon(Icons.broken_image_outlined)),
                 ),
               ),
             ),
@@ -573,14 +579,12 @@ class SharedPostEmbed extends StatelessWidget {
           else if (post.imageUrl != null)
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 360),
-              child: CachedNetworkImage(
-                imageUrl: post.imageUrl!,
-                fit: BoxFit.cover,
-                width: double.infinity,
+              child: FastImage(
+                post.imageUrl!,
+                w: double.infinity,
                 memCacheWidth: 1080,
-                fadeInDuration: const Duration(milliseconds: 90),
-                placeholder: (_, __) => Container(height: 220, color: Colors.black12),
-                errorWidget: (_, __, ___) => const SizedBox(height: 60, child: Icon(Icons.broken_image_outlined)),
+                placeholder: (_) => Container(height: 220, color: Colors.black12),
+                error: (_) => const SizedBox(height: 60, child: Icon(Icons.broken_image_outlined)),
               ),
             ),
           Padding(

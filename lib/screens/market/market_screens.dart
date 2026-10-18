@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../services/cdn.dart';
 import '../../services/core_services.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
@@ -210,7 +211,7 @@ class _ItemTile extends StatelessWidget {
           Expanded(
             child: Stack(fit: StackFit.expand, children: [
               if (item.images.isNotEmpty)
-                CachedNetworkImage(imageUrl: item.images.first, fit: BoxFit.cover, memCacheWidth: 500)
+                FastImage(item.images.first, width: 500, memCacheWidth: 500)
               else
                 const ColoredBox(color: Colors.black12, child: Icon(Icons.image_outlined)),
               if (item.status == 'sold')

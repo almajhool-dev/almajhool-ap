@@ -106,6 +106,7 @@ class _ReelsScreenState extends State<ReelsScreen> {
                   child: PageView.builder(
                     controller: _page,
                     scrollDirection: Axis.vertical,
+                    allowImplicitScrolling: true, // يجهز الريل الجاي من قبل حتى يشتغل فورًا
                     itemCount: posts.length,
                     onPageChanged: (i) {
                       setState(() => _current = i);

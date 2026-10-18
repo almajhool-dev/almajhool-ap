@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../core/config.dart';
 import '../core/theme.dart';
+import '../services/cdn.dart';
 import '../services/media_service.dart';
 
 class Avatar extends StatelessWidget {
@@ -30,16 +31,15 @@ class Avatar extends StatelessWidget {
     final img = (url == null || url!.isEmpty)
         ? placeholder
         : ClipOval(
-            child: CachedNetworkImage(
-              imageUrl: url!,
-              width: size,
-              height: size,
-              fit: BoxFit.cover,
+            child: FastImage(
+              url!,
+              width: (size * 3).round(),
+              w: size,
+              h: size,
               memCacheWidth: (size * 3).round(),
-              fadeInDuration: Duration.zero,
-              fadeOutDuration: Duration.zero,
-              placeholder: (_, __) => placeholder,
-              errorWidget: (_, __, ___) => placeholder,
+              fadeIn: Duration.zero,
+              placeholder: (_) => placeholder,
+              error: (_) => placeholder,
             ),
           );
     return SizedBox(
