@@ -44,12 +44,14 @@ class _SettingsTabState extends State<SettingsTab> {
     final g = TextEditingController(text: st.googleClientId ?? '');
     var phone = st.phoneLogin;
     final sid = TextEditingController(), tok = TextEditingController(), svc = TextEditingController();
+    final gu = TextEditingController(), gp = TextEditingController();
     Map<String, dynamic> sms = const {};
     try {
       sms = ((await supa.rpc('sms_status')) as Map).cast<String, dynamic>();
     } catch (_) {}
     if (!mounted) return;
-    final linked = sms['sid'] == true && sms['token'] == true && sms['service'] == true;
+    final gate = sms['gate'] == true;
+    final linked = gate || (sms['sid'] == true && sms['token'] == true && sms['service'] == true);
     final ok = await showDialog<bool>(
       context: context,
       builder: (c) => StatefulBuilder(
@@ -70,12 +72,28 @@ class _SettingsTabState extends State<SettingsTab> {
                 title: const Text('الدخول برقم الهاتف'),
                 subtitle: Text(linked
                     ? 'خدمة الرسائل مربوطة ✅ (رسائل آخر 24 ساعة: ${sms['sent_today'] ?? 0})'
-                    : 'اربط Twilio بالخانات الجوه أول، بعدين فعّله'),
+                    : 'اربط هاتف الرسائل بالخانات الجوه أول، بعدين فعّله'),
                 value: phone,
                 onChanged: (v) => set(() => phone = v),
               ),
               const SizedBox(height: 6),
-              Text(linked ? 'مفاتيح Twilio (اتركها فاضية إذا ما تريد تغيّرها):' : 'مفاتيح Twilio (من لوحة Twilio):',
+              Text(gate
+                  ? 'هاتف الرسائل المجاني مربوط ✅ (اتركها فاضية إذا ما تريد تغيّرها):'
+                  : 'هاتف الرسائل المجاني (من تطبيق SMS Gateway ← Cloud server):',
+                  style: const TextStyle(fontSize: 12.5)),
+              TextField(
+                controller: gu,
+                textDirection: TextDirection.ltr,
+                decoration: InputDecoration(labelText: 'Username', hintText: gate ? 'محفوظ ✅' : ''),
+              ),
+              TextField(
+                controller: gp,
+                obscureText: true,
+                textDirection: TextDirection.ltr,
+                decoration: InputDecoration(labelText: 'Password', hintText: gate ? 'محفوظ ✅' : ''),
+              ),
+              const SizedBox(height: 10),
+              Text(linked ? 'أو مفاتيح Twilio المدفوعة (اختياري):' : 'أو مفاتيح Twilio المدفوعة (اختياري):',
                   style: const TextStyle(fontSize: 12.5)),
               TextField(
                 controller: sid,
@@ -104,6 +122,9 @@ class _SettingsTabState extends State<SettingsTab> {
     );
     if (ok != true) return;
     try {
+      if (gu.text.trim().isNotEmpty || gp.text.trim().isNotEmpty) {
+        await supa.rpc('set_sms_gate', params: {'p_user': gu.text.trim(), 'p_pass': gp.text.trim()});
+      }
       if (sid.text.trim().isNotEmpty || tok.text.trim().isNotEmpty || svc.text.trim().isNotEmpty) {
         await supa.rpc('set_sms_provider',
             params: {'p_sid': sid.text.trim(), 'p_token': tok.text.trim(), 'p_service': svc.text.trim()});

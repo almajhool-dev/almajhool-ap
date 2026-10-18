@@ -91,6 +91,7 @@ class AuthRepository {
   Future<void> verifyPhoneCode(String phone, String code) async {
     final r = ((await supa.rpc('phone_verify', params: {'p_phone': phone, 'p_code': code.trim()})) as Map)
         .cast<String, dynamic>();
+    if (r['error'] is String) throw Exception(r['error']);
     await supa.auth.signInWithPassword(email: r['email'] as String, password: r['password'] as String);
   }
 

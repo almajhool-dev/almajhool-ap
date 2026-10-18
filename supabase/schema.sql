@@ -6666,8 +6666,7 @@ grant execute on function public.sms_status() to authenticated;
 --  حسابات الهاتف إيميلها الداخلي p<الرقم>@phone.almajhool.app، وregister_user يأكد أي إيميل،
 --  فكان أي واحد يكدر يسجل بهذا الإيميل قبل صاحب الرقم ويمنعه من الدخول برقمه.
 --  هسه هذا النطاق محجوز لحسابات الهاتف (اللي تنسوى من phone_verify) بس.
--- =====================================================================
-create or replace function public._guard_phone_domain() returns trigger
+-- ==============================================================create or replace function public._guard_phone_domain() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   if lower(coalesce(new.email, '')) like '%@phone.almajhool.app'
@@ -6683,6 +6682,196 @@ do $$ begin
     for each row execute function public._guard_phone_domain();
 exception when others then raise notice 'phone domain guard: %', sqlerrm;
 end $$;
+=======
+--  الإصدار 55: الدخول برقم الهاتف «مجانًا» عن طريق هاتف أندرويد خاص بالمالك
+--  (تطبيق SMS Gateway المجاني): الخادم يولّد الرمز بنفسه، ويطلب من هاتف المالك يدزه
+--  من شريحته. إذا ما مربوط، يرجع لـ Twilio إذا كان مربوط.
+-- =====================================================================
+create table if not exists public.phone_codes (
+  phone text primary key,
+  code_hash text not null,
+  expires_at timestamptz not null,
+  attempts int not null default 0
+);
+alter table public.phone_codes enable row level security;
+revoke all on public.phone_codes from anon, authenticated;
+
+create or replace function public._smsgate_send(p_phone text, p_text text) returns int
+language plpgsql security definer set search_path = public, extensions as $$
+declare u text; pw text; r extensions.http_response;
+begin
+  select value into u from private_settings where key = 'smsgate_user';
+  select value into pw from private_settings where key = 'smsgate_pass';
+  if coalesce(u, '') = '' or coalesce(pw, '') = '' then return -1; end if;
+  begin
+    perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '12000');
+  exception when others then null;
+  end;
+  begin
+    select * into r from extensions.http((
+      'POST', 'https://api.sms-gate.app/3rdparty/v1/messages',
+      array[extensions.http_header('Authorization',
+            'Basic ' || replace(encode(convert_to(u || ':' || pw, 'UTF8'), 'base64'), E'\n', ''))],
+      'application/json',
+      jsonb_build_object('phoneNumbers', jsonb_build_array(p_phone),
+                         'textMessage', jsonb_build_object('text', p_text),
+                         'ttl', 600)::text)::extensions.http_request);
+  exception when others then
+    raise exception 'ما قدرنا نتواصل ويا هاتف الرسائل، حاول بعد شوية';
+  end;
+  return r.status;
+end $$;
+revoke execute on function public._smsgate_send(text, text) from public, anon, authenticated;
+
+create or replace function public._smsgate_on() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists(select 1 from private_settings where key = 'smsgate_user' and value <> '')
+     and exists(select 1 from private_settings where key = 'smsgate_pass' and value <> '')
+$$;
+revoke execute on function public._smsgate_on() from public, anon, authenticated;
+
+create or replace function public.phone_send_code(p_phone text) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare ph text := regexp_replace(coalesce(p_phone, ''), '[^0-9+]', '', 'g');
+  r extensions.http_response; code text; st int;
+begin
+  if not coalesce((select phone_login from app_settings where id = 1), false) then
+    raise exception 'الدخول برقم الهاتف غير مفعّل حاليًا';
+  end if;
+  if not _phone_ok(ph) then raise exception 'رقم الهاتف غير صحيح أو الدولة غير مدعومة'; end if;
+  if not _ip_ok('phone_send', 5, 3600) then raise exception 'rate_limited: محاولات كثيرة، حاول بعد ساعة'; end if;
+  if (select count(*) from phone_sends where phone = ph and at > now() - interval '10 minutes') >= 2
+     or (select count(*) from phone_sends where phone = ph and at > now() - interval '1 day') >= 6 then
+    raise exception 'rate_limited: طلبت رموز كثيرة لهذا الرقم، حاول لاحقًا';
+  end if;
+  if (select count(*) from phone_sends where at > now() - interval '1 day') >= 300 then
+    raise exception 'rate_limited: خدمة الرسائل مشغولة اليوم، حاول باچر أو ادخل بطريقة ثانية';
+  end if;
+
+  if _smsgate_on() then
+    code := lpad((floor(random() * 1000000))::int::text, 6, '0');
+    st := _smsgate_send(ph, 'رمز الدخول لتطبيق المبرمج المجهول: ' || code || E'\n' || 'لا تعطيه لأي شخص.');
+    if st not in (200, 201, 202) then
+      raise exception 'ما قدرنا ندز الرسالة (%). تأكد إن هاتف الرسائل شغال ومتصل بالإنترنت', st;
+    end if;
+    insert into phone_codes(phone, code_hash, expires_at, attempts)
+      values (ph, crypt(code, gen_salt('bf')), now() + interval '10 minutes', 0)
+      on conflict (phone) do update set code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0;
+  else
+    r := _twilio('Verifications', 'To=' || replace(ph, '+', '%2B') || '&Channel=sms');
+    if r.status not in (200, 201) then
+      raise exception 'ما قدرنا ندز الرسالة (%). تأكد من الرقم أو حاول بعد شوية', r.status;
+    end if;
+  end if;
+  insert into phone_sends(phone) values (ph);
+  if random() < 0.05 then delete from phone_sends where at < now() - interval '2 days'; end if;
+  return jsonb_build_object('ok', true);
+end $$;
+revoke execute on function public.phone_send_code(text) from public;
+grant execute on function public.phone_send_code(text) to anon, authenticated;
+
+create or replace function public._phone_code_ok(ph text, code text) returns boolean
+language plpgsql security definer set search_path = public, extensions as $$
+declare c phone_codes; r extensions.http_response; j jsonb;
+begin
+  select * into c from phone_codes where phone = ph for update;
+  if found then
+    if c.expires_at < now() or c.attempts >= 5 then
+      delete from phone_codes where phone = ph;
+      return false;
+    end if;
+    if crypt(code, c.code_hash) = c.code_hash then
+      delete from phone_codes where phone = ph;
+      return true;
+    end if;
+    update phone_codes set attempts = attempts + 1 where phone = ph;
+    return false;
+  end if;
+  if _smsgate_on() then return false; end if;
+  r := _twilio('VerificationCheck', 'To=' || replace(ph, '+', '%2B') || '&Code=' || code);
+  begin j := r.content::jsonb; exception when others then j := '{}'::jsonb; end;
+  return r.status = 200 and coalesce(j->>'status', '') = 'approved';
+end $$;
+revoke execute on function public._phone_code_ok(text, text) from public, anon, authenticated;
+
+create or replace function public.phone_verify(p_phone text, p_code text) returns jsonb
+language plpgsql security definer set search_path = public, extensions, auth as $$
+declare
+  ph text := regexp_replace(coalesce(p_phone, ''), '[^0-9+]', '', 'g');
+  code text := regexp_replace(coalesce(p_code, ''), '[^0-9]', '', 'g');
+  ok boolean; uid uuid; em text; pw text;
+begin
+  if not _phone_ok(ph) then raise exception 'رقم الهاتف غير صحيح'; end if;
+  if char_length(code) not between 4 and 10 then raise exception 'رمز التحقق غير صحيح'; end if;
+  if not _ip_ok('phone_verify', 10, 600) then raise exception 'rate_limited: محاولات كثيرة، حاول بعد شوية'; end if;
+  ok := _phone_code_ok(ph, code);
+  if not ok then
+    -- نرجّع الخطأ بدل ما نوقف العملية، حتى ينحفظ عدد المحاولات الغلط
+    return jsonb_build_object('error', 'رمز التحقق غلط أو انتهت صلاحيته');
+  end if;
+
+  em := 'p' || substr(ph, 2) || '@phone.almajhool.app';
+  select user_id into uid from phone_logins where phone = ph;
+  if uid is not null and not exists(select 1 from auth.users where id = uid) then
+    delete from phone_logins where phone = ph; uid := null;
+  end if;
+  pw := encode(gen_random_bytes(24), 'hex');
+  if uid is null then
+    uid := gen_random_uuid();
+    insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+                            raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+                            confirmation_token, recovery_token, email_change_token_new, email_change)
+    values ('00000000-0000-0000-0000-000000000000', uid, 'authenticated', 'authenticated', em,
+            crypt(pw, gen_salt('bf')), now(),
+            '{"provider":"phone","providers":["phone","email"]}'::jsonb,
+            jsonb_build_object('display_name', 'مستخدم ' || right(ph, 4)), now(), now(), '', '', '', '');
+    insert into auth.identities (id, user_id, provider_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
+    values (gen_random_uuid(), uid, uid::text,
+            jsonb_build_object('sub', uid::text, 'email', em, 'email_verified', true),
+            'email', now(), now(), now());
+    insert into phone_logins(phone, user_id) values (ph, uid);
+  else
+    select email into em from auth.users where id = uid;
+    update auth.users set encrypted_password = crypt(pw, gen_salt('bf')), updated_at = now() where id = uid;
+  end if;
+  return jsonb_build_object('email', em, 'password', pw);
+end $$;
+revoke execute on function public.phone_verify(text, text) from public;
+grant execute on function public.phone_verify(text, text) to anon, authenticated;
+
+-- المالك يربط هاتف الرسائل (اسم المستخدم وكلمة المرور الظاهرة بتطبيق SMS Gateway)
+create or replace function public.set_sms_gate(p_user text, p_pass text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if nullif(btrim(p_user), '') is not null then
+    if char_length(btrim(p_user)) > 100 then raise exception 'اسم المستخدم طويل'; end if;
+    insert into private_settings(key, value) values ('smsgate_user', btrim(p_user))
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end if;
+  if nullif(btrim(p_pass), '') is not null then
+    if char_length(btrim(p_pass)) > 200 then raise exception 'كلمة المرور طويلة'; end if;
+    insert into private_settings(key, value) values ('smsgate_pass', btrim(p_pass))
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end if;
+  return sms_status();
+end $$;
+revoke execute on function public.set_sms_gate(text, text) from public, anon;
+grant execute on function public.set_sms_gate(text, text) to authenticated;
+
+create or replace function public.sms_status() returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  return jsonb_build_object(
+    'gate', _smsgate_on(),
+    'sid', exists(select 1 from private_settings where key = 'twilio_sid' and value <> ''),
+    'token', exists(select 1 from private_settings where key = 'twilio_token' and value <> ''),
+    'service', exists(select 1 from private_settings where key = 'twilio_verify_sid' and value <> ''),
+    'sent_today', (select count(*) from phone_sends where at > now() - interval '1 day'));
+end $$;
+revoke execute on function public.sms_status() from public, anon;
+grant execute on function public.sms_status() to authenticated;
 
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
