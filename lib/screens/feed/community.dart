@@ -5,10 +5,12 @@ import 'dart:ui' show ImageFilter;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../services/core_services.dart';
+import '../../services/xfile_util.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../profile/profile_screens.dart';
@@ -184,7 +186,7 @@ class CapCutBadge extends StatelessWidget {
 
 class PostVideo extends StatefulWidget {
   final String? url;
-  final File? file;
+  final XFile? file;
   final bool capcut;
   const PostVideo({super.key, this.url, this.file, this.capcut = false});
   @override
@@ -199,7 +201,7 @@ class _PostVideoState extends State<PostVideo> {
   void initState() {
     super.initState();
     final c = widget.file != null
-        ? VideoPlayerController.file(widget.file!)
+        ? videoFromXFile(widget.file!)
         : VideoPlayerController.networkUrl(Uri.parse(widget.url!));
     _c = c;
     c.setLooping(true);
@@ -324,7 +326,7 @@ class ShareInbox {
       await Navigator.push(
         ctx,
         MaterialPageRoute(
-          builder: (_) => ComposePostScreen(sharedVideo: File(path), sharedCapCut: r['capcut'] == true),
+          builder: (_) => ComposePostScreen(sharedVideo: XFile(path), sharedCapCut: r['capcut'] == true),
         ),
       );
     } catch (_) {}

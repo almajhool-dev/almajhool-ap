@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -9,11 +10,13 @@ import '../core/config.dart';
 import 'core_services.dart';
 
 class PickedMedia {
-  final File file;
+  final File? file; // أندرويد
+  final XFile? x; // صورة/فيديو (يشتغل على الويب هم)
+  final Uint8List? bytes; // ملف مختار على الويب
   final String type; // image | video | file | audio
   final String fileName;
   final int size;
-  PickedMedia(this.file, this.type, this.fileName, this.size);
+  PickedMedia(this.file, this.type, this.fileName, this.size, {this.x, this.bytes});
 }
 
 class MediaService {
@@ -34,32 +37,34 @@ class MediaService {
       maxHeight: 2560,
     );
     if (x == null) return null;
-    final f = File(x.path);
-    return PickedMedia(f, 'image', x.name, await f.length());
+    return PickedMedia(kIsWeb ? null : File(x.path), 'image', x.name, await x.length(), x: x);
   }
 
   static Future<PickedMedia?> pickVideo() async {
     final x = await _picker.pickVideo(source: ImageSource.gallery, maxDuration: const Duration(minutes: 5));
     if (x == null) return null;
-    final f = File(x.path);
-    return PickedMedia(f, 'video', x.name, await f.length());
+    return PickedMedia(kIsWeb ? null : File(x.path), 'video', x.name, await x.length(), x: x);
   }
 
   /// صورة أو فيديو كملف بدون أي ضغط (الجودة الأصلية بالضبط، مثل تيليكرام).
   static Future<PickedMedia?> pickMediaAsFile() async {
-    final r = await FilePicker.platform.pickFiles(type: FileType.media, withData: false);
-    final path = r?.files.single.path;
-    if (r == null || path == null) return null;
-    final f = File(path);
-    return PickedMedia(f, 'file', r.files.single.name, await f.length());
+    final r = await FilePicker.platform.pickFiles(type: FileType.media, withData: kIsWeb);
+    if (r == null) return null;
+    final one = r.files.single;
+    if (kIsWeb) return one.bytes == null ? null : PickedMedia(null, 'file', one.name, one.size, bytes: one.bytes);
+    if (one.path == null) return null;
+    final f = File(one.path!);
+    return PickedMedia(f, 'file', one.name, await f.length());
   }
 
   static Future<PickedMedia?> pickFile() async {
-    final r = await FilePicker.platform.pickFiles(withData: false);
-    final path = r?.files.single.path;
-    if (r == null || path == null) return null;
-    final f = File(path);
-    return PickedMedia(f, 'file', r.files.single.name, await f.length());
+    final r = await FilePicker.platform.pickFiles(withData: kIsWeb);
+    if (r == null) return null;
+    final one = r.files.single;
+    if (kIsWeb) return one.bytes == null ? null : PickedMedia(null, 'file', one.name, one.size, bytes: one.bytes);
+    if (one.path == null) return null;
+    final f = File(one.path!);
+    return PickedMedia(f, 'file', one.name, await f.length());
   }
 
   static String _ext(String name) {
@@ -80,17 +85,19 @@ class MediaService {
   }
 
   /// رفع ملف لمحادثة. يرجع المسار داخل الـ bucket.
-  static Future<String> uploadChatFile(String conversationId, File file, String fileName, String type) async {
-    final size = await file.length();
-    if (size > AppConfig.maxUploadBytes) {
+  static Future<String> uploadChatFile(String conversationId, PickedMedia m) async {
+    final fileName = m.fileName, type = m.type;
+    if (m.size > AppConfig.maxUploadBytes) {
       throw Exception('الحد الأقصى لحجم الملف 50 ميغابايت');
     }
     final path = '$conversationId/${_uuid.v4()}.${_ext(fileName)}';
-    await supa.storage.from(chatBucket).upload(
-          path,
-          file,
-          fileOptions: FileOptions(contentType: contentType(fileName, type), upsert: false),
-        );
+    final opts = FileOptions(contentType: contentType(fileName, type), upsert: false);
+    if (m.file != null) {
+      await supa.storage.from(chatBucket).upload(path, m.file!, fileOptions: opts);
+    } else {
+      final data = m.bytes ?? await m.x!.readAsBytes();
+      await supa.storage.from(chatBucket).uploadBinary(path, data, fileOptions: opts);
+    }
     return path;
   }
 
@@ -111,26 +118,26 @@ class MediaService {
   }
 
   /// رفع صورة شخصية أو صورة مجموعة (bucket عام).
-  static Future<String> uploadAvatar(File file, {String? groupId}) async {
+  static Future<String> uploadAvatar(Uint8List bytes, {String? groupId}) async {
     final uid = myId!;
     final path = groupId == null
         ? '$uid/${_uuid.v4()}.jpg'
         : 'groups/$groupId/${_uuid.v4()}.jpg';
-    await supa.storage.from(avatarBucket).upload(
+    await supa.storage.from(avatarBucket).uploadBinary(
           path,
-          file,
+          bytes,
           fileOptions: const FileOptions(contentType: 'image/jpeg', upsert: true),
         );
     return supa.storage.from(avatarBucket).getPublicUrl(path);
   }
 
-  static Future<File?> pickAvatar() async {
+  static Future<Uint8List?> pickAvatar() async {
     final x = await _picker.pickImage(
       source: ImageSource.gallery,
       imageQuality: 75,
       maxWidth: 512,
       maxHeight: 512,
     );
-    return x == null ? null : File(x.path);
+    return x == null ? null : await x.readAsBytes();
   }
 }

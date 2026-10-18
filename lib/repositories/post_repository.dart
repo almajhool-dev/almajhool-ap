@@ -1,11 +1,13 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/models.dart';
 import '../services/core_services.dart';
+import '../services/xfile_util.dart';
 
 class PostRepository {
   static const _author =
@@ -97,7 +99,7 @@ class PostRepository {
     int? bgColor,
     String visibility = 'public',
     List<String> audience = const [],
-    File? newVideo,
+    XFile? newVideo,
     String? keepVideoUrl,
     bool capcut = false,
   }) async {
@@ -106,14 +108,10 @@ class PostRepository {
     if (newVideo != null) {
       final size = await newVideo.length();
       if (size > 50 * 1024 * 1024) throw Exception('حجم الفيديو أكبر من 50 ميغابايت');
-      final name = newVideo.path.toLowerCase();
-      final ext = name.endsWith('.mov') ? 'mov' : (name.endsWith('.webm') ? 'webm' : 'mp4');
+      final name = '${newVideo.name} ${newVideo.path}'.toLowerCase();
+      final ext = name.contains('.mov') ? 'mov' : (name.contains('.webm') ? 'webm' : 'mp4');
       final path = '${myId!}/${const Uuid().v4()}.$ext';
-      await supa.storage.from('posts').upload(
-            path,
-            newVideo,
-            fileOptions: FileOptions(contentType: ext == 'mov' ? 'video/quicktime' : 'video/$ext'),
-          );
+      await uploadXFile('posts', path, newVideo, ext == 'mov' ? 'video/quicktime' : 'video/$ext');
       video = supa.storage.from('posts').getPublicUrl(path);
     }
     if (newImage != null) {

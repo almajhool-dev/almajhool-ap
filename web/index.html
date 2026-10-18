@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="description" content="VYFRI — تواصل ومراسلة">
+  <meta name="theme-color" content="#0A0E27">
+  <!-- آيفون: يفتح كتطبيق كامل الشاشة بعد «إضافة إلى الشاشة الرئيسية» -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="VYFRI">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="favicon.png"/>
+  <title>VYFRI</title>
+  <link rel="manifest" href="manifest.json">
+  <style>
+    html, body { margin: 0; height: 100%; background: #0A0E27; }
+    #splash { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+              color: #fff; font-family: -apple-system, system-ui, sans-serif; gap: 14px; }
+    #splash img { width: 96px; height: 96px; border-radius: 22px; }
+    #hint { position: fixed; bottom: 18px; left: 12px; right: 12px; background: #1c2350; color: #fff; padding: 12px 14px;
+            border-radius: 14px; font: 14px/1.6 -apple-system, system-ui, sans-serif; display: none; z-index: 9; }
+  </style>
+</head>
+<body>
+  <div id="splash"><img src="icons/Icon-192.png" alt=""><div>VYFRI</div></div>
+  <div id="hint">📲 حتى يصير VYFRI تطبيق على آيفونك: اضغط زر المشاركة <b>⬆︎</b> بالسفاري ← <b>إضافة إلى الشاشة الرئيسية</b>
+    <span onclick="this.parentNode.style.display='none'" style="float:left;cursor:pointer">✕</span></div>
+  <script>
+    (function () {
+      var ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+      var standalone = window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+      if (ios && !standalone) document.getElementById('hint').style.display = 'block';
+    })();
+    window.addEventListener('flutter-first-frame', function () {
+      var s = document.getElementById('splash'); if (s) s.remove();
+    });
+  </script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

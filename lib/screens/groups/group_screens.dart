@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -129,7 +129,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
   final _desc = TextEditingController();
   final _repo = ChatRepository();
   Set<String> _members = {};
-  File? _avatar;
+  Uint8List? _avatar;
   bool _public = false;
   bool _busy = false;
 
@@ -188,7 +188,7 @@ class _CreateGroupScreenState extends State<CreateGroupScreen> {
                   },
                   child: CircleAvatar(
                     radius: 34,
-                    backgroundImage: _avatar == null ? null : FileImage(_avatar!),
+                    backgroundImage: _avatar == null ? null : MemoryImage(_avatar!),
                     child: _avatar == null ? const Icon(Icons.add_a_photo_outlined) : null,
                   ),
                 ),

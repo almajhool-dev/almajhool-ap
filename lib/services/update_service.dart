@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'dart:typed_data';
 import 'dart:async';
 import 'dart:convert';
@@ -90,6 +91,7 @@ class UpdateService {
 
   /// فحص تلقائي عند فتح التطبيق (مرة واحدة لكل تشغيل).
   static Future<void> autoCheck(BuildContext? Function() ctx) async {
+    if (kIsWeb) return; // نسخة الآيفون (الويب) تتحدث وحدها
     if (_shownThisRun || currentBuild == 0) return;
     final l = await latest();
     if (l == null || l.build <= currentBuild) return;

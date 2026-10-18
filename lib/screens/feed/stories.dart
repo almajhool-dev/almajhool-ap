@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -16,6 +15,7 @@ import '../../models/models.dart';
 import '../../providers/providers.dart';
 import '../../repositories/live_repository.dart';
 import '../../repositories/story_repository.dart';
+import '../../services/xfile_util.dart';
 import '../../services/core_services.dart';
 import '../../services/privacy_service.dart';
 import '../../utils/helpers.dart';
@@ -121,14 +121,14 @@ class StoryBarState extends State<StoryBar> {
   Future<void> _addVideo(ImageSource src) async {
     final x = await ImagePicker().pickVideo(source: src, maxDuration: const Duration(seconds: 60));
     if (x == null || !mounted) return;
-    final f = File(x.path);
-    final size = await f.length();
+    final f = x;
+    final size = await x.length();
     if (size > 50 * 1024 * 1024) {
       if (mounted) showSnack(context, 'المقطع كبير، لازم يكون أقل من 50 ميگا', error: true);
       return;
     }
     // نعرف طول المقطع
-    final c = VideoPlayerController.file(f);
+    final c = videoFromXFile(f);
     var ms = 0;
     try {
       await c.initialize();

@@ -1,4 +1,5 @@
-import 'dart:io';
+import 'package:image_picker/image_picker.dart';
+import '../services/xfile_util.dart';
 import 'dart:typed_data';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -101,11 +102,11 @@ class StoryRepository {
   }
 
   /// قصة فيديو: الفيديو + صورة غلاف (تظهر للنسخ القديمة من التطبيق).
-  Future<void> addVideo(File video, int durationMs, Uint8List poster) async {
+  Future<void> addVideo(XFile video, int durationMs, Uint8List poster) async {
     final id = const Uuid().v4();
     final vPath = '${myId!}/stories/$id.mp4';
     final pPath = '${myId!}/stories/$id.jpg';
-    await supa.storage.from('posts').upload(vPath, video, fileOptions: const FileOptions(contentType: 'video/mp4'));
+    await uploadXFile('posts', vPath, video, 'video/mp4');
     await supa.storage.from('posts').uploadBinary(pPath, poster, fileOptions: const FileOptions(contentType: 'image/jpeg'));
     await supa.from('stories').insert({
       'user_id': myId!,

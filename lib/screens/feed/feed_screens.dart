@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -459,7 +458,7 @@ const kVisibility = <String, (IconData, String)>{
 /// إنشاء منشور أو تعديله: نص بلون، خلفية ملونة، صورة (تبديل/قص/تدوير)، وخصوصية.
 class ComposePostScreen extends StatefulWidget {
   final Post? editing;
-  final File? sharedVideo; // فيديو مشارك من CapCut أو أي تطبيق
+  final XFile? sharedVideo; // فيديو مشارك من CapCut أو أي تطبيق
   final bool sharedCapCut;
   const ComposePostScreen({super.key, this.editing, this.sharedVideo, this.sharedCapCut = false});
   @override
@@ -475,7 +474,7 @@ class _ComposePostScreenState extends State<ComposePostScreen> {
   late String _visibility = widget.editing?.visibility ?? 'public';
   List<String> _audience = [];
   bool _busy = false;
-  late File? _newVideo = widget.sharedVideo;
+  late XFile? _newVideo = widget.sharedVideo;
   late String? _videoUrl = widget.editing?.videoUrl;
   late bool _capcut = widget.sharedCapCut || widget.editing?.madeWith == 'capcut';
 
@@ -485,8 +484,8 @@ class _ComposePostScreenState extends State<ComposePostScreen> {
   Future<void> _pickVideo() async {
     final x = await ImagePicker().pickVideo(source: ImageSource.gallery);
     if (x == null) return;
-    final f = File(x.path);
-    if (await f.length() > 50 * 1024 * 1024) {
+    final f = x;
+    if (await x.length() > 50 * 1024 * 1024) {
       if (mounted) showSnack(context, 'الفيديو أكبر من 50 ميغابايت، قصّه أو صدّره بحجم أصغر', error: true);
       return;
     }

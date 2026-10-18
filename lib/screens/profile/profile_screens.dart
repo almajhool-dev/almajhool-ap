@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -395,7 +395,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late final TextEditingController _name;
   late final TextEditingController _username;
   late final TextEditingController _bio;
-  File? _avatar;
+  Uint8List? _avatar;
   bool _busy = false;
 
   @override
@@ -466,7 +466,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 child: Stack(
                   children: [
                     _avatar != null
-                        ? CircleAvatar(radius: 56, backgroundImage: FileImage(_avatar!))
+                        ? CircleAvatar(radius: 56, backgroundImage: MemoryImage(_avatar!))
                         : Avatar(url: p?.avatarUrl, name: p?.displayName ?? '', size: 112),
                     Positioned(
                       bottom: 0,

@@ -465,7 +465,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (media == null) return;
     setState(() => _uploading++);
     try {
-      final path = await MediaService.uploadChatFile(_id, media.file, media.fileName, media.type);
+      final path = await MediaService.uploadChatFile(_id, media);
       final sent = await _repo.send(
         conversationId: _id,
         clientId: _repo.newClientId(),
