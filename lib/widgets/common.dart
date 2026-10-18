@@ -59,7 +59,7 @@ class Avatar extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: AppColors.green,
                   shape: BoxShape.circle,
-                  border: Border.all(color: Theme.of(context).scaffoldBackgroundColor, width: 2),
+                  border: Border.all(color: AppColors.bgOf(context), width: 2),
                 ),
               ),
             ),

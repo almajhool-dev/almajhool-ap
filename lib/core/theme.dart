@@ -15,6 +15,10 @@ class AppColors {
   static const lightBg = Color(0xFFF4F6FB);
   static const lightSurface = Colors.white;
 
+  /// لون الخلفية الثابت (للحدود والفواصل — الشاشات نفسها شفافة فوق الخلفية المتحركة)
+  static Color bgOf(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark ? darkBg : lightBg;
+
   static const brandGradient = LinearGradient(
     colors: [cyan, violet],
     begin: Alignment.topRight,
@@ -62,10 +66,24 @@ class AppTheme {
       useMaterial3: true,
       brightness: brightness,
       colorScheme: scheme,
-      scaffoldBackgroundColor: bg,
+      // الشاشات شفافة حتى تبين الخلفية المتحركة (البطاقات تبقى واضحة)
+      scaffoldBackgroundColor: Colors.transparent,
+      canvasColor: bg,
+      splashFactory: InkSparkle.splashFactory,
+      dialogTheme: DialogThemeData(
+        backgroundColor: (isDark ? AppColors.darkSurface : Colors.white).withValues(alpha: 0.94),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: BorderSide(color: AppColors.cyan.withValues(alpha: isDark ? 0.35 : 0.25)),
+        ),
+      ),
+      listTileTheme: ListTileThemeData(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
       cardColor: card,
       appBarTheme: AppBarTheme(
-        backgroundColor: bg,
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
         foregroundColor: isDark ? Colors.white : Colors.black87,
         elevation: 0,
         scrolledUnderElevation: 0.5,
@@ -94,7 +112,7 @@ class AppTheme {
         ),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: surface,
+        backgroundColor: surface.withValues(alpha: 0.9),
         indicatorColor: scheme.primary.withValues(alpha: 0.18),
         labelTextStyle: WidgetStateProperty.all(
           const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
@@ -107,8 +125,29 @@ class AppTheme {
       snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
       // تنقّل أسرع بين الشاشات (انتقال خفيف وسريع بدل التكبير البطيء)
       pageTransitionsTheme: const PageTransitionsTheme(builders: {
-        TargetPlatform.android: FadeForwardsPageTransitionsBuilder(),
+        TargetPlatform.android: _FxPageTransition(),
       }),
+    );
+  }
+}
+
+/// انتقال بين الشاشات: الشاشة الجديدة تظهر بتلاشي وتكبير خفيف، والقديمة تتلاشى
+/// (لأن الشاشات شفافة فوق الخلفية المتحركة ما تتداخل).
+class _FxPageTransition extends PageTransitionsBuilder {
+  const _FxPageTransition();
+  @override
+  Duration get transitionDuration => const Duration(milliseconds: 260);
+  @override
+  Widget buildTransitions<T>(PageRoute<T> route, BuildContext context, Animation<double> animation,
+      Animation<double> secondaryAnimation, Widget child) {
+    final inC = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+    final outC = CurvedAnimation(parent: secondaryAnimation, curve: Curves.easeInCubic);
+    return FadeTransition(
+      opacity: ReverseAnimation(outC),
+      child: FadeTransition(
+        opacity: inC,
+        child: ScaleTransition(scale: Tween(begin: 0.97, end: 1.0).animate(inC), child: child),
+      ),
     );
   }
 }

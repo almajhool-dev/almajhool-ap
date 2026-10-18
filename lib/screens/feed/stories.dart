@@ -212,7 +212,7 @@ class StoryBarState extends State<StoryBar> {
               decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.red),
               child: Container(
                 padding: const EdgeInsets.all(2),
-                decoration: BoxDecoration(shape: BoxShape.circle, color: Theme.of(context).scaffoldBackgroundColor),
+                decoration: BoxDecoration(shape: BoxShape.circle, color: AppColors.bgOf(context)),
                 child: Avatar(url: l.host.avatarUrl, name: l.host.displayName, size: 58),
               ),
             ),
@@ -264,7 +264,7 @@ class StoryBarState extends State<StoryBar> {
                   ),
                   child: Container(
                     padding: const EdgeInsets.all(2),
-                    decoration: BoxDecoration(shape: BoxShape.circle, color: Theme.of(context).scaffoldBackgroundColor),
+                    decoration: BoxDecoration(shape: BoxShape.circle, color: AppColors.bgOf(context)),
                     child: Avatar(url: avatarUrl, name: name, size: 58),
                   ),
                 ),
@@ -278,7 +278,7 @@ class StoryBarState extends State<StoryBar> {
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: Theme.of(context).colorScheme.primary,
-                          border: Border.all(color: Theme.of(context).scaffoldBackgroundColor, width: 2),
+                          border: Border.all(color: AppColors.bgOf(context), width: 2),
                         ),
                         child: const Icon(Icons.add, size: 18, color: Colors.white),
                       ),

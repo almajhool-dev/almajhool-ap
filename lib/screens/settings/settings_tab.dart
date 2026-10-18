@@ -13,6 +13,9 @@ import '../../services/push_service.dart';
 import '../../services/update_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
+import '../../widgets/fx.dart';
+import '../../services/fx_settings.dart';
+import 'themes_screen.dart';
 import '../admin/admin_screen.dart';
 import '../../services/couple_service.dart';
 import '../../services/core_services.dart';
@@ -160,7 +163,7 @@ class _SettingsTabState extends State<SettingsTab> {
     final p = session.profile;
     return SafeArea(
       child: ListView(
-        children: [
+        children: fxList([
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: Text('الإعدادات', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
@@ -286,6 +289,26 @@ class _SettingsTabState extends State<SettingsTab> {
               onSelectionChanged: (s) => theme.set(s.first),
             ),
           ),
+          ListenableBuilder(
+            listenable: FxSettings.instance,
+            builder: (context, _) => SwitchListTile(
+              secondary: const Icon(Icons.auto_awesome_rounded),
+              title: const Text('خلفيات متحركة ✨'),
+              subtitle: const Text('طفّيها إذا تريد خلفية ثابتة وتوفير بطارية'),
+              value: FxSettings.instance.enabled,
+              onChanged: FxSettings.instance.setEnabled,
+            ),
+          ),
+          ListenableBuilder(
+            listenable: FxSettings.instance,
+            builder: (context, _) => ListTile(
+              leading: const Icon(Icons.palette_rounded),
+              title: const Text('السمات المتحركة 🎨'),
+              subtitle: Text('الحالية: ${FxSettings.instance.current.name}'),
+              trailing: const Icon(Icons.chevron_left),
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ThemesScreen())),
+            ),
+          ),
           _section('الأصوات'),
           ListTile(
             leading: const Icon(Icons.music_note_rounded),
@@ -394,7 +417,7 @@ class _SettingsTabState extends State<SettingsTab> {
             padding: EdgeInsets.all(20),
             child: Text('صُنع بواسطة المبرمج المجهول', textAlign: TextAlign.center, style: TextStyle(fontSize: 12)),
           ),
-        ],
+        ]),
       ),
     );
   }

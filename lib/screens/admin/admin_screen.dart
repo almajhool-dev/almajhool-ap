@@ -17,6 +17,7 @@ import '../../services/core_services.dart';
 import '../../services/update_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
+import '../../widgets/fx.dart';
 import '../live/live_screens.dart';
 import '../profile/profile_screens.dart';
 
@@ -116,7 +117,7 @@ class _OverviewState extends State<_Overview> {
       onRefresh: _load,
       child: ListView(
         padding: const EdgeInsets.all(16),
-        children: [
+        children: fxList([
           Card(
             color: (on ? AppColors.green : AppColors.danger).withValues(alpha: 0.12),
             child: Padding(
@@ -200,7 +201,7 @@ class _OverviewState extends State<_Overview> {
                 _stat('بلاغات مفتوحة', s['open_reports'], Icons.flag_rounded, AppColors.danger),
               ],
             ),
-        ],
+        ]),
       ),
     );
   }

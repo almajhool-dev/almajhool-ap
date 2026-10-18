@@ -8,6 +8,7 @@ import 'core/config.dart';
 import 'core/theme.dart';
 import 'providers/providers.dart';
 import 'screens/gate.dart';
+import 'widgets/fx.dart';
 import 'services/background_service.dart';
 import 'services/call_service.dart';
 import 'services/core_services.dart';
@@ -106,7 +107,8 @@ class _RootAppState extends State<RootApp> {
             GlobalCupertinoLocalizations.delegate,
           ],
           // المزوّدات فوق الـ Navigator حتى تصل لكل الشاشات
-          builder: (context, child) => _ready ? _Providers(child: child!) : child!,
+          // الخلفية المتحركة وحدة ورا كل الشاشات
+          builder: (context, child) => FxBackground(child: _ready ? _Providers(child: child!) : child!),
           home: _ready ? const Gate() : const SplashView(),
         ),
       ),

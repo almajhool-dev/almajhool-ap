@@ -1015,7 +1015,7 @@ class _ChatScreenState extends State<ChatScreen> {
       child: Container(
         padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
         decoration: BoxDecoration(
-          color: Theme.of(context).scaffoldBackgroundColor,
+          color: AppColors.bgOf(context),
           border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
         ),
         child: Column(

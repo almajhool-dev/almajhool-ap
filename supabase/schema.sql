@@ -7087,5 +7087,50 @@ do $$ begin
 exception when others then raise notice 'v57: %', sqlerrm;
 end $$;
 
+-- =====================================================================
+--  الإصدار 58: السمات المتحركة اللي ينشرها المالك لكل المستخدمين
+-- =====================================================================
+create table if not exists public.app_themes (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  base text not null default 'aurora',
+  colors jsonb not null default '[]'::jsonb,
+  words text not null default '',
+  created_at timestamptz not null default now()
+);
+alter table public.app_themes enable row level security;
+drop policy if exists app_themes_select on public.app_themes;
+create policy app_themes_select on public.app_themes for select to anon, authenticated using (true);
+revoke insert, update, delete on public.app_themes from anon, authenticated;
+
+create or replace function public.theme_publish(p_name text, p_base text, p_colors jsonb, p_words text default '')
+returns uuid language plpgsql security definer set search_path = public as $$
+declare i uuid; c jsonb := '[]'::jsonb; v jsonb;
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if p_base not in ('aurora', 'matrix', 'network', 'waves') then raise exception 'نوع حركة غير معروف'; end if;
+  if jsonb_typeof(p_colors) <> 'array' then raise exception 'ألوان غير صالحة'; end if;
+  for v in select * from jsonb_array_elements(p_colors) limit 3 loop
+    if jsonb_typeof(v) <> 'number' then raise exception 'ألوان غير صالحة'; end if;
+    c := c || v;
+  end loop;
+  if (select count(*) from app_themes) >= 50 then raise exception 'وصلت حد السمات (50)، احذف وحدة قديمة'; end if;
+  insert into app_themes(name, base, colors, words)
+    values (left(coalesce(nullif(btrim(p_name), ''), 'سمة'), 30), p_base, c, left(coalesce(p_words, ''), 200))
+    returning id into i;
+  return i;
+end $$;
+revoke execute on function public.theme_publish(text, text, jsonb, text) from public, anon;
+grant execute on function public.theme_publish(text, text, jsonb, text) to authenticated;
+
+create or replace function public.theme_unpublish(p_id uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  delete from app_themes where id = p_id;
+end $$;
+revoke execute on function public.theme_unpublish(uuid) from public, anon;
+grant execute on function public.theme_unpublish(uuid) to authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
