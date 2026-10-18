@@ -385,6 +385,14 @@ class Post {
   final String visibility; // public | friends | private | custom
   final String? videoUrl;
   final String? madeWith; // capcut
+  /// تفاعلي (like/love/care/haha/wow/sad/angry) أو null
+  final String? myReaction;
+  /// عدد كل نوع تفاعل
+  final Map<String, int> reactions;
+  final int shareCount;
+  /// المنشور الأصلي إذا هذا منشور مشاركة
+  final Post? shared;
+  final String? sharedPostId;
 
   const Post({
     required this.id,
@@ -402,9 +410,22 @@ class Post {
     this.visibility = 'public',
     this.videoUrl,
     this.madeWith,
+    this.myReaction,
+    this.reactions = const {},
+    this.shareCount = 0,
+    this.shared,
+    this.sharedPostId,
   });
 
-  factory Post.fromMap(Map<String, dynamic> m, {bool liked = false}) => Post(
+  factory Post.fromMap(Map<String, dynamic> m, {bool liked = false}) {
+    final rx = <String, int>{};
+    if (m['reactions'] is Map) {
+      (m['reactions'] as Map).forEach((k, v) {
+        if (v is num && v > 0) rx['$k'] = v.toInt();
+      });
+    }
+    final mine = m['_reaction'] as String? ?? (liked ? 'like' : null);
+    return Post(
         id: m['id'] as String,
         authorId: m['author_id'] as String,
         content: (m['content'] ?? '') as String,
@@ -420,9 +441,53 @@ class Post {
         visibility: (m['visibility'] ?? 'public') as String,
         videoUrl: m['video_url'] as String?,
         madeWith: m['made_with'] as String?,
+        myReaction: mine,
+        reactions: rx,
+        shareCount: ((m['share_count'] ?? 0) as num).toInt(),
+        sharedPostId: m['shared_post_id'] as String?,
+        shared: m['shared'] is Map ? Post.fromMap(Map<String, dynamic>.from(m['shared'] as Map)) : null,
       );
+  }
 
-  Post copyWith({int? likeCount, int? commentCount, bool? likedByMe, String? content, DateTime? editedAt}) => Post(
+  /// أكثر 3 تفاعلات (للأيقونات فوق العداد)
+  List<String> get topReactions {
+    final e = reactions.entries.where((x) => x.value > 0).toList()..sort((a, b) => b.value.compareTo(a.value));
+    return e.take(3).map((x) => x.key).toList();
+  }
+
+  Post withReaction(String? r) {
+    final rx = Map<String, int>.from(reactions);
+    if (myReaction != null) {
+      rx[myReaction!] = (rx[myReaction!] ?? 1) - 1;
+      if ((rx[myReaction!] ?? 0) <= 0) rx.remove(myReaction!);
+    }
+    if (r != null) rx[r] = (rx[r] ?? 0) + 1;
+    final delta = (r != null ? 1 : 0) - (myReaction != null ? 1 : 0);
+    return Post(
+      id: id,
+      authorId: authorId,
+      content: content,
+      editedAt: editedAt,
+      imageUrl: imageUrl,
+      likeCount: (likeCount + delta).clamp(0, 1 << 30),
+      commentCount: commentCount,
+      createdAt: createdAt,
+      author: author,
+      likedByMe: r != null,
+      textColor: textColor,
+      bgColor: bgColor,
+      visibility: visibility,
+      videoUrl: videoUrl,
+      madeWith: madeWith,
+      myReaction: r,
+      reactions: rx,
+      shareCount: shareCount,
+      shared: shared,
+      sharedPostId: sharedPostId,
+    );
+  }
+
+  Post copyWith({int? likeCount, int? commentCount, bool? likedByMe, String? content, DateTime? editedAt, int? shareCount}) => Post(
         id: id,
         authorId: authorId,
         content: content ?? this.content,
@@ -438,6 +503,11 @@ class Post {
         visibility: visibility,
         videoUrl: videoUrl,
         madeWith: madeWith,
+        myReaction: (likedByMe ?? this.likedByMe) ? (myReaction ?? 'like') : null,
+        reactions: reactions,
+        shareCount: shareCount ?? this.shareCount,
+        shared: shared,
+        sharedPostId: sharedPostId,
       );
 }
 

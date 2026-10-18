@@ -8547,5 +8547,257 @@ do $$ begin
 exception when others then raise notice 'v62 tech purge: %', sqlerrm;
 end $$;
 
+-- =====================================================================
+--  الإصدار 63: تفاعلات مثل فيسبوك (أعجبني/أحببته/أدعمك/أضحكني/أدهشني/أحزنني/أغضبني)
+--  + مشاركة المنشور على صفحتك مع تعليق + عدّاد المشاركات + منو تفاعل
+--  + الريلز (فيديوهات قصيرة) + سوق البيع والشراء
+-- =====================================================================
+alter table public.post_likes add column if not exists reaction text not null default 'like';
+do $$ begin
+  alter table public.post_likes add constraint post_likes_reaction_chk
+    check (reaction in ('like', 'love', 'care', 'haha', 'wow', 'sad', 'angry'));
+exception when duplicate_object then null;
+end $$;
+drop policy if exists likes_update on public.post_likes;
+create policy likes_update on public.post_likes for update to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+alter table public.posts add column if not exists reactions jsonb not null default '{}'::jsonb;
+alter table public.posts add column if not exists share_count int not null default 0;
+alter table public.posts add column if not exists shared_post_id uuid references public.posts(id) on delete set null;
+create index if not exists posts_shared_idx on public.posts(shared_post_id) where shared_post_id is not null;
+
+-- ملخص التفاعلات لكل منشور (عدد كل نوع) يتحدث وحده
+create or replace function public._post_reactions_sync() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare pid uuid := coalesce(new.post_id, old.post_id);
+begin
+  update posts set reactions = coalesce((select jsonb_object_agg(reaction, c) from
+      (select reaction, count(*) c from post_likes where post_id = pid group by reaction) s), '{}'::jsonb)
+   where id = pid;
+  return null;
+end $$;
+revoke execute on function public._post_reactions_sync() from public, anon, authenticated;
+drop trigger if exists zz_post_reactions_sync on public.post_likes;
+create trigger zz_post_reactions_sync after insert or update of reaction or delete on public.post_likes
+  for each row execute function public._post_reactions_sync();
+
+-- العدّادات ما ينكتبن من التطبيق؛ والمشاركة تتأكد إن المنشور الأصلي مسموح تشوفه
+create or replace function public._post_share_guard() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare o posts;
+begin
+  new.reactions := '{}'::jsonb;
+  new.share_count := 0;
+  if new.shared_post_id is not null then
+    select * into o from posts where id = new.shared_post_id and not deleted;
+    if not found then raise exception 'المنشور الأصلي محذوف أو غير موجود'; end if;
+    -- مشاركة مشاركة: نربطها بالمنشور الأصلي
+    if o.shared_post_id is not null then
+      select * into o from posts where id = o.shared_post_id and not deleted;
+      if not found then raise exception 'المنشور الأصلي محذوف أو غير موجود'; end if;
+      new.shared_post_id := o.id;
+    end if;
+    if not can_see_post(o.id, o.author_id, o.visibility) or is_blocked_between(new.author_id, o.author_id) then
+      raise exception 'ما تكدر تشارك هذا المنشور';
+    end if;
+    if o.visibility in ('private', 'custom', 'friends') and o.author_id <> new.author_id then
+      raise exception 'صاحب المنشور ما سامح بمشاركته (منشور خاص)';
+    end if;
+  end if;
+  return new;
+end $$;
+revoke execute on function public._post_share_guard() from public, anon, authenticated;
+drop trigger if exists aa_post_share_guard on public.posts;
+create trigger aa_post_share_guard before insert on public.posts
+  for each row execute function public._post_share_guard();
+
+create or replace function public._post_share_count() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare a uuid; nm text;
+begin
+  if tg_op = 'INSERT' and new.shared_post_id is not null then
+    update posts set share_count = share_count + 1 where id = new.shared_post_id returning author_id into a;
+    if a is not null and a <> new.author_id then
+      select display_name into nm from profiles where id = new.author_id;
+      perform notify_user(a, 'post_share', 'مشاركة جديدة',
+        coalesce(nm, '') || ' شارك منشورك', jsonb_build_object('post_id', new.id));
+    end if;
+  elsif tg_op = 'UPDATE' and new.deleted and not old.deleted and new.shared_post_id is not null then
+    update posts set share_count = greatest(0, share_count - 1) where id = new.shared_post_id;
+  end if;
+  return null;
+end $$;
+revoke execute on function public._post_share_count() from public, anon, authenticated;
+drop trigger if exists zz_post_share_count on public.posts;
+create trigger zz_post_share_count after insert or update of deleted on public.posts
+  for each row execute function public._post_share_count();
+
+-- صفحة المنشورات: + تفاعلي + المنشور الأصلي للمشاركات
+create or replace function public._post_json(p posts) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select to_jsonb(p) || jsonb_build_object(
+    'author', (select jsonb_build_object('id', a.id, 'username', a.username, 'display_name', a.display_name,
+        'avatar_url', a.avatar_url, 'xp', a.xp, 'is_verified', a.is_verified, 'is_owner', a.is_owner, 'is_admin', a.is_admin)
+        from profiles a where a.id = p.author_id),
+    '_liked', exists(select 1 from post_likes l where l.post_id = p.id and l.user_id = auth.uid()),
+    '_reaction', (select l.reaction from post_likes l where l.post_id = p.id and l.user_id = auth.uid()),
+    'shared', case when p.shared_post_id is null then null else (
+      select to_jsonb(o) || jsonb_build_object('author', jsonb_build_object('id', a.id, 'username', a.username,
+          'display_name', a.display_name, 'avatar_url', a.avatar_url, 'xp', a.xp, 'is_verified', a.is_verified,
+          'is_owner', a.is_owner, 'is_admin', a.is_admin))
+      from posts o join profiles a on a.id = o.author_id
+      where o.id = p.shared_post_id and not o.deleted and can_see_post(o.id, o.author_id, o.visibility)
+        and not is_blocked_between(auth.uid(), o.author_id)) end);
+$$;
+revoke execute on function public._post_json(posts) from public, anon;
+
+create or replace function public.feed_page(p_before timestamptz default null, p_author uuid default null, p_limit int default 15)
+returns jsonb language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(x order by (x->>'created_at')::timestamptz desc), '[]'::jsonb) from (
+    select _post_json(p) as x
+    from posts p join profiles a on a.id = p.author_id
+    where auth.uid() is not null and not p.deleted
+      and (not a.is_banned or a.id = auth.uid() or is_admin())
+      and (p_author is null or p.author_id = p_author)
+      and (p_before is null or p.created_at < p_before)
+      and not is_blocked_between(auth.uid(), p.author_id)
+      and can_see_post(p.id, p.author_id, p.visibility)
+    order by p.created_at desc
+    limit least(greatest(coalesce(p_limit, 15), 1), 50)
+  ) t;
+$$;
+grant execute on function public.feed_page(timestamptz, uuid, int) to authenticated;
+
+create or replace function public.post_one(p_id uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select _post_json(p) from posts p
+  where p.id = p_id and auth.uid() is not null and not p.deleted
+    and not is_blocked_between(auth.uid(), p.author_id) and can_see_post(p.id, p.author_id, p.visibility);
+$$;
+grant execute on function public.post_one(uuid) to authenticated;
+
+-- منو تفاعل على المنشور (حسب النوع أو الكل)
+create or replace function public.post_reactors(p_post uuid, p_reaction text default null) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('reaction', l.reaction, 'at', l.created_at,
+      'user', jsonb_build_object('id', u.id, 'username', u.username, 'display_name', u.display_name,
+        'avatar_url', u.avatar_url, 'is_verified', u.is_verified, 'is_owner', u.is_owner))
+      order by l.created_at desc), '[]'::jsonb)
+  from (select * from post_likes where post_id = p_post
+          and (p_reaction is null or reaction = p_reaction) order by created_at desc limit 300) l
+  join profiles u on u.id = l.user_id
+  join posts p on p.id = l.post_id
+  where auth.uid() is not null and not p.deleted and can_see_post(p.id, p.author_id, p.visibility)
+    and not is_blocked_between(auth.uid(), u.id);
+$$;
+grant execute on function public.post_reactors(uuid, text) to authenticated;
+
+-- ---------- الريلز: فيديوهات المنشورات بشكل عمودي ----------
+create or replace function public.reels_page(p_before timestamptz default null, p_limit int default 10)
+returns jsonb language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(x order by (x->>'created_at')::timestamptz desc), '[]'::jsonb) from (
+    select _post_json(p) as x
+    from posts p join profiles a on a.id = p.author_id
+    where auth.uid() is not null and not p.deleted and p.video_url is not null
+      and (not a.is_banned or a.id = auth.uid() or is_admin())
+      and (p_before is null or p.created_at < p_before)
+      and not is_blocked_between(auth.uid(), p.author_id)
+      and can_see_post(p.id, p.author_id, p.visibility)
+    order by p.created_at desc
+    limit least(greatest(coalesce(p_limit, 10), 1), 30)
+  ) t;
+$$;
+grant execute on function public.reels_page(timestamptz, int) to authenticated;
+
+-- ---------- سوق البيع والشراء (مثل Marketplace) ----------
+create table if not exists public.market_items (
+  id uuid primary key default gen_random_uuid(),
+  seller_id uuid not null references public.profiles(id) on delete cascade,
+  title text not null,
+  description text not null default '',
+  price bigint not null default 0,
+  category text not null default 'other',
+  city text not null default '',
+  condition text not null default 'used',
+  images text[] not null default '{}',
+  status text not null default 'active',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists market_items_list_idx on public.market_items(status, created_at desc);
+create index if not exists market_items_seller_idx on public.market_items(seller_id, created_at desc);
+alter table public.market_items enable row level security;
+revoke insert, update, delete on public.market_items from anon, authenticated;
+drop policy if exists market_select on public.market_items;
+create policy market_select on public.market_items for select to authenticated
+  using (status <> 'removed' or seller_id = auth.uid() or is_admin());
+
+create or replace function public.market_save(p_id uuid, p_title text, p_description text, p_price bigint,
+  p_category text, p_city text, p_condition text, p_images text[]) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare i uuid; t text := btrim(coalesce(p_title, '')); imgs text[];
+begin
+  if auth.uid() is null then raise exception 'سجّل الدخول أولًا'; end if;
+  if not can_post() then raise exception 'ما تكدر تنشر حاليًا'; end if;
+  if char_length(t) < 3 then raise exception 'اكتب اسم الغرض (3 أحرف على الأقل)'; end if;
+  if coalesce(p_price, -1) < 0 or p_price > 100000000000 then raise exception 'السعر غير صحيح'; end if;
+  if coalesce(p_category, '') not in ('phones', 'electronics', 'cars', 'realestate', 'fashion', 'home', 'games', 'services', 'other') then
+    raise exception 'القسم غير معروف';
+  end if;
+  if coalesce(p_condition, '') not in ('new', 'used') then raise exception 'الحالة غير معروفة'; end if;
+  select coalesce(array_agg(u), '{}') into imgs from (select u from unnest(coalesce(p_images, '{}')) u
+     where u ~ '^https://' limit 8) z;
+  if array_length(imgs, 1) is null then raise exception 'ضيف صورة وحدة على الأقل'; end if;
+  if p_id is null then
+    if (select count(*) from market_items where seller_id = auth.uid() and created_at > now() - interval '1 day') >= 20 then
+      raise exception 'rate_limited: نشرت إعلانات كثيرة اليوم';
+    end if;
+    insert into market_items(seller_id, title, description, price, category, city, condition, images)
+      values (auth.uid(), left(_clean_text(t), 120), left(_clean_text(coalesce(p_description, '')), 3000), p_price,
+              p_category, left(btrim(coalesce(p_city, '')), 60), p_condition, imgs)
+      returning id into i;
+  else
+    update market_items set title = left(_clean_text(t), 120), description = left(_clean_text(coalesce(p_description, '')), 3000),
+        price = p_price, category = p_category, city = left(btrim(coalesce(p_city, '')), 60), condition = p_condition,
+        images = imgs, updated_at = now()
+      where id = p_id and seller_id = auth.uid() and status <> 'removed'
+      returning id into i;
+    if i is null then raise exception 'الإعلان مو إلك أو انحذف'; end if;
+  end if;
+  return i;
+end $$;
+grant execute on function public.market_save(uuid, text, text, bigint, text, text, text, text[]) to authenticated;
+
+create or replace function public.market_set_status(p_id uuid, p_status text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if p_status not in ('active', 'sold', 'removed') then raise exception 'حالة غير معروفة'; end if;
+  update market_items set status = p_status, updated_at = now()
+    where id = p_id and (seller_id = auth.uid() or is_admin());
+  if not found then raise exception 'الإعلان مو إلك'; end if;
+end $$;
+grant execute on function public.market_set_status(uuid, text) to authenticated;
+
+create or replace function public.market_list(p_category text default null, p_q text default null,
+  p_before timestamptz default null, p_seller uuid default null, p_limit int default 30) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(x order by (x->>'created_at')::timestamptz desc), '[]'::jsonb) from (
+    select to_jsonb(m) || jsonb_build_object('seller', jsonb_build_object('id', u.id, 'username', u.username,
+        'display_name', u.display_name, 'avatar_url', u.avatar_url, 'is_verified', u.is_verified, 'is_owner', u.is_owner)) as x
+    from market_items m join profiles u on u.id = m.seller_id
+    where auth.uid() is not null
+      and (m.status = 'active' or (p_seller is not null and m.seller_id = auth.uid() and m.status <> 'removed'))
+      and not u.is_banned and not is_blocked_between(auth.uid(), m.seller_id)
+      and (p_seller is null or m.seller_id = p_seller)
+      and (p_category is null or m.category = p_category)
+      and (p_q is null or btrim(p_q) = '' or m.title ilike '%' || btrim(p_q) || '%' or m.description ilike '%' || btrim(p_q) || '%')
+      and (p_before is null or m.created_at < p_before)
+    order by m.created_at desc
+    limit least(greatest(coalesce(p_limit, 30), 1), 60)
+  ) t;
+$$;
+grant execute on function public.market_list(text, text, timestamptz, uuid, int) to authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

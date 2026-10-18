@@ -18,12 +18,15 @@ import '../../repositories/user_repositories.dart';
 import '../../services/core_services.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
+import '../../widgets/reactions.dart';
 import '../admin/admin_screen.dart';
 import '../profile/profile_screens.dart';
 import '../live/live_screens.dart';
 import 'community.dart';
 import 'image_editor.dart';
 import 'stories.dart';
+import '../reels/reels_screen.dart';
+import '../market/market_screens.dart';
 
 /// قائمة منشورات قابلة لإعادة الاستخدام (الصفحة الرئيسية + ملف المستخدم).
 class PostsController extends ChangeNotifier {
@@ -86,6 +89,17 @@ class PostsController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// تفاعل (أو null = شيل التفاعل) — يتحدث فورًا وبعدين يتأكد بالخادم
+  Future<void> react(Post p, String? r) async {
+    if (p.myReaction == r) return;
+    replace(p.withReaction(r));
+    try {
+      r == null ? await repo.unlike(p.id) : await repo.like(p.id, r);
+    } catch (_) {
+      replace(p);
+    }
+  }
+
   Future<void> toggleLike(Post p) async {
     final liked = !p.likedByMe;
     replace(p.copyWith(likedByMe: liked, likeCount: p.likeCount + (liked ? 1 : -1)));
@@ -99,6 +113,11 @@ class PostsController extends ChangeNotifier {
 
 class FeedTab extends StatefulWidget {
   const FeedTab({super.key});
+
+  static VoidCallback? _toTop;
+
+  /// الضغط على «الرئيسية» وانت بيها: يرجع لأول منشور (وإذا انت فوك يحدّث) مثل فيسبوك
+  static void scrollToTop() => _toTop?.call();
   @override
   State<FeedTab> createState() => _FeedTabState();
 }
@@ -127,6 +146,15 @@ class _FeedTabState extends State<FeedTab> {
     _scroll.addListener(() {
       if (_scroll.position.pixels > _scroll.position.maxScrollExtent - 600) _ctrl.loadMore();
     });
+    FeedTab._toTop = () {
+      if (!_scroll.hasClients) return;
+      if (_scroll.offset < 40) {
+        _ctrl.refresh();
+        _stories.currentState?.reload();
+      } else {
+        _scroll.animateTo(0, duration: const Duration(milliseconds: 420), curve: Curves.easeOutCubic);
+      }
+    };
   }
 
   @override
@@ -172,6 +200,16 @@ class _FeedTabState extends State<FeedTab> {
                             style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Colors.white)),
                       ),
                       const Spacer(),
+                      IconButton(
+                        tooltip: 'ريلز',
+                        onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ReelsScreen())),
+                        icon: const Icon(Icons.slow_motion_video_rounded, color: AppColors.pink),
+                      ),
+                      IconButton(
+                        tooltip: 'السوق',
+                        onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MarketScreen())),
+                        icon: const Icon(Icons.storefront_rounded, color: AppColors.cyan),
+                      ),
                       IconButton(
                         tooltip: 'البث المباشر',
                         onPressed: () =>
@@ -350,26 +388,58 @@ class PostCard extends StatelessWidget {
                 ),
               ),
             ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-            child: Row(
-              children: [
-                TextButton.icon(
-                  onPressed: () => controller.toggleLike(post),
-                  icon: Icon(post.likedByMe ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                      color: post.likedByMe ? AppColors.pink : null),
-                  label: Text('${post.likeCount}'),
-                ),
-                TextButton.icon(
-                  onPressed: () => openPost(context, post.id, controller: controller),
-                  icon: const Icon(Icons.mode_comment_outlined),
-                  label: Text('${post.commentCount}'),
-                ),
-                const Spacer(),
-                Text('${post.likeCount} إعجاب', style: TextStyle(fontSize: 12, color: scheme.onSurface.withValues(alpha: 0.5))),
-                const SizedBox(width: 10),
-              ],
+          if (post.shared != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 2, 10, 8),
+              child: SharedPostEmbed(post: post.shared!),
+            )
+          else if (post.sharedPostId != null)
+            Container(
+              margin: const EdgeInsets.fromLTRB(10, 2, 10, 8),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12), border: Border.all(color: scheme.outlineVariant)),
+              child: const Text('هذا المحتوى غير متاح حاليًا (انحذف أو صاحبه غيّر من يشوفه).'),
             ),
+          // ملخص: التفاعلات يمين، والتعليقات والمشاركات يسار (مثل فيسبوك)
+          if (post.likeCount > 0 || post.commentCount > 0 || post.shareCount > 0)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 2, 12, 0),
+              child: Row(children: [
+                ReactionSummary(post: post),
+                const Spacer(),
+                if (post.commentCount > 0)
+                  InkWell(
+                    onTap: () => openPost(context, post.id, controller: controller),
+                    child: Text('${post.commentCount} تعليق', style: TextStyle(fontSize: 13, color: Theme.of(context).hintColor)),
+                  ),
+                if (post.commentCount > 0 && post.shareCount > 0)
+                  Text('  ·  ', style: TextStyle(color: Theme.of(context).hintColor)),
+                if (post.shareCount > 0)
+                  Text('${post.shareCount} مشاركة', style: TextStyle(fontSize: 13, color: Theme.of(context).hintColor)),
+              ]),
+            ),
+          const Divider(height: 10, indent: 12, endIndent: 12),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 2),
+            child: Row(children: [
+              Expanded(child: ReactionButton(current: post.myReaction, onChanged: (r) => controller.react(post, r))),
+              Expanded(
+                child: _ActionBtn(
+                  icon: Icons.mode_comment_outlined,
+                  label: 'تعليق',
+                  onTap: () => openPost(context, post.id, controller: controller),
+                ),
+              ),
+              Expanded(
+                child: _ActionBtn(
+                  icon: Icons.reply_rounded,
+                  flip: true,
+                  label: 'مشاركة',
+                  onTap: () => showSharePost(context, post.shared ?? post, controller: controller),
+                ),
+              ),
+            ]),
           ),
         ],
       ),
@@ -418,6 +488,137 @@ class PostCard extends StatelessWidget {
 
   void _openProfile(BuildContext context) =>
       Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: post.authorId)));
+}
+
+class _ActionBtn extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool flip;
+  const _ActionBtn({required this.icon, required this.label, required this.onTap, this.flip = false});
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.75);
+    Widget ic = Icon(icon, size: 21, color: c);
+    if (flip) ic = Transform.flip(flipX: true, child: ic);
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          ic,
+          const SizedBox(width: 6),
+          Text(label, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5, color: c)),
+        ]),
+      ),
+    );
+  }
+}
+
+/// المنشور الأصلي داخل منشور المشاركة
+class SharedPostEmbed extends StatelessWidget {
+  final Post post;
+  const SharedPostEmbed({super.key, required this.post});
+  @override
+  Widget build(BuildContext context) {
+    final a = post.author;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => openPost(context, post.id),
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12), border: Border.all(color: Theme.of(context).colorScheme.outlineVariant)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          if (post.videoUrl != null)
+            PostVideo(key: ValueKey('s${post.videoUrl}'), url: post.videoUrl, capcut: post.madeWith == 'capcut')
+          else if (post.imageUrl != null)
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 360),
+              child: CachedNetworkImage(
+                imageUrl: post.imageUrl!,
+                fit: BoxFit.cover,
+                width: double.infinity,
+                memCacheWidth: 1080,
+                fadeInDuration: const Duration(milliseconds: 90),
+                placeholder: (_, __) => Container(height: 220, color: Colors.black12),
+                errorWidget: (_, __, ___) => const SizedBox(height: 60, child: Icon(Icons.broken_image_outlined)),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+            child: Row(children: [
+              Avatar(url: a?.avatarUrl, name: a?.displayName ?? '', size: 32),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  NameWithBadge(a?.displayName ?? '', verified: a?.verified ?? false, style: const TextStyle(fontWeight: FontWeight.w800)),
+                  Text(Fmt.chatListTime(post.createdAt), style: const TextStyle(fontSize: 11.5)),
+                ]),
+              ),
+            ]),
+          ),
+          if (post.content.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+              child: RichPostText(text: post.content, spanBuilder: PostCard._mentions, style: const TextStyle(fontSize: 14.5, height: 1.5)),
+            )
+          else
+            const SizedBox(height: 8),
+        ]),
+      ),
+    );
+  }
+}
+
+/// مشاركة منشور على صفحتي مع كلام فوقه (مثل فيسبوك)
+Future<void> showSharePost(BuildContext context, Post post, {PostsController? controller}) async {
+  final text = TextEditingController();
+  final me = context.read<SessionProvider>().profile;
+  final ok = await showModalBottomSheet<bool>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (c) => Padding(
+      padding: EdgeInsets.fromLTRB(16, 0, 16, MediaQuery.viewInsetsOf(c).bottom + 16),
+      child: SingleChildScrollView(
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            Avatar(url: me?.avatarUrl, name: me?.displayName ?? '', size: 42),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(me?.displayName ?? '', style: const TextStyle(fontWeight: FontWeight.w800)),
+                const Text('مشاركة على صفحتك · عام 🌐', style: TextStyle(fontSize: 12)),
+              ]),
+            ),
+          ]),
+          const SizedBox(height: 10),
+          TextField(
+            controller: text,
+            autofocus: true,
+            minLines: 2,
+            maxLines: 6,
+            maxLength: 2000,
+            decoration: const InputDecoration(hintText: 'قل شيئًا عن هذا...', border: InputBorder.none, filled: false),
+          ),
+          SharedPostEmbed(post: post),
+          const SizedBox(height: 14),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('شارك الآن')),
+        ]),
+      ),
+    ),
+  );
+  if (ok != true || !context.mounted) return;
+  try {
+    await PostRepository().share(post.id, text.text);
+    controller?.replace(post.copyWith(shareCount: post.shareCount + 1));
+    controller?.refresh();
+    if (context.mounted) showSnack(context, 'تمت مشاركة المنشور على صفحتك ✅');
+  } catch (e) {
+    if (context.mounted) showSnack(context, friendlyError(e), error: true);
+  }
 }
 
 Future<void> openPost(BuildContext context, String postId, {PostsController? controller}) {

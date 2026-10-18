@@ -58,7 +58,8 @@ class _NotificationsTabState extends State<NotificationsTab> {
         'group_added' => Icons.group_add_rounded,
         'mention' => Icons.alternate_email_rounded,
         'broadcast' => Icons.campaign_rounded,
-        'post_like' => Icons.favorite_rounded,
+        'post_like' => Icons.thumb_up_alt_rounded,
+        'post_share' => Icons.share_rounded,
         'warning' => Icons.warning_amber_rounded,
         'post_comment' => Icons.mode_comment_rounded,
         'comment_reply' => Icons.reply_rounded,
@@ -77,7 +78,23 @@ class _NotificationsTabState extends State<NotificationsTab> {
         _ => Icons.notifications_rounded,
       };
 
+  /// الإشعار اللي تضغطه بس يصير مقروء (الباقي يبقى مثل ما هو)
+  void _markOne(AppNotification n) {
+    if (n.read) return;
+    final hub = context.read<ChatHub>();
+    setState(() {
+      final i = _items.indexWhere((x) => x.id == n.id);
+      if (i >= 0) {
+        _items[i] = AppNotification(
+            id: n.id, type: n.type, title: n.title, body: n.body, data: n.data, read: true, createdAt: n.createdAt);
+      }
+    });
+    if (hub.unreadNotifications > 0) hub.unreadNotifications--;
+    hub.notifs.markRead(n.id).then((_) => hub.refresh()).catchError((_) {});
+  }
+
   void _open(AppNotification n) {
+    _markOne(n);
     if (n.type == 'gift' || n.type == 'wallet' || n.type == 'withdraw') {
       final owner = context.read<SessionProvider>().profile?.isOwner ?? false;
       Navigator.push(

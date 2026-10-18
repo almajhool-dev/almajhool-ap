@@ -52,6 +52,23 @@ class _FxBackgroundState extends State<FxBackground> with WidgetsBindingObserver
     }
   }
 
+  Timer? _resume;
+  void _pause() {
+    _resume?.cancel();
+    if (_timer != null) {
+      _timer?.cancel();
+      _timer = null;
+      _sw.stop();
+    }
+  }
+
+  void _resumeSoon() {
+    _resume?.cancel();
+    _resume = Timer(const Duration(milliseconds: 350), () {
+      if (mounted) _sync();
+    });
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState s) {
     if (s == AppLifecycleState.resumed) {
@@ -68,6 +85,7 @@ class _FxBackgroundState extends State<FxBackground> with WidgetsBindingObserver
     _fx.removeListener(_onFx);
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    _resume?.cancel();
     _clock.dispose();
     super.dispose();
   }
@@ -80,7 +98,17 @@ class _FxBackgroundState extends State<FxBackground> with WidgetsBindingObserver
       RepaintBoundary(
         child: CustomPaint(painter: _FxPainter(_clock, th, dark, _on)),
       ),
-      widget.child,
+      // أثناء التمرير نوقف حركة الخلفية حتى يبقى التصفح سريع وسلس
+      NotificationListener<ScrollNotification>(
+        onNotification: (n) {
+          if (n.depth == 0 || n.metrics.axis == Axis.vertical) {
+            if (n is ScrollStartNotification) _pause();
+            if (n is ScrollEndNotification) _resumeSoon();
+          }
+          return false;
+        },
+        child: widget.child,
+      ),
     ]);
   }
 }

@@ -97,6 +97,9 @@ class NotificationRepository {
     return r.length;
   }
 
+  Future<void> markRead(String id) =>
+      supa.from('notifications').update({'read': true}).eq('id', id).eq('user_id', myId!);
+
   Future<void> markAllRead() =>
       supa.from('notifications').update({'read': true}).eq('user_id', myId!).eq('read', false);
 

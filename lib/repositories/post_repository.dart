@@ -21,11 +21,13 @@ class PostRepository {
     final ids = rows.map((r) => r['id'] as String).toList();
     final liked = await supa
         .from('post_likes')
-        .select('post_id')
+        .select('post_id, reaction')
         .eq('user_id', myId!)
         .inFilter('post_id', ids);
-    final set = liked.map((e) => e['post_id'] as String).toSet();
-    return rows.map((r) => Post.fromMap(r, liked: set.contains(r['id']))).toList();
+    final map = {for (final e in liked) e['post_id'] as String: e['reaction'] as String?};
+    return rows
+        .map((r) => Post.fromMap({...r, '_reaction': map[r['id']]}, liked: map.containsKey(r['id'])))
+        .toList();
   }
 
   Future<List<Post>> feed({DateTime? before, String? authorId}) async {
@@ -66,6 +68,11 @@ class PostRepository {
       supa.rpc('edit_post', params: {'pid': postId, 'new_content': content.trim()});
 
   Future<Post?> one(String id) async {
+    try {
+      final j = await supa.rpc('post_one', params: {'p_id': id});
+      if (j is Map) return Post.fromMap(Map<String, dynamic>.from(j), liked: j['_liked'] == true);
+      if (j == null) return null;
+    } catch (_) {}
     final r = await supa.from('posts').select('*, $_author').eq('id', id).maybeSingle();
     if (r == null) return null;
     return (await _withLikes([r])).first;
@@ -157,8 +164,29 @@ class PostRepository {
     return r.map((e) => e['user_id'] as String).toList();
   }
 
-  Future<void> like(String postId) =>
-      supa.from('post_likes').upsert({'post_id': postId, 'user_id': myId!});
+  Future<void> like(String postId, [String reaction = 'like']) =>
+      supa.from('post_likes').upsert({'post_id': postId, 'user_id': myId!, 'reaction': reaction});
+
+  /// مشاركة منشور على صفحتي مع كلام فوقه (مثل فيسبوك)
+  Future<void> share(String postId, String caption) async {
+    await supa.from('posts').insert({
+      'author_id': myId!,
+      'content': caption.trim(),
+      'shared_post_id': postId,
+    });
+  }
+
+  /// منو تفاعل على المنشور
+  Future<List<Map<String, dynamic>>> reactors(String postId, {String? reaction}) async {
+    final r = await supa.rpc('post_reactors', params: {'p_post': postId, 'p_reaction': reaction});
+    return [for (final e in r as List) Map<String, dynamic>.from(e as Map)];
+  }
+
+  /// الريلز: منشورات الفيديو
+  Future<List<Post>> reels({DateTime? before}) async {
+    final r = await supa.rpc('reels_page', params: {'p_before': before?.toUtc().toIso8601String(), 'p_limit': 10}) as List;
+    return [for (final e in r) Post.fromMap(Map<String, dynamic>.from(e as Map), liked: (e as Map)['_liked'] == true)];
+  }
 
   Future<void> unlike(String postId) =>
       supa.from('post_likes').delete().eq('post_id', postId).eq('user_id', myId!);
