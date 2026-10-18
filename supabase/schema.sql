@@ -7713,5 +7713,32 @@ exception when others then raise notice 'v59: %', sqlerrm;
 end $$;
 
 
+-- اختبار المنشور التلقائي من GitHub (نفس إثبات الهوية؛ ما يرجّع أي مفتاح)
+create or replace function public.ai_autopost_gh(p_gh text, p_force boolean) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare c ai_config;
+begin
+  if not _gh_verify(p_gh) then return jsonb_build_object('error', 'unauthorized'); end if;
+  if p_force then
+    insert into private_settings(key, value) values ('autopost_force', '1')
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end if;
+  select * into c from ai_config where id = 1;
+  return jsonb_build_object(
+    'on', c.autopost, 'image', c.autopost_image, 'model_image', c.model_image, 'quality', c.image_quality,
+    'key_openai', exists(select 1 from private_settings where key = 'ai_key_openai'),
+    'text_keys', (select coalesce(jsonb_agg(replace(key, 'ai_key_', '')), '[]'::jsonb) from private_settings
+                  where key in ('ai_key_gemini', 'ai_key_groq', 'ai_key_openrouter', 'ai_key_anthropic')),
+    'first_provider', c.first_provider, 'forced', exists(select 1 from private_settings where key = 'autopost_force'),
+    'news_ready', (select count(*) from ai_news where used_at is null and added_at > now() - interval '4 days'),
+    'recent', (select coalesce(jsonb_agg(x order by x.id desc), '[]'::jsonb) from (
+       select a.id, a.kind, left(a.topic, 80) topic, a.status, a.attempts, a.info, a.created_at, a.published_at,
+              (select p.image_url is not null from posts p where p.id = a.post_id) has_image,
+              left(a.content, 400) preview
+       from ai_autoposts a order by a.id desc limit 4) x));
+end $$;
+revoke execute on function public.ai_autopost_gh(text, boolean) from public;
+grant execute on function public.ai_autopost_gh(text, boolean) to anon, authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

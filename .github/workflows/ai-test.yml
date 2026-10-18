@@ -1,0 +1,29 @@
+name: AI autopost test
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Publish a new post now'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Status / force
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          req = urllib.request.Request("https://smjkxsqvdpywumghvnfv.supabase.co/rest/v1/rpc/ai_autopost_gh",
+              data=json.dumps({"p_gh": os.environ["GH_TOKEN"], "p_force": os.environ.get("FORCE") == "true"}).encode(),
+              headers={"apikey": "sb_publishable_xqWRKqnOIKKqKgPJrdP5TA_GA7PCSiV", "Content-Type": "application/json"}, method="POST")
+          print(json.dumps(json.loads(urllib.request.urlopen(req, timeout=60).read()), ensure_ascii=False, indent=1))
+          PY

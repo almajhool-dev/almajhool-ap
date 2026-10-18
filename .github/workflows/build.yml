@@ -13,6 +13,7 @@ on:
       - 'tool/push_refresh.py'
       - '.github/workflows/ai-worker.yml'
       - 'tool/ai_worker.py'
+      - '.github/workflows/ai-test.yml'
       - 'supabase/**'
       - 'tool/rotation-test/**'
       - 'tool/startup-test/**'
