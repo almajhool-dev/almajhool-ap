@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 
+import '../../services/video_cache.dart';
 import '../../services/core_services.dart';
 import '../../services/xfile_util.dart';
 import '../../utils/helpers.dart';
@@ -212,11 +213,16 @@ class _PostVideoState extends State<PostVideo> {
     if (!_auto) _init();
   }
 
-  void _init() {
-    if (_c != null) return;
-    final c = widget.file != null
-        ? videoFromXFile(widget.file!)
-        : VideoPlayerController.networkUrl(Uri.parse(widget.url!));
+  bool _starting = false;
+
+  Future<void> _init() async {
+    if (_c != null || _starting) return;
+    _starting = true;
+    final c = widget.file != null ? videoFromXFile(widget.file!) : await VideoCache.controller(widget.url!);
+    if (!mounted) {
+      c.dispose();
+      return;
+    }
     _c = c;
     c.setLooping(true);
     if (_auto) c.setVolume(0); // يبدي بدون صوت، وتضغط السماعة تشغّل الصوت

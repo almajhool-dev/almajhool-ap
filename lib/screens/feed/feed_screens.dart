@@ -28,6 +28,7 @@ import 'stories.dart';
 import '../../services/video_shrink.dart';
 import '../../services/post_uploader.dart';
 import '../../services/cdn.dart';
+import '../../services/video_cache.dart';
 import '../reels/reels_screen.dart';
 import '../market/market_screens.dart';
 
@@ -71,6 +72,7 @@ class PostsController extends ChangeNotifier {
   void _prefetch(List<Post> list) {
     Cdn.prefetch(list.take(12).map((p) => p.imageUrl ?? p.shared?.imageUrl));
     Cdn.prefetch(list.take(12).map((p) => p.author?.avatarUrl), width: 144);
+    VideoCache.prefetch(list.map((p) => p.videoUrl ?? p.shared?.videoUrl));
   }
 
   Future<void> loadMore() async {

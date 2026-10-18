@@ -6,6 +6,7 @@ import '../../repositories/post_repository.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../../widgets/reactions.dart';
+import '../../services/video_cache.dart';
 import '../feed/feed_screens.dart';
 import '../profile/profile_screens.dart';
 
@@ -110,6 +111,7 @@ class _ReelsScreenState extends State<ReelsScreen> {
                     itemCount: posts.length,
                     onPageChanged: (i) {
                       setState(() => _current = i);
+                      VideoCache.prefetch(posts.skip(i + 1).take(3).map((p) => p.videoUrl));
                       if (_more && i >= posts.length - 3) _load(more: true);
                     },
                     itemBuilder: (_, i) => _ReelPage(
@@ -148,7 +150,11 @@ class _ReelPageState extends State<_ReelPage> {
   Future<void> _init() async {
     final url = widget.post.videoUrl;
     if (url == null) return;
-    final v = VideoPlayerController.networkUrl(Uri.parse(url));
+    final v = await VideoCache.controller(url);
+    if (!mounted) {
+      v.dispose();
+      return;
+    }
     _v = v;
     try {
       await v.initialize();
