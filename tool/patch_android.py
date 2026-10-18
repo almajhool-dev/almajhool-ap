@@ -611,6 +611,12 @@ class MainActivity : FlutterActivity() {
                         if (tp != 0) found.add("tracer")
                     } catch (t: Throwable) {}
                     if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) found.add("debuggable")
+                    // مصحح أخطاء متصل بالتطبيق وهو شغال
+                    try { if (android.os.Debug.isDebuggerConnected() || android.os.Debug.waitingForDebugger()) found.add("debugger") } catch (t: Throwable) {}
+                    // مكتبات التلاعب محمّلة داخل التطبيق
+                    for (c in listOf("de.robv.android.xposed.XposedBridge", "com.saurik.substrate.MS")) {
+                        try { Class.forName(c); found.add("class:" + c.substringAfterLast('.')) } catch (t: Throwable) {}
+                    }
                     runOnUiThread { result.success(found) }
                     }.start()
                 } else if (call.method == "sdk") {

@@ -16,6 +16,7 @@ import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../../widgets/fx.dart';
 import '../../services/fx_settings.dart';
+import 'about_screen.dart';
 import 'themes_screen.dart';
 import '../admin/admin_screen.dart';
 import '../../services/couple_service.dart';
@@ -397,13 +398,7 @@ class _SettingsTabState extends State<SettingsTab> {
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('عن التطبيق'),
-            onTap: () => showAboutDialog(
-              context: context,
-              applicationName: AppConfig.appName,
-              applicationVersion: UpdateService.currentVersion,
-              applicationIcon: const BrandLogo(size: 48, showName: false),
-              children: const [Text('تطبيق تواصل ومراسلة آمن وسريع.\n\nصُنع بواسطة المبرمج المجهول')],
-            ),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AboutScreen())),
           ),
           const Divider(),
           ListTile(

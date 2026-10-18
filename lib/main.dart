@@ -10,6 +10,7 @@ import 'providers/providers.dart';
 import 'screens/feed/community.dart';
 import 'screens/gate.dart';
 import 'widgets/fx.dart';
+import 'services/cdn.dart';
 import 'services/background_service.dart';
 import 'services/call_service.dart';
 import 'services/core_services.dart';
@@ -32,6 +33,7 @@ Future<void> main() async {
 
   await step(() => initializeDateFormatting('ar'), 3);
   await CacheService.init();
+  Cdn.init();
   await step(RtcSafety.init, 3);
   // بالتوازي حتى يفتح التطبيق أسرع
   await Future.wait([
