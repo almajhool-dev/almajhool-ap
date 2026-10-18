@@ -7417,7 +7417,7 @@ create or replace function public._autopost_tick() returns void
 language plpgsql security definer set search_path = public, extensions as $$
 declare cfg ai_config; own uuid := _owner_id(); force boolean; last_ok timestamptz; last_err timestamptz;
   nw ai_news; v_kind text; v_topic text; n int; recent text; facts text; usr text; sys text; rsys text;
-  raw text; post text; img text; rv text; ap_id bigint; d record; last_app timestamptz; last_tip timestamptz; app_item text;
+  raw text; post text; img text; rv text; ap_id bigint; d record; last_app timestamptz; last_tip timestamptz; app_item text; last_kind text;
     app_topics text[] := array[
       'تعريف بتطبيق VYFRI وشلون انصمم|VYFRI is an Arabic social network and messenger in one app: posts, stories, private and group chats, voice and video calls, live streaming, and a smart assistant. It is designed and built by its owner with Flutter for Android and a Supabase/PostgreSQL server. Security and privacy rules run on the server itself, so no user can read other people''s chats even with a modified app. Updates arrive inside the app.',
       'المحادثات والمجموعات|Private chats and group chats with images, videos, voice messages and files; forwarding messages to other chats; pinning important messages in a chat; it keeps working on weak internet and sends messages when the connection returns. How: open a chat and press the + button to attach media.',
@@ -7546,7 +7546,7 @@ begin
   select max(created_at) into last_app from ai_autoposts where kind = 'app' and status <> 'error';
   select max(created_at) into last_tip from ai_autoposts where kind = 'tip' and status <> 'error';
   for n in 1..15 loop
-    select * into nw from ai_news where used_at is null and added_at > now() - interval '3 days'
+    select * into nw from ai_news where used_at is null and added_at > now() - interval '10 days'
       order by coalesce(published_at, added_at) desc limit 1;
     exit when nw.url is null;
     if _news_dup(nw.url, nw.title) then
@@ -7557,7 +7557,11 @@ begin
     exit;
   end loop;
 
-  if last_app is null or last_app < now() - interval '30 minutes' then
+  -- بالتناوب: منشور يشرح التطبيق بالتفصيل ← منشور أمن سيبراني (خبر إذا موجود، وإلا موضوع جديد) ← ...
+  select kind into last_kind from ai_autoposts where status <> 'error' order by id desc limit 1;
+  -- بدون خبر جديد: مو أسرع من كل 5 دقايق (حماية حصة الذكاء الاصطناعي)
+  if not force and nw.url is null and last_ok is not null and last_ok > now() - interval '5 minutes' then return; end if;
+  if last_kind is distinct from 'app' then
     v_kind := 'app';
     nw := null;
     select t into app_item from unnest(app_topics) t
@@ -7577,19 +7581,20 @@ begin
     facts := 'Source: ' || nw.source || E'\nHeadline: ' || nw.title ||
       E'\nPublished: ' || coalesce(to_char(nw.published_at, 'YYYY-MM-DD'), 'recent') ||
       E'\nSummary from the source: ' || coalesce(nullif(nw.summary, ''), '(no summary, only the headline is known)');
-  elsif force or last_tip is null or last_tip < now() - interval '15 minutes' then
+  else
     v_kind := 'tip';
     select t into v_topic from unnest(tips) t
       where t not in (select a.topic from ai_autoposts a where a.kind = 'tip' order by a.id desc limit 40)
       order by random() limit 1;
     v_topic := coalesce(v_topic, tips[1 + floor(random() * array_length(tips, 1))::int]);
-    facts := 'Cybersecurity / information security educational topic: ' || v_topic ||
+    -- نص المرات: الكاتب يختار بنفسه موضوع أمن سيبراني جديد ما انكتب قبل
+    if random() < 0.5 then v_topic := 'AI: موضوع جديد'; end if;
+    facts := case when v_topic like 'AI:%'
+      then 'Choose YOURSELF one new, specific and useful cybersecurity / information security topic (threats, scams, privacy, social engineering, malware, reverse engineering, Python security, protection) that is NOT in the recent posts list, and write about it'
+      else 'Cybersecurity / information security educational topic: ' || v_topic end ||
       E'\n(Use only well-established, widely accepted knowledge. No statistics unless they are famous and certain. ' ||
       'For Python topics you may include one SHORT, safe, defensive code snippet (max 10 lines) for the reader''s own devices. ' ||
       'For reverse engineering, social engineering or hacking topics: educational and defensive only, stress legal use, never give attack instructions.)';
-  else
-    delete from private_settings where key = 'autopost_force';
-    return; -- ماكو شي جديد هسه: ما ننشر حتى ما نكرر
   end if;
   delete from private_settings where key = 'autopost_force';
 
@@ -7602,12 +7607,12 @@ begin
       E'\n- Reason carefully in your head first and check every sentence before you output; output only the final result.' ||
       E'\n\nPOST FORMAT (plain text, NO markdown symbols like ** or # headings; emojis are welcome):' ||
       E'\n1) First line: a short eye-catching title that starts with one fitting emoji.' ||
-      E'\n2) Empty line, then a line starting with "🔴 الميزة:" and 2-3 sentences explaining it simply.' ||
-      E'\n3) A line "🟡 شلون تستخدمها:" then 2 to 4 short steps, each on its own line starting with "✅ " (only steps supported by the facts).' ||
+      E'\n2) Empty line, then a line starting with "🔴 الميزة:" and 3-5 sentences explaining it in full detail: what it is, how it works and what makes it special.' ||
+      E'\n3) A line "🟡 شلون تستخدمها:" then 3 to 7 clear steps, each on its own line starting with "✅ " (only steps supported by the facts).' ||
       E'\n4) A line starting with "🟢 ليش تفيدك:" and 1-2 sentences.' ||
       E'\n5) A line starting with "💡 " inviting users to send their ideas from الإعدادات ← اقترح ميزة للتطبيق 💡.' ||
       E'\n6) Last line: 3 to 5 hashtags including #VYFRI and #تطبيق_VYFRI.' ||
-      E'\nTotal length 500 to 1200 characters. Leave an empty line between sections.' ||
+      E'\nTotal length 1200 to 2400 characters: explain everything in the facts fully and clearly, like a complete guide. Leave an empty line between sections.' ||
       E'\n\nIMAGE PROMPT: Also write an English prompt for an AI image generator: a striking, modern, premium illustration of a smartphone social app experience that matches this exact feature, glowing UI shapes (no readable text), cinematic lighting, deep navy, neon cyan and electric purple colors, square composition, highly detailed. Absolutely NO text, letters, numbers, logos or real people''s faces.' ||
       E'\n\nREPLY WITH EXACTLY THIS AND NOTHING ELSE:\n[POST]\n(the post)\n[/POST]\n[IMAGE]\n(the image prompt)\n[/IMAGE]';
   else
@@ -7667,6 +7672,7 @@ begin
       'A striking modern digital illustration about cybersecurity: ' || v_topic ||
       '. Glowing shield and padlock, network lines, cinematic lighting, deep navy and neon cyan colors, square composition, no text, no letters, no logos.');
 
+    if v_topic like 'AI:%' then v_topic := left(split_part(post, E'\n', 1), 200); end if;
     insert into ai_autoposts(kind, topic, source_url, content, image_prompt, status)
       values (v_kind, left(v_topic, 300), nw.url, post, left(img, 3000), 'need_image')
       returning id into ap_id;
