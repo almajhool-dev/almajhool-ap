@@ -7435,7 +7435,7 @@ declare cfg ai_config; own uuid := _owner_id(); force boolean; last_ok timestamp
       'مساحة الشريك 💞|An optional private space for two partners: link accounts with a code, a shared journey, a memories wall and a question of the day. How: الإعدادات ← مساحة الشريك 💞.',
       'السمات والخلفيات المتحركة|Animated app backgrounds and themes (for example cybersecurity, social, and waves styles), and the owner can publish new themes for everyone. You can turn animations off to save battery.',
       'الأمان داخل التطبيق|Screenshots and screen recording are blocked inside the app to protect conversations; the app checks its own integrity and detects tampering tools; account recovery uses a private recovery code without needing an email; login also works with Google or with a phone number verified through Telegram.',
-      'المساعد الذكي|A smart AI assistant runs the owner''s account: it replies to messages and comments in the same language and dialect of each person (any language in the world) and publishes cybersecurity and technology news with matching images.',
+      'المساعد الذكي|A smart AI assistant runs the owner''s account: it replies to messages and comments in the same language and dialect of each person (any language in the world) and publishes cybersecurity, information security, social engineering, reverse engineering and Python security posts with matching images.',
       'اقترح ميزة للتطبيق|Users can suggest new features directly to the app owner from: الإعدادات ← اقترح ميزة للتطبيق 💡. The owner reads the suggestions and new features are added based on them.'];
   tips text[] := array[
     'How to spot phishing messages on WhatsApp, Telegram and SMS',
@@ -7485,7 +7485,30 @@ declare cfg ai_config; own uuid := _owner_id(); force boolean; last_ok timestamp
     'Strong security questions and why they can be a weak spot',
     'Online gaming account theft and how to prevent it',
     'Smart home and security camera privacy risks',
-    'How to report scams and cybercrime and preserve evidence'];
+    'How to report scams and cybercrime and preserve evidence',
+    'Social engineering explained: pretexting, baiting, quid pro quo and tailgating, and how to resist them',
+    'Vishing: fake phone calls from banks or companies and how to verify the caller',
+    'How attackers collect information about you from social media (OSINT) and how to reduce your exposure',
+    'Information security basics: the CIA triad (confidentiality, integrity, availability) explained simply',
+    'What reverse engineering is and how security researchers use it legally to analyze malware',
+    'Introduction to malware analysis: static vs dynamic analysis in a safe sandbox',
+    'Free reverse engineering tools for learning: Ghidra, IDA Free, x64dbg (for legal, defensive use)',
+    'How YARA rules help defenders detect malware',
+    'Python for cybersecurity beginners: why Python is the favorite language of security teams',
+    'Python: checking file integrity with hashlib (SHA-256) to detect tampered files',
+    'Python: writing a simple password strength checker',
+    'Python: checking the HTTP security headers of your own website with the requests library',
+    'Python: learning networking safely with Scapy in your own lab',
+    'Python: generating strong random passwords with the secrets module',
+    'Python: scanning your own computer for open ports with a simple socket script (only on devices you own)',
+    'Python: parsing log files to spot suspicious login attempts',
+    'Capture The Flag (CTF) competitions: the legal way to learn hacking skills',
+    'Phishing email anatomy: the signs inside a fake email',
+    'Zero trust security explained simply',
+    'Encryption at rest vs in transit explained simply',
+    'How to build a career in cybersecurity: skills, certifications and practice labs',
+    'Bug bounty programs: how ethical hackers get paid legally for finding vulnerabilities',
+    'Insider threats and how organizations protect sensitive information'];
 begin
   if own is null then return; end if;
   if not pg_try_advisory_xact_lock(778900) then return; end if;
@@ -7554,14 +7577,16 @@ begin
     facts := 'Source: ' || nw.source || E'\nHeadline: ' || nw.title ||
       E'\nPublished: ' || coalesce(to_char(nw.published_at, 'YYYY-MM-DD'), 'recent') ||
       E'\nSummary from the source: ' || coalesce(nullif(nw.summary, ''), '(no summary, only the headline is known)');
-  elsif force or last_tip is null or last_tip < now() - interval '45 minutes' then
+  elsif force or last_tip is null or last_tip < now() - interval '15 minutes' then
     v_kind := 'tip';
     select t into v_topic from unnest(tips) t
       where t not in (select a.topic from ai_autoposts a where a.kind = 'tip' order by a.id desc limit 40)
       order by random() limit 1;
     v_topic := coalesce(v_topic, tips[1 + floor(random() * array_length(tips, 1))::int]);
-    facts := 'General cybersecurity awareness topic: ' || v_topic ||
-      E'\n(Use only well-established, widely accepted security advice. No statistics unless they are famous and certain.)';
+    facts := 'Cybersecurity / information security educational topic: ' || v_topic ||
+      E'\n(Use only well-established, widely accepted knowledge. No statistics unless they are famous and certain. ' ||
+      'For Python topics you may include one SHORT, safe, defensive code snippet (max 10 lines) for the reader''s own devices. ' ||
+      'For reverse engineering, social engineering or hacking topics: educational and defensive only, stress legal use, never give attack instructions.)';
   else
     delete from private_settings where key = 'autopost_force';
     return; -- ماكو شي جديد هسه: ما ننشر حتى ما نكرر
@@ -7586,7 +7611,7 @@ begin
       E'\n\nIMAGE PROMPT: Also write an English prompt for an AI image generator: a striking, modern, premium illustration of a smartphone social app experience that matches this exact feature, glowing UI shapes (no readable text), cinematic lighting, deep navy, neon cyan and electric purple colors, square composition, highly detailed. Absolutely NO text, letters, numbers, logos or real people''s faces.' ||
       E'\n\nREPLY WITH EXACTLY THIS AND NOTHING ELSE:\n[POST]\n(the post)\n[/POST]\n[IMAGE]\n(the image prompt)\n[/IMAGE]';
   else
-  sys := 'You are a senior cybersecurity and technology journalist and awareness expert who writes posts for the official account of the social app «VYFRI». ' ||
+  sys := 'You are a senior cybersecurity and information security journalist and educator (social engineering, reverse engineering, malware analysis, Python security tools, self-protection) who writes posts for the official account of the social app «VYFRI». ' ||
     'Write in clear, correct Modern Standard Arabic that every Arab reader understands, friendly and professional.' ||
     E'\n\nACCURACY RULES (most important):' ||
     E'\n- Use ONLY the facts given in the input. Never invent numbers, CVE IDs, victim names, dates, versions, prices, quotes or claims that are not in the input.' ||
@@ -7599,9 +7624,9 @@ begin
       case when v_kind = 'news' then '"الخبر:" and 2-3 sentences about what happened.' else '"الفكرة:" and 2-3 sentences explaining the topic simply.' end ||
     E'\n3) A line starting with "🟡 لماذا يهمك:" and 1-2 sentences.' ||
     E'\n4) A line "🟢 ' || case when v_kind = 'news' then 'ماذا تفعل:' else 'كيف تحمي نفسك:' end ||
-      '" then 3 to 5 short practical points, each on its own line starting with "✅ " (for pure technology news: what it means for the reader and practical tips).' ||
+      '" then 3 to 5 short practical protection points, each on its own line starting with "✅ ".' ||
     case when v_kind = 'news' then E'\n5) A line "📰 المصدر: " followed by the source name.' else E'\n5) A line starting with "💡 " with one memorable short tip.' end ||
-    E'\n6) Last line: 3 to 5 relevant hashtags: the first is #الأمن_السيبراني if the topic is about security, otherwise #تكنولوجيا; one of them is #VYFRI.' ||
+    E'\n6) Last line: 3 to 5 relevant hashtags: the first is #الأمن_السيبراني and one of them is #VYFRI (others may be like #أمن_المعلومات #الهندسة_الاجتماعية #الهندسة_العكسية #بايثون when relevant).' ||
     E'\nTotal length 600 to 1400 characters. Leave an empty line between sections.' ||
     E'\n\nIMAGE PROMPT: Also write an English prompt for an AI image generator for a striking, modern, professional illustration about this exact topic: cinematic lighting, futuristic tech colors (deep navy, neon cyan, electric purple), square composition, highly detailed. Absolutely NO text, letters, numbers, logos, brand marks or real people''s faces in the image.' ||
     E'\n\nREPLY WITH EXACTLY THIS AND NOTHING ELSE:\n[POST]\n(the post)\n[/POST]\n[IMAGE]\n(the image prompt)\n[/IMAGE]';
@@ -8507,6 +8532,13 @@ do $$ begin
     insert into private_settings(key, value) values ('v62_every_minute', '1');
   end if;
 exception when others then raise notice 'v62: %', sqlerrm;
+end $$;
+
+-- المالك يريد بس الأمن السيبراني وأمن المعلومات (مو تكنولوجيا عامة): أخبار المواقع العامة ما تنزل
+do $$ begin
+  update ai_news set used_at = now() where used_at is null
+    and source in ('The Verge', 'TechCrunch', 'Ars Technica', 'Engadget', 'Wired', '9to5Google', 'Android Authority', 'MIT Technology Review');
+exception when others then raise notice 'v62 tech purge: %', sqlerrm;
 end $$;
 
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا

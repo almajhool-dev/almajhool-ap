@@ -35,15 +35,13 @@ FEEDS = [
     ("CISA", "https://www.cisa.gov/cybersecurity-advisories/all.xml"),
     ("Malwarebytes Labs", "https://www.malwarebytes.com/blog/feed/index.xml"),
     ("Sophos News", "https://news.sophos.com/en-us/feed/"),
-    # تكنولوجيا عامة
-    ("The Verge", "https://www.theverge.com/rss/index.xml"),
-    ("TechCrunch", "https://techcrunch.com/feed/"),
-    ("Ars Technica", "https://feeds.arstechnica.com/arstechnica/index"),
-    ("Engadget", "https://www.engadget.com/rss.xml"),
-    ("Wired", "https://www.wired.com/feed/rss"),
-    ("9to5Google", "https://9to5google.com/feed/"),
-    ("Android Authority", "https://www.androidauthority.com/feed/"),
-    ("MIT Technology Review", "https://www.technologyreview.com/feed/"),
+    # أبحاث أمنية، هندسة عكسية وتحليل برمجيات خبيثة
+    ("Google Project Zero", "https://googleprojectzero.blogspot.com/feeds/posts/default"),
+    ("PortSwigger Research", "https://portswigger.net/research/rss"),
+    ("Unit 42", "https://unit42.paloaltonetworks.com/feed/"),
+    ("Cisco Talos", "https://blog.talosintelligence.com/rss/"),
+    ("SANS ISC", "https://isc.sans.edu/rssfeed_full.xml"),
+    ("Securelist (Kaspersky)", "https://securelist.com/feed/"),
 ]
 
 
