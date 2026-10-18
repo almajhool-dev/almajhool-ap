@@ -76,7 +76,9 @@ class AuthRepository {
     final auth = await acc.authentication;
     final idToken = auth.idToken;
     if (idToken == null) throw Exception('ما وصل رمز التحقق من Google، تأكد من إعدادات Google');
-    await supa.auth.signInWithIdToken(provider: OAuthProvider.google, idToken: idToken, accessToken: auth.accessToken);
+    // الخادم يتحقق من الرمز عند Google نفسها ويفتح الحساب (ما يحتاج تفعيل Google بلوحة Supabase)
+    final r = ((await supa.rpc('google_login', params: {'p_id_token': idToken})) as Map).cast<String, dynamic>();
+    await supa.auth.signInWithPassword(email: r['email'] as String, password: r['password'] as String);
     return true;
   }
 

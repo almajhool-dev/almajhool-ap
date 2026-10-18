@@ -6375,5 +6375,115 @@ $$;
 revoke execute on function public.live_top_gifters(uuid) from public, anon;
 grant execute on function public.live_top_gifters(uuid) to authenticated;
 
+-- =====================================================================
+--  الإصدار 51: الدخول بحساب Google من الخادم مباشرة.
+--  التطبيق يجيب «رمز كوكل» من نافذة كوكل الرسمية، والخادم يتحقق منه عند كوكل نفسها
+--  (لازم يكون صادر لرقم العميل مال التطبيق + إيميل مؤكد + ما منتهي)، وبعدها يفتح الحساب.
+--  ما يحتاج تفعيل Google بلوحة Supabase.
+-- =====================================================================
+create table if not exists public.google_logins (
+  sub text primary key,
+  user_id uuid not null,
+  last_iat bigint not null default 0,
+  updated_at timestamptz not null default now()
+);
+alter table public.google_logins enable row level security;
+revoke all on public.google_logins from anon, authenticated;
+
+create or replace function public.google_login(p_id_token text) returns jsonb
+language plpgsql security definer set search_path = public, extensions, auth as $$
+declare
+  cid text; r extensions.http_response; j jsonb;
+  em text; v_sub text; v_iat bigint; uid uuid; prov text; pw text;
+  un text; nm text; pic text; g_uid uuid; g_iat bigint;
+begin
+  if not _ip_ok('google_login', 20, 600) then
+    raise exception 'rate_limited: محاولات كثيرة، حاول بعد شوية';
+  end if;
+  select google_web_client_id into cid from app_settings where id = 1;
+  if coalesce(cid, '') = '' then raise exception 'الدخول بحساب Google غير مفعّل حاليًا'; end if;
+  if p_id_token is null or length(p_id_token) > 4096
+     or p_id_token !~ '^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$' then
+    raise exception 'رمز Google غير صالح';
+  end if;
+
+  begin
+    perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '8000');
+  exception when others then null;
+  end;
+  begin
+    select * into r from extensions.http_get('https://oauth2.googleapis.com/tokeninfo?id_token=' || p_id_token);
+  exception when others then
+    raise exception 'ما قدرنا نتواصل ويا Google، حاول مرة ثانية';
+  end;
+  if r.status is distinct from 200 then raise exception 'حساب Google ما انقبل، حاول مرة ثانية'; end if;
+  begin
+    j := r.content::jsonb;
+  exception when others then raise exception 'رد Google غير مفهوم، حاول مرة ثانية';
+  end;
+
+  if j->>'aud' is distinct from cid then raise exception 'رمز Google مو صادر لهذا التطبيق'; end if;
+  if coalesce(j->>'iss', '') not in ('accounts.google.com', 'https://accounts.google.com') then
+    raise exception 'رمز Google غير صالح';
+  end if;
+  if coalesce(j->>'email_verified', '') <> 'true' then raise exception 'إيميل حساب Google غير مؤكد'; end if;
+  if coalesce((j->>'exp')::bigint, 0) < extract(epoch from now())::bigint then
+    raise exception 'انتهت صلاحية رمز Google، حاول مرة ثانية';
+  end if;
+  em := lower(coalesce(j->>'email', ''));
+  v_sub := coalesce(j->>'sub', '');
+  v_iat := coalesce((j->>'iat')::bigint, 0);
+  if em = '' or v_sub = '' then raise exception 'رمز Google ناقص'; end if;
+
+  -- منع إعادة استعمال نفس الرمز مرتين
+  select user_id, last_iat into g_uid, g_iat from google_logins where sub = v_sub for update;
+  if g_uid is not null and v_iat <= g_iat then
+    raise exception 'هذا الرمز مستعمل، حاول مرة ثانية';
+  end if;
+  if g_uid is not null and exists(select 1 from auth.users where id = g_uid) then
+    uid := g_uid;
+  else
+    select id, coalesce(raw_app_meta_data->>'provider', '') into uid, prov
+      from auth.users where lower(email) = em limit 1;
+    if uid is not null and prov <> 'google' then
+      raise exception 'هذا الإيميل مسجّل بكلمة مرور، ادخل بإيميلك وكلمة المرور مالتك';
+    end if;
+  end if;
+
+  pw := encode(gen_random_bytes(24), 'hex');
+  if uid is null then
+    uid := gen_random_uuid();
+    nm := left(coalesce(nullif(btrim(j->>'name'), ''), split_part(em, '@', 1)), 50);
+    pic := nullif(j->>'picture', '');
+    un := left(regexp_replace(split_part(em, '@', 1), '[^a-z0-9_.]', '', 'g'), 20);
+    insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+                            raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+                            confirmation_token, recovery_token, email_change_token_new, email_change)
+    values ('00000000-0000-0000-0000-000000000000', uid, 'authenticated', 'authenticated', em,
+            crypt(pw, gen_salt('bf')), now(),
+            '{"provider":"google","providers":["google","email"]}'::jsonb,
+            jsonb_build_object('username', un, 'full_name', nm, 'picture', pic), now(), now(), '', '', '', '');
+    insert into auth.identities (id, user_id, provider_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
+    values (gen_random_uuid(), uid, uid::text,
+            jsonb_build_object('sub', uid::text, 'email', em, 'email_verified', true),
+            'email', now(), now(), now());
+    begin
+      insert into auth.identities (id, user_id, provider_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
+      values (gen_random_uuid(), uid, v_sub,
+              jsonb_build_object('sub', v_sub, 'email', em, 'email_verified', true, 'name', nm, 'picture', pic),
+              'google', now(), now(), now());
+    exception when others then null;
+    end;
+  else
+    update auth.users set encrypted_password = crypt(pw, gen_salt('bf')), updated_at = now() where id = uid;
+  end if;
+
+  insert into google_logins(sub, user_id, last_iat, updated_at) values (v_sub, uid, v_iat, now())
+    on conflict (sub) do update set user_id = excluded.user_id, last_iat = excluded.last_iat, updated_at = now();
+  return jsonb_build_object('email', em, 'password', pw);
+end $$;
+revoke execute on function public.google_login(text) from public;
+grant execute on function public.google_login(text) to anon, authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
