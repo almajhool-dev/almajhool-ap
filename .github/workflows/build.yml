@@ -12,6 +12,8 @@ on:
       - 'tool/push_refresh.py'
       - 'supabase/**'
       - 'tool/rotation-test/**'
+      - 'tool/startup-test/**'
+      - '.github/workflows/startup-test.yml'
       - '.github/workflows/rotation-test.yml'
       - 'release/**'
       - '.github/workflows/release-control.yml'

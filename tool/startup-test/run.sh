@@ -10,7 +10,10 @@ for v in "$@"; do
   adb install --no-incremental "$v.apk" 2>&1 | tail -2
   adb logcat -c
   adb shell am start -W -n $PKG/.MainActivity 2>&1 | tail -5
-  sleep 40
+  sleep 20
+  adb shell screencap -p /sdcard/s1.png; adb pull /sdcard/s1.png shot1.png >/dev/null 2>&1
+  sleep 25
+  adb shell screencap -p /sdcard/s2.png; adb pull /sdcard/s2.png shot2.png >/dev/null 2>&1
   PID=$(adb shell pidof $PKG | tr -d '\r')
   echo "[$v] pid=$PID"
   adb shell dumpsys activity activities | grep -E "mResumedActivity|topResumedActivity" | head -3

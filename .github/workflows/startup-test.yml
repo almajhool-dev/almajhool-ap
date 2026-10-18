@@ -74,7 +74,7 @@ jobs:
         run: |
           mkdir -p /tmp/logs
           cp startup.log /tmp/logs/ 2>/dev/null || echo "no log" > /tmp/logs/startup.log
-          cp shot.png /tmp/logs/ 2>/dev/null || true
+          cp shot*.png /tmp/logs/ 2>/dev/null || true
           cd /tmp/logs
           git init -q -b r
           git config user.name ci
