@@ -45,6 +45,15 @@ jobs:
           set -e
           [ -f android/app/src/main/AndroidManifest.xml ] || flutter create --org com.almajhool --project-name almajhool_app --platforms android --no-pub .
           python3 tool/patch_android.py
+          # نسخة الفحص بس: نسمح بلقطة الشاشة حتى نشوف شكل التطبيق
+          python3 - <<'PY'
+          import glob
+          for f in glob.glob('android/app/src/main/**/MainActivity.kt', recursive=True):
+              s = open(f).read()
+              s = s.replace('window.setFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE,', 'if (false) window.setFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE,')
+              s = s.replace('else window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)', 'else {}')
+              open(f, 'w').write(s)
+          PY
           for f in android/app/build.gradle.kts android/app/build.gradle; do
             [ -f $f ] && sed -i 's/"armeabi-v7a", "arm64-v8a"/"armeabi-v7a", "arm64-v8a", "x86_64"/; s/'"'"'armeabi-v7a'"'"', '"'"'arm64-v8a'"'"'/'"'"'armeabi-v7a'"'"', '"'"'arm64-v8a'"'"', '"'"'x86_64'"'"'/' $f || true
           done
