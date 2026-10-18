@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'core/config.dart';
 import 'core/theme.dart';
 import 'providers/providers.dart';
+import 'screens/feed/community.dart';
 import 'screens/gate.dart';
 import 'widgets/fx.dart';
 import 'services/background_service.dart';
@@ -72,6 +73,8 @@ class _RootAppState extends State<RootApp> {
       await BackgroundBridge.configure().timeout(const Duration(seconds: 6)).catchError((_) {});
       Future.delayed(const Duration(seconds: 4),
           () => UpdateService.autoCheck(() => CallService.instance.navigatorKey.currentContext));
+      // فيديو مشارك من CapCut (أو أي تطبيق) ← شاشة النشر
+      ShareInbox.bind(CallService.instance.navigatorKey);
       setState(() {
         _ready = true;
         _error = null;

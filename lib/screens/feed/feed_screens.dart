@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -21,6 +22,7 @@ import '../../widgets/common.dart';
 import '../admin/admin_screen.dart';
 import '../profile/profile_screens.dart';
 import '../live/live_screens.dart';
+import 'community.dart';
 import 'image_editor.dart';
 import 'stories.dart';
 
@@ -322,13 +324,17 @@ class PostCard extends StatelessWidget {
           else if (post.content.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 4, 14, 10),
-              child: Text.rich(_mentions(post.content),
+              child: RichPostText(
+                  text: post.content,
+                  spanBuilder: _mentions,
                   style: TextStyle(
                       fontSize: 15.5,
                       height: 1.5,
                       color: post.textColor != null ? Color(post.textColor!) : null)),
             ),
-          if (post.imageUrl != null)
+          if (post.videoUrl != null)
+            PostVideo(key: ValueKey(post.videoUrl), url: post.videoUrl, capcut: post.madeWith == 'capcut')
+          else if (post.imageUrl != null)
             GestureDetector(
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => _NetImageViewer(url: post.imageUrl!))),
               child: ConstrainedBox(
@@ -453,7 +459,9 @@ const kVisibility = <String, (IconData, String)>{
 /// إنشاء منشور أو تعديله: نص بلون، خلفية ملونة، صورة (تبديل/قص/تدوير)، وخصوصية.
 class ComposePostScreen extends StatefulWidget {
   final Post? editing;
-  const ComposePostScreen({super.key, this.editing});
+  final File? sharedVideo; // فيديو مشارك من CapCut أو أي تطبيق
+  final bool sharedCapCut;
+  const ComposePostScreen({super.key, this.editing, this.sharedVideo, this.sharedCapCut = false});
   @override
   State<ComposePostScreen> createState() => _ComposePostScreenState();
 }
@@ -467,8 +475,32 @@ class _ComposePostScreenState extends State<ComposePostScreen> {
   late String _visibility = widget.editing?.visibility ?? 'public';
   List<String> _audience = [];
   bool _busy = false;
+  late File? _newVideo = widget.sharedVideo;
+  late String? _videoUrl = widget.editing?.videoUrl;
+  late bool _capcut = widget.sharedCapCut || widget.editing?.madeWith == 'capcut';
 
-  bool get _hasImage => _newImage != null || _imageUrl != null;
+  bool get _hasVideo => _newVideo != null || _videoUrl != null;
+  bool get _hasImage => _newImage != null || _imageUrl != null || _hasVideo;
+
+  Future<void> _pickVideo() async {
+    final x = await ImagePicker().pickVideo(source: ImageSource.gallery);
+    if (x == null) return;
+    final f = File(x.path);
+    if (await f.length() > 50 * 1024 * 1024) {
+      if (mounted) showSnack(context, 'الفيديو أكبر من 50 ميغابايت، قصّه أو صدّره بحجم أصغر', error: true);
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _newVideo = f;
+        _newImage = null;
+        _imageUrl = null;
+        _bgColor = null;
+        // CapCut يسمّي ملفاته باسمه غالبًا
+        if (x.name.toLowerCase().contains('capcut')) _capcut = true;
+      });
+    }
+  }
 
   @override
   void initState() {
@@ -489,6 +521,8 @@ class _ComposePostScreenState extends State<ComposePostScreen> {
     if (mounted) {
       setState(() {
         _newImage = c;
+        _newVideo = null;
+        _videoUrl = null;
         _bgColor = null;
       });
     }
@@ -533,8 +567,11 @@ class _ComposePostScreenState extends State<ComposePostScreen> {
       await PostRepository().save(
         id: widget.editing?.id,
         content: _text.text,
-        newImage: _newImage,
-        keepImageUrl: _newImage == null ? _imageUrl : null,
+        newImage: _hasVideo ? null : _newImage,
+        keepImageUrl: _hasVideo || _newImage != null ? null : _imageUrl,
+        newVideo: _newVideo,
+        keepVideoUrl: _newVideo == null ? _videoUrl : null,
+        capcut: _hasVideo && _capcut,
         textColor: _textColor,
         bgColor: _hasImage ? null : _bgColor,
         visibility: _visibility,
@@ -698,18 +735,26 @@ class _ComposePostScreenState extends State<ComposePostScreen> {
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(14),
-                  child: _newImage != null
-                      ? Image.memory(_newImage!)
-                      : CachedNetworkImage(imageUrl: _imageUrl!),
+                  child: _hasVideo
+                      ? PostVideo(
+                          key: ValueKey(_newVideo?.path ?? _videoUrl),
+                          file: _newVideo,
+                          url: _newVideo == null ? _videoUrl : null,
+                          capcut: _capcut)
+                      : _newImage != null
+                          ? Image.memory(_newImage!)
+                          : CachedNetworkImage(imageUrl: _imageUrl!),
                 ),
                 PositionedDirectional(
                   top: 8,
                   end: 8,
                   child: IconButton.filled(
-                    tooltip: 'إزالة الصورة',
+                    tooltip: 'إزالة',
                     onPressed: () => setState(() {
                       _newImage = null;
                       _imageUrl = null;
+                      _newVideo = null;
+                      _videoUrl = null;
                     }),
                     icon: const Icon(Icons.close),
                   ),
@@ -724,15 +769,50 @@ class _ComposePostScreenState extends State<ComposePostScreen> {
               OutlinedButton.icon(
                 onPressed: _busy ? null : _pick,
                 icon: const Icon(Icons.photo_library_rounded),
-                label: Text(_hasImage ? 'تبديل الصورة' : 'إضافة صورة'),
+                label: Text(_hasImage && !_hasVideo ? 'تبديل الصورة' : 'إضافة صورة'),
               ),
-              if (_hasImage)
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _pickVideo,
+                icon: const Icon(Icons.videocam_rounded),
+                label: Text(_hasVideo ? 'تبديل الفيديو' : 'إضافة فيديو'),
+              ),
+              if (_hasImage && !_hasVideo)
                 OutlinedButton.icon(
                   onPressed: _busy ? null : _editImage,
                   icon: const Icon(Icons.crop_rotate_rounded),
                   label: const Text('قص وتعديل'),
                 ),
             ],
+          ),
+          const SizedBox(height: 14),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                const Row(children: [
+                  Icon(Icons.movie_filter_rounded),
+                  SizedBox(width: 8),
+                  Text('صمّم فيديو بقوالب CapCut', style: TextStyle(fontWeight: FontWeight.w800)),
+                ]),
+                const SizedBox(height: 4),
+                const Text('اختار قالب من CapCut وصمّم مقطعك، وبعدها اضغط «مشاركة» واختار VYFRI، أو احفظه وارجع ضيفه من هنا.',
+                    style: TextStyle(fontSize: 12.5)),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () => openCapCutTemplates(context),
+                  icon: const Icon(Icons.auto_awesome_rounded),
+                  label: const Text('فتح قوالب CapCut'),
+                ),
+                if (_hasVideo)
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('هذا المقطع مصمم بـ CapCut'),
+                    subtitle: const Text('تطلع شارة «مصمم بـ CapCut» على المنشور', style: TextStyle(fontSize: 12)),
+                    value: _capcut,
+                    onChanged: (v) => setState(() => _capcut = v),
+                  ),
+              ]),
+            ),
           ),
         ],
       ),
@@ -919,7 +999,13 @@ class _PostScreenState extends State<PostScreen> {
                             badgeSize: 13,
                             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5)),
                         const SizedBox(height: 2),
-                        Text(c.content, style: const TextStyle(fontSize: 14.5)),
+                        RichPostText(
+                          text: c.content,
+                          trimChars: 260,
+                          trimLines: 5,
+                          spanBuilder: (t) => TextSpan(text: t),
+                          style: const TextStyle(fontSize: 14.5),
+                        ),
                       ],
                     ),
                   ),

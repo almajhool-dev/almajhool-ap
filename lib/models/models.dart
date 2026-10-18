@@ -383,6 +383,8 @@ class Post {
   final int? textColor;
   final int? bgColor;
   final String visibility; // public | friends | private | custom
+  final String? videoUrl;
+  final String? madeWith; // capcut
 
   const Post({
     required this.id,
@@ -398,6 +400,8 @@ class Post {
     this.textColor,
     this.bgColor,
     this.visibility = 'public',
+    this.videoUrl,
+    this.madeWith,
   });
 
   factory Post.fromMap(Map<String, dynamic> m, {bool liked = false}) => Post(
@@ -414,6 +418,8 @@ class Post {
         textColor: (m['text_color'] as num?)?.toInt(),
         bgColor: (m['bg_color'] as num?)?.toInt(),
         visibility: (m['visibility'] ?? 'public') as String,
+        videoUrl: m['video_url'] as String?,
+        madeWith: m['made_with'] as String?,
       );
 
   Post copyWith({int? likeCount, int? commentCount, bool? likedByMe, String? content, DateTime? editedAt}) => Post(
@@ -430,6 +436,8 @@ class Post {
         textColor: textColor,
         bgColor: bgColor,
         visibility: visibility,
+        videoUrl: videoUrl,
+        madeWith: madeWith,
       );
 }
 

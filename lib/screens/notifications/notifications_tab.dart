@@ -6,6 +6,7 @@ import '../../models/models.dart';
 import '../../providers/providers.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
+import '../feed/community.dart';
 import '../feed/feed_screens.dart';
 import '../home/home_shell.dart';
 import '../profile/profile_screens.dart';
@@ -69,6 +70,10 @@ class _NotificationsTabState extends State<NotificationsTab> {
         'live' => Icons.live_tv_rounded,
         'follow' => Icons.person_add_rounded,
         'live_penalty' => Icons.gpp_maybe_rounded,
+        'violation' => Icons.gpp_bad_rounded,
+        'appeal' => Icons.gavel_rounded,
+        'appeal_result' => Icons.balance_rounded,
+        'follow_request' => Icons.person_add_alt_rounded,
         _ => Icons.notifications_rounded,
       };
 
@@ -81,6 +86,19 @@ class _NotificationsTabState extends State<NotificationsTab> {
               builder: (_) => n.type == 'withdraw' && owner && n.title.contains('جديد')
                   ? const FinanceScreen()
                   : WalletScreen(initialTab: n.type == 'wallet' ? 0 : 1)));
+      return;
+    }
+    if (n.type == 'violation' && n.data['violation_id'] != null) {
+      Navigator.push(context,
+          MaterialPageRoute(builder: (_) => ViolationScreen(violationId: (n.data['violation_id'] as num).toInt())));
+      return;
+    }
+    if (n.type == 'appeal') {
+      Navigator.push(context, MaterialPageRoute(builder: (_) => const AppealsScreen()));
+      return;
+    }
+    if (n.type == 'follow_request') {
+      Navigator.push(context, MaterialPageRoute(builder: (_) => const FollowRequestsScreen()));
       return;
     }
     if (n.type == 'suggestion') {

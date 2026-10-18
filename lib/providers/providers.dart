@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../services/device_guard.dart';
 import '../services/background_service.dart';
 import '../services/sound_service.dart';
 import '../models/models.dart';
@@ -74,6 +75,10 @@ class SessionProvider extends ChangeNotifier {
       status = SessionStatus.signedIn;
       _subscribe(session.user.id);
       notifyListeners();
+      // جهاز محظور (حساب جديد على نفس الجهاز، حتى مع VPN) ← الحساب ينحظر
+      DeviceGuard.checkin().then((banned) {
+        if (banned) refresh();
+      });
     }
   }
 

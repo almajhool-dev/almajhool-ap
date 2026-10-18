@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../feed/community.dart';
 import '../../core/config.dart';
 import '../../models/models.dart';
 import '../../providers/providers.dart';
@@ -214,6 +215,7 @@ class _SettingsTabState extends State<SettingsTab> {
             title: const Text('المستخدمون المحظورون'),
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BlockedUsersScreen())),
           ),
+          const PrivateAccountTiles(),
           ValueListenableBuilder<bool>(
             valueListenable: PrivacyService.storyGhost,
             builder: (context, ghost, _) => SwitchListTile(

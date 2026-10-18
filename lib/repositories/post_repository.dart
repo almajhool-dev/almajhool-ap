@@ -97,8 +97,25 @@ class PostRepository {
     int? bgColor,
     String visibility = 'public',
     List<String> audience = const [],
+    File? newVideo,
+    String? keepVideoUrl,
+    bool capcut = false,
   }) async {
     var url = keepImageUrl;
+    var video = keepVideoUrl;
+    if (newVideo != null) {
+      final size = await newVideo.length();
+      if (size > 50 * 1024 * 1024) throw Exception('حجم الفيديو أكبر من 50 ميغابايت');
+      final name = newVideo.path.toLowerCase();
+      final ext = name.endsWith('.mov') ? 'mov' : (name.endsWith('.webm') ? 'webm' : 'mp4');
+      final path = '${myId!}/${const Uuid().v4()}.$ext';
+      await supa.storage.from('posts').upload(
+            path,
+            newVideo,
+            fileOptions: FileOptions(contentType: ext == 'mov' ? 'video/quicktime' : 'video/$ext'),
+          );
+      video = supa.storage.from('posts').getPublicUrl(path);
+    }
     if (newImage != null) {
       final path = '${myId!}/${const Uuid().v4()}.jpg';
       await supa.storage.from('posts').uploadBinary(
@@ -107,6 +124,23 @@ class PostRepository {
             fileOptions: const FileOptions(contentType: 'image/jpeg'),
           );
       url = supa.storage.from('posts').getPublicUrl(path);
+    }
+    try {
+      final r = await supa.rpc('save_post2', params: {
+        'pid': id,
+        'p_content': content.trim(),
+        'p_image': video != null ? null : url,
+        'p_video': video,
+        'p_made_with': video != null && capcut ? 'capcut' : null,
+        'p_text_color': textColor,
+        'p_bg_color': bgColor,
+        'p_visibility': visibility,
+        'p_audience': visibility == 'custom' ? audience : null,
+      });
+      return r as String;
+    } catch (e) {
+      // خادم قديم ما بيه دالة الفيديو بعد
+      if (!'$e'.contains('PGRST202') || video != null) rethrow;
     }
     final r = await supa.rpc('save_post', params: {
       'pid': id,

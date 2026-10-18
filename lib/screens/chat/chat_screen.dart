@@ -548,6 +548,7 @@ class _ChatScreenState extends State<ChatScreen> {
               _attachItem(c, Icons.photo_camera_rounded, 'كاميرا', AppColors.pink, () => MediaService.pickImage(camera: true)),
               _attachItem(c, Icons.videocam_rounded, 'فيديو', Colors.orange, MediaService.pickVideo),
               _attachItem(c, Icons.attach_file_rounded, 'ملف', AppColors.cyan, MediaService.pickFile),
+              _attachItem(c, Icons.hd_rounded, 'صورة/فيديو\nبأعلى دقة', Colors.teal, MediaService.pickMediaAsFile),
             ],
           ),
         ),
@@ -571,7 +572,7 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(children: [
           CircleAvatar(radius: 28, backgroundColor: color.withValues(alpha: 0.15), child: Icon(icon, color: color)),
           const SizedBox(height: 6),
-          Text(label),
+          Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12.5)),
         ]),
       ),
     );

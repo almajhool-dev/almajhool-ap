@@ -29,9 +29,9 @@ class MediaService {
   static Future<PickedMedia?> pickImage({bool camera = false}) async {
     final x = await _picker.pickImage(
       source: camera ? ImageSource.camera : ImageSource.gallery,
-      imageQuality: 72, // ضغط قبل الرفع
-      maxWidth: 1600,
-      maxHeight: 1600,
+      imageQuality: 90, // ضغط خفيف: وضوح عالي وحجم معقول
+      maxWidth: 2560,
+      maxHeight: 2560,
     );
     if (x == null) return null;
     final f = File(x.path);
@@ -43,6 +43,15 @@ class MediaService {
     if (x == null) return null;
     final f = File(x.path);
     return PickedMedia(f, 'video', x.name, await f.length());
+  }
+
+  /// صورة أو فيديو كملف بدون أي ضغط (الجودة الأصلية بالضبط، مثل تيليكرام).
+  static Future<PickedMedia?> pickMediaAsFile() async {
+    final r = await FilePicker.platform.pickFiles(type: FileType.media, withData: false);
+    final path = r?.files.single.path;
+    if (r == null || path == null) return null;
+    final f = File(path);
+    return PickedMedia(f, 'file', r.files.single.name, await f.length());
   }
 
   static Future<PickedMedia?> pickFile() async {

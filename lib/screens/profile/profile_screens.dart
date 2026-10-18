@@ -12,6 +12,7 @@ import '../../services/media_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../contacts/contacts_tab.dart';
+import '../feed/community.dart';
 import '../feed/feed_screens.dart';
 import '../home/home_shell.dart';
 
@@ -160,8 +161,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  bool get _canView => _isMe || _counts['can_view'] != false;
+
   Widget _followButton() {
     final following = _counts['i_follow'] == true;
+    if (!following && _counts['i_requested'] == true) {
+      return OutlinedButton.icon(
+        style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
+        onPressed: () => _act(() => supa.rpc('follow_request_cancel', params: {'p_target': widget.userId}), 'تم إلغاء طلب المتابعة'),
+        icon: const Icon(Icons.schedule_rounded),
+        label: const Text('تم إرسال طلب المتابعة'),
+      );
+    }
+    final private = _counts['is_private'] == true;
+    if (!following) {
+      return FilledButton.icon(
+        style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
+        onPressed: _blocked
+            ? null
+            : () => _act(() => _contacts.follow(widget.userId), private ? 'تم إرسال طلب المتابعة 🔒' : 'أصبحت تتابعه ✅'),
+        icon: Icon(private ? Icons.lock_open_rounded : Icons.add_rounded),
+        label: Text(private ? 'طلب متابعة' : 'متابعة'),
+      );
+    }
     return following
         ? OutlinedButton.icon(
             style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
@@ -262,8 +284,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ],
             ),
             const SizedBox(height: 14),
-            _LevelCard(profile: p),
-            if (p.bio.isNotEmpty) ...[
+            if (_canView) _LevelCard(profile: p),
+            if (_isMe && ((_counts['requests'] as num?)?.toInt() ?? 0) > 0) ...[
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FollowRequestsScreen()))
+                    .then((_) => _load()),
+                icon: const Icon(Icons.person_add_alt_rounded),
+                label: Text('طلبات المتابعة (${_counts['requests']})'),
+              ),
+            ],
+            if (_canView && p.bio.isNotEmpty) ...[
               const SizedBox(height: 16),
               Card(
                 child: Padding(
@@ -298,6 +329,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 child: Text('لقد حظرت هذا المستخدم', textAlign: TextAlign.center, style: TextStyle(color: Colors.redAccent)),
               ),
             const SizedBox(height: 20),
+            if (!_canView)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(22),
+                  child: Column(children: [
+                    const Icon(Icons.lock_rounded, size: 44),
+                    const SizedBox(height: 10),
+                    const Text('هذا الحساب خاص', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 17)),
+                    const SizedBox(height: 4),
+                    Text('تابع ${p.displayName} حتى تشوف منشوراته وقصصه', textAlign: TextAlign.center),
+                  ]),
+                ),
+              )
+            else ...[
             const Text('المنشورات', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
             ListenableBuilder(
               listenable: _posts,
@@ -313,6 +358,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 );
               },
             ),
+            ],
             if (_common.isNotEmpty) ...[
               const SizedBox(height: 24),
               Text('المجموعات المشتركة (${_common.length})', style: const TextStyle(fontWeight: FontWeight.w800)),

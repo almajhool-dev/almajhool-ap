@@ -18,6 +18,7 @@ import '../../services/update_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../../widgets/fx.dart';
+import '../feed/community.dart';
 import '../live/live_screens.dart';
 import '../profile/profile_screens.dart';
 
@@ -166,6 +167,17 @@ class _OverviewState extends State<_Overview> {
           ),
           const SizedBox(height: 12),
           if (context.read<SessionProvider>().profile?.isOwner ?? false) ...[
+            Card(
+              color: Colors.indigo.withValues(alpha: 0.10),
+              child: ListTile(
+                leading: const Icon(Icons.gavel_rounded, color: Colors.indigo),
+                title: const Text('الطعون والمحتوى المحذوف تلقائيًا', style: TextStyle(fontWeight: FontWeight.w800)),
+                subtitle: const Text('الإباحي والسب ينحذف تلقائيًا؛ هنا تشوفه وتقبل أو ترفض الطعون'),
+                trailing: const Icon(Icons.chevron_left),
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AppealsScreen())),
+              ),
+            ),
+            const SizedBox(height: 12),
             const AiAssistantCard(),
             const SizedBox(height: 12),
             const AiAutoPostCard(),

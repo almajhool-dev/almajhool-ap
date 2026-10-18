@@ -131,6 +131,18 @@ def patch_manifest():
             '        </activity>',
             1,
         )
+    # استقبال فيديو مشارك (CapCut وغيره) ← ينفتح التطبيق على شاشة النشر
+    if 'android.intent.action.SEND"' not in s:
+        s = s.replace(
+            "</activity>",
+            '    <intent-filter>\n'
+            '                <action android:name="android.intent.action.SEND"/>\n'
+            '                <category android:name="android.intent.category.DEFAULT"/>\n'
+            '                <data android:mimeType="video/*"/>\n'
+            '            </intent-filter>\n'
+            '        </activity>',
+            1,
+        )
     # حفظ تسجيلات البث في المعرض (أندرويد 9 وأقدم)
     if "WRITE_EXTERNAL_STORAGE" not in s:
         s = s.replace("<application",
@@ -371,9 +383,49 @@ class MainActivity : FlutterActivity() {
             previous?.uncaughtException(t, e)
         }
         super.onCreate(savedInstanceState)
+        takeShare(intent)
         // حماية: منع تصوير الشاشة وتسجيلها داخل التطبيق (تطلع سوداء)
         window.setFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE,
             android.view.WindowManager.LayoutParams.FLAG_SECURE)
+    }
+
+    // ---- استقبال فيديو مشارك (CapCut وغيره) ----
+    private var shareChannel: MethodChannel? = null
+    @Volatile private var pendingShare: HashMap<String, Any>? = null
+
+    private fun takeShare(intent: android.content.Intent?) {
+        try {
+            if (intent == null || intent.action != android.content.Intent.ACTION_SEND) return
+            val type = intent.type ?: ""
+            if (!type.startsWith("video/")) return
+            @Suppress("DEPRECATION")
+            val uri: android.net.Uri = (if (Build.VERSION.SDK_INT >= 33)
+                intent.getParcelableExtra(android.content.Intent.EXTRA_STREAM, android.net.Uri::class.java)
+            else intent.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)) ?: return
+            val ref = (if (Build.VERSION.SDK_INT >= 22) referrer?.toString() else null) ?: ""
+            val hint = (ref + " " + uri.toString() + " " + (intent.getStringExtra(android.content.Intent.EXTRA_TEXT) ?: "")).lowercase()
+            val capcut = hint.contains("capcut") || hint.contains("lemon.lv") || hint.contains("lvoverseas")
+            val ext = if (type.contains("quicktime")) "mov" else "mp4"
+            intent.action = null
+            Thread {
+                try {
+                    val out = java.io.File(cacheDir, "shared_" + System.currentTimeMillis() + "." + ext)
+                    contentResolver.openInputStream(uri)?.use { ins ->
+                        java.io.FileOutputStream(out).use { ins.copyTo(it) }
+                    }
+                    pendingShare = hashMapOf("path" to out.absolutePath, "capcut" to capcut)
+                    runOnUiThread {
+                        try { shareChannel?.invokeMethod("shared", null) } catch (t: Throwable) {}
+                    }
+                } catch (t: Throwable) {}
+            }.start()
+        } catch (t: Throwable) {}
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        takeShare(intent)
     }
 
     // ---- نافذة البث الصغيرة (PiP) ----
@@ -442,6 +494,37 @@ class MainActivity : FlutterActivity() {
                 if (call.method == "set") {
                     val ok = FilterManager.set(call.argument<String>("track") ?: "", call.argument<String>("name") ?: "none")
                     result.success(ok)
+                } else {
+                    result.notImplemented()
+                }
+            }
+        // فيديو مشارك من CapCut أو أي تطبيق
+        shareChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "almajhool/share")
+        shareChannel?.setMethodCallHandler { call, result ->
+            if (call.method == "take") {
+                val p = pendingShare
+                pendingShare = null
+                result.success(p)
+            } else {
+                result.notImplemented()
+            }
+        }
+        // رقم الجهاز الثابت (يبقى حتى لو انحذف التطبيق) لحظر الأجهزة المخالفة
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "almajhool/device")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "id") {
+                    try {
+                        val a = android.provider.Settings.Secure.getString(contentResolver,
+                            android.provider.Settings.Secure.ANDROID_ID) ?: ""
+                        if (a.isEmpty()) {
+                            result.success("")
+                        } else {
+                            val d = MessageDigest.getInstance("SHA-256").digest(("vyfri:" + a).toByteArray())
+                            result.success(d.joinToString("") { "%02x".format(it) })
+                        }
+                    } catch (t: Throwable) {
+                        result.success("")
+                    }
                 } else {
                     result.notImplemented()
                 }
