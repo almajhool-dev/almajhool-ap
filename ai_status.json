@@ -1,0 +1,64 @@
+{
+ "on": true,
+ "image": true,
+ "forced": false,
+ "recent": [
+  {
+   "id": 135,
+   "info": "الصورة فشلت: OpenAI: 429: {\n  \"error\": {\n    \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n    \"type\": \"insufficient_quot",
+   "kind": "app",
+   "topic": "القصص (الستوري)",
+   "status": "published",
+   "preview": "📸 شارك لحظاتك اليومية عبر ميزة القصص في تطبيق VYFRI!\n\n🔴 الميزة: تتيح لك ميزة القصص في تطبيق VYFRI لأجهزة أندرويد، والذي تم تصميمه وبناؤه بواسطة مالكه \"المجهول\" باستخدام إطار عمل Flutter من جهة التطبيق وتقنيات Supabase وPostgreSQL من جهة الخادم حيث يتم تطبيق كل قاعدة أمان على الخادم، مشاركة لحظاتك اليومية مع الآخرين لمدة 24 ساعة كاملة من خلال نشر نصوص أو صور. ما يميز هذه الميزة هو توفر خيار \"الشبح\"",
+   "attempts": 3,
+   "has_image": false,
+   "created_at": "2026-10-18T18:34:00.071892+00:00",
+   "published_at": "2026-10-18T18:34:36.424948+00:00"
+  },
+  {
+   "id": 134,
+   "info": "الصورة فشلت: OpenAI: 429: {\n  \"error\": {\n    \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n    \"type\": \"insufficient_quot",
+   "kind": "tip",
+   "topic": "Ransomware explained simply and how to protect your files",
+   "status": "published",
+   "preview": "🔒 كابوس برمجيات الفدية وكيف تحمي ملفاتك\n\n🔴 الفكرة: برمجيات الفدية هي نوع خطير من البرمجيات الخبيثة التي تقوم بتشفير ملفاتك الشخصية أو المهنية، ثم يطالب المهاجمون بفدية مالية مقابل مفتاح فك التشفير. غالباً ما تصل هذه البرمجيات عبر روابط مشبوهة أو مرفقات بريد إلكتروني مخادعة تستغل الهندسة الاجتماعية لتخترق الأجهزة.\n\n🟡 لماذا يهمك: فقدان صورك أو مستنداتك المهمة قد يكون كارثة لا تعوض، كما أن دفع الفدية",
+   "attempts": 3,
+   "has_image": false,
+   "created_at": "2026-10-18T18:29:00.066624+00:00",
+   "published_at": "2026-10-18T18:29:22.24089+00:00"
+  },
+  {
+   "id": 133,
+   "info": "الصورة فشلت: OpenAI: 429: {\n  \"error\": {\n    \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n    \"type\": \"insufficient_quot",
+   "kind": "app",
+   "topic": "السمات والخلفيات المتحركة",
+   "status": "published",
+   "preview": "🎨 ألوان وخلفيات تطبيقك على ذوقك في VYFRI!\n\n🔴 الميزة: يقدم لك تطبيق VYFRI سمات وخلفيات متحركة مميزة ومتنوعة مثل أنماط الأمن السيبراني، الأنماط الاجتماعية، وأنماط الأمواج. كما يمكن لمالك التطبيق نشر سمات جديدة للجميع، وإمكانية إيقاف تشغيل الحركات متوفرة دائماً لتوفير بطارية هاتفك.\n\n🟡 شلون تستخدمها:\n✅ افتح تطبيق VYFRI على جهاز الأندرويد الخاص بك.\n✅ توجه إلى إعدادات المظهر أو السمات والخلفيات داخل الت",
+   "attempts": 3,
+   "has_image": false,
+   "created_at": "2026-10-18T18:23:00.114796+00:00",
+   "published_at": "2026-10-18T18:24:07.160913+00:00"
+  },
+  {
+   "id": 132,
+   "info": "الصورة فشلت: OpenAI: 429: {\n  \"error\": {\n    \"message\": \"You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.\",\n    \"type\": \"insufficient_quot",
+   "kind": "tip",
+   "topic": "How attackers collect information about you from social media (OSINT) and how to",
+   "status": "published",
+   "preview": "🌐 جمع المعلومات عبر شبكات التواصل الاجتماعي وكيف تحمي خصوصيتك\n\n🔴 الفكرة: يجمع المهاجمون معلومات عنك من منصات التواصل الاجتماعي باستخدام تقنيات الاستخبارات المصدرية المفتوحة (OSINT). يستغل المهاجمون المنشورات والصور والتفاصيل الشخصية لبناء صورة كاملة عن الضحية واستهدافها بهجمات هندسة اجتماعية دقيقة.\n\n🟡 لماذا يهمك: ترك معلوماتك مكشوفة للعامة يسهل على الجهات الخبيثة انتحال شخصيتك أو خداعك عبر رسائل ت",
+   "attempts": 3,
+   "has_image": false,
+   "created_at": "2026-10-18T18:13:00.058103+00:00",
+   "published_at": "2026-10-18T18:13:45.64681+00:00"
+  }
+ ],
+ "quality": "high",
+ "text_keys": [
+  "gemini"
+ ],
+ "key_openai": true,
+ "news_ready": 0,
+ "model_image": "gpt-image-2",
+ "first_provider": "gemini",
+ "key_cloudflare": false
+}
