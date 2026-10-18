@@ -1,0 +1,33 @@
+name: Install test
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/install-test.yml']
+permissions:
+  contents: write
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download
+        run: |
+          curl -sSL -o app.apk https://github.com/${{ github.repository }}/releases/download/v1.0.87/almajhool-app.apk
+          sha256sum app.apk | tee r.txt
+          $ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -1)/apksigner verify -v app.apk 2>&1 | tee -a r.txt
+      - name: KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          script: adb install app.apk >> r.txt 2>&1 || true
+      - name: Save
+        if: always()
+        run: |
+          mkdir -p /tmp/o && cp r.txt /tmp/o/ && cd /tmp/o && git init -q -b r && git config user.name ci && git config user.email ci@users.noreply.github.com && git add -A && git commit -qm r && git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" r:ci-install || true
