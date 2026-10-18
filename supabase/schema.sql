@@ -9013,5 +9013,30 @@ create policy comment_likes_update on public.comment_likes for update to authent
 
 revoke execute on function public._post_json(posts) from public, anon, authenticated;
 
+-- =====================================================================
+--  الإصدار 66: ثغرة تضخيم الإعجابات: سياسة التحديث (likes_update / comment_likes_update)
+--  چانت تسمح بتغيير post_id/comment_id للصف، فيقدر أحد يعجب بمنشور ثم ينقل الإعجاب لمنشور
+--  ثاني ويكرر — العدّاد يزيد بلا حد ويتجاوز فحص الرؤية. التحديث الآن يغيّر التفاعل بس.
+-- =====================================================================
+create or replace function public._like_keys_lock() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if tg_table_name = 'post_likes' then
+    new.post_id := old.post_id;
+  else
+    new.comment_id := old.comment_id;
+  end if;
+  new.user_id := old.user_id;
+  new.created_at := old.created_at;
+  return new;
+end $$;
+revoke execute on function public._like_keys_lock() from public, anon, authenticated;
+drop trigger if exists aa_like_keys_lock on public.post_likes;
+create trigger aa_like_keys_lock before update on public.post_likes
+  for each row execute function public._like_keys_lock();
+drop trigger if exists aa_like_keys_lock on public.comment_likes;
+create trigger aa_like_keys_lock before update on public.comment_likes
+  for each row execute function public._like_keys_lock();
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
