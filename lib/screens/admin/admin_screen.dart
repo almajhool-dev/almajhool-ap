@@ -1550,7 +1550,7 @@ class AiAutoPostCard extends StatefulWidget {
 }
 
 class _AiAutoPostCardState extends State<AiAutoPostCard> {
-  static const _intervals = {30: 'كل نص ساعة', 60: 'كل ساعة', 120: 'كل ساعتين', 180: 'كل 3 ساعات', 360: 'كل 6 ساعات'};
+  static const _intervals = {1: 'كل دقيقة (أي خبر جديد)', 5: 'كل 5 دقايق', 15: 'كل ربع ساعة', 30: 'كل نص ساعة', 60: 'كل ساعة', 120: 'كل ساعتين', 180: 'كل 3 ساعات', 360: 'كل 6 ساعات'};
   static const _qualities = {'low': 'عادية (أرخص)', 'medium': 'متوسطة', 'high': 'عالية (أغلى)'};
 
   Map<String, dynamic>? _st;

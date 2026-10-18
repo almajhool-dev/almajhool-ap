@@ -7389,12 +7389,54 @@ begin
 end $$;
 revoke execute on function public._autopost_publish(bigint, text) from public, anon, authenticated;
 
+-- نفس الخبر منشور بأكثر من موقع؟ (كلمات العنوان متشابهة بنص أو أكثر مع خبر نزل خلال 3 أيام)
+create or replace function public._news_words(p text) returns text[]
+language sql immutable as $$
+  select coalesce(array_agg(distinct w), '{}') from regexp_split_to_table(lower(coalesce(p, '')), '[^a-z0-9]+') w
+  where length(w) > 3 and w not in ('with', 'from', 'that', 'this', 'into', 'over', 'after', 'about', 'their', 'have', 'will',
+                                    'says', 'said', 'news', 'more', 'than', 'what', 'when', 'your', 'just', 'here');
+$$;
+
+create or replace function public._news_dup(p_url text, p_title text) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare w text[] := _news_words(p_title); t text;
+begin
+  if cardinality(w) < 3 then return false; end if;
+  for t in select n.title from ai_news n where n.used_at > now() - interval '3 days' and n.url <> p_url
+           union all
+           select a.topic from ai_autoposts a where a.kind = 'news' and a.created_at > now() - interval '3 days' loop
+    if (select count(*) from unnest(w) x where x = any(_news_words(t)))::float / cardinality(w) >= 0.5 then
+      return true;
+    end if;
+  end loop;
+  return false;
+end $$;
+
 -- كل دقيقة: إذا جا وقت المنشور يكتب واحد جديد، ويتأكد ما في مسودة ضايعة
 create or replace function public._autopost_tick() returns void
 language plpgsql security definer set search_path = public, extensions as $$
 declare cfg ai_config; own uuid := _owner_id(); force boolean; last_ok timestamptz; last_err timestamptz;
   nw ai_news; v_kind text; v_topic text; n int; recent text; facts text; usr text; sys text; rsys text;
-  raw text; post text; img text; rv text; ap_id bigint; d record;
+  raw text; post text; img text; rv text; ap_id bigint; d record; last_app timestamptz; last_tip timestamptz; app_item text;
+    app_topics text[] := array[
+      'تعريف بتطبيق VYFRI وشلون انصمم|VYFRI is an Arabic social network and messenger in one app: posts, stories, private and group chats, voice and video calls, live streaming, and a smart assistant. It is designed and built by its owner with Flutter for Android and a Supabase/PostgreSQL server. Security and privacy rules run on the server itself, so no user can read other people''s chats even with a modified app. Updates arrive inside the app.',
+      'المحادثات والمجموعات|Private chats and group chats with images, videos, voice messages and files; forwarding messages to other chats; pinning important messages in a chat; it keeps working on weak internet and sends messages when the connection returns. How: open a chat and press the + button to attach media.',
+      'إرسال الصور والفيديو بأعلى دقة كملف|New: like Telegram, users can send a photo or video as a file with zero compression, keeping the original quality exactly (up to 50 MB per file). How: in any chat press + then choose «صورة/فيديو بأعلى دقة». Normal photos are now also sent clearer than before.',
+      'المكالمات الصوتية والفيديو|Voice and video calls inside the app; incoming calls ring even when the app is closed.',
+      'البث المباشر|Live streaming with comments, gifts, inviting guests, moderators for the stream, and a small floating window (picture in picture) so viewers can keep watching while using other apps.',
+      'القصص (الستوري)|24-hour stories with text or images. There is a «ghost» option: view stories without your name appearing in the viewers list. How: الإعدادات ← مشاهدة الستوري بشكل مخفي 👻.',
+      'المنشورات الملونة وخصوصية كل منشور|Posts can have colored text backgrounds, images that can be cropped and rotated before posting, @mentions, and per-post privacy: public, friends, only me, or a custom list of people.',
+      'فيديو بالمنشورات وقوالب CapCut|New: users can post videos. In the new-post screen there is a button «فتح قوالب CapCut»: pick a template in CapCut, design the clip, then press share and choose VYFRI; the post opens ready and shows a badge «مصمم بـ CapCut».',
+      'ترجمة المنشورات والتعليقات|New: if a post or comment is written in a different language, a «ترجمة» button appears and translates it into the language of the user''s phone (for users from any country), and «عرض الأصل» shows the original again.',
+      'عرض المزيد للمنشورات الطويلة|New: long posts and comments are shortened with an «عرض المزيد» link like Facebook, so the feed stays clean and easy to scroll.',
+      'الحساب الخاص وطلبات المتابعة|New: a private account option. Others only see your name and picture; your posts and stories are visible only to followers you approve. How: الإعدادات ← حساب خاص 🔒, and requests appear in «طلبات المتابعة».',
+      'حماية المجتمع والحذف التلقائي|New: pornographic content, cursing, insults and hate in posts or comments are removed automatically within seconds. The author gets a notice that the content violates community standards plus a warning; the fourth warning bans the account and the device. Anyone who thinks the removal was a mistake can file an appeal from the notification, and the owner reviews it personally.',
+      'المحفظة والهدايا|A wallet with coins and gifts; streamers can earn from gifts received during their live streams.',
+      'مساحة الشريك 💞|An optional private space for two partners: link accounts with a code, a shared journey, a memories wall and a question of the day. How: الإعدادات ← مساحة الشريك 💞.',
+      'السمات والخلفيات المتحركة|Animated app backgrounds and themes (for example cybersecurity, social, and waves styles), and the owner can publish new themes for everyone. You can turn animations off to save battery.',
+      'الأمان داخل التطبيق|Screenshots and screen recording are blocked inside the app to protect conversations; the app checks its own integrity and detects tampering tools; account recovery uses a private recovery code without needing an email; login also works with Google or with a phone number verified through Telegram.',
+      'المساعد الذكي|A smart AI assistant runs the owner''s account: it replies to messages and comments in the same language and dialect of each person (any language in the world) and publishes cybersecurity and technology news with matching images.',
+      'اقترح ميزة للتطبيق|Users can suggest new features directly to the app owner from: الإعدادات ← اقترح ميزة للتطبيق 💡. The owner reads the suggestions and new features are added based on them.'];
   tips text[] := array[
     'How to spot phishing messages on WhatsApp, Telegram and SMS',
     'Why two-factor authentication matters and the safest way to turn it on',
@@ -7468,27 +7510,51 @@ begin
   if not force then
     select max(created_at) into last_ok from ai_autoposts where status <> 'error';
     select max(created_at) into last_err from ai_autoposts where status = 'error';
-    if last_ok is not null and last_ok > now() - make_interval(mins => cfg.autopost_minutes) + interval '40 seconds' then return; end if;
-    if last_err is not null and last_err > now() - interval '10 minutes' then return; end if;
+    if last_ok is not null and last_ok > now() - make_interval(mins => cfg.autopost_minutes) + interval '15 seconds' then return; end if;
+    if last_err is not null and last_err > now() - interval '3 minutes' then return; end if;
   end if;
-  delete from private_settings where key = 'autopost_force';
 
-  -- نختار الموضوع: أغلب المنشورات أخبار عالمية حقيقية، وكل رابع منشور نصيحة/شرح (وإذا ماكو أخبار جديدة نصيحة)
-  select count(*) into n from ai_autoposts where status = 'published';
+  -- نختار الموضوع (بدون أي تكرار):
+  --  * كل نص ساعة منشور يعرّف بتطبيق VYFRI وميزاته
+  --  * غيرها: خبر جديد حقيقي (أمن سيبراني أو تكنولوجيا)، ونتخطى نفس الخبر إذا نشرته مواقع ثانية
+  --  * إذا ماكو خبر جديد: نصيحة أمنية كل 45 دقيقة؛ وإذا ماكو شي جديد ما ننشر حتى ما نكرر
   select string_agg('- ' || t.topic, E'\n') into recent
-    from (select topic from ai_autoposts where status <> 'error' order by id desc limit 30) t;
-  if n % 4 <> 3 then
-    select * into nw from ai_news where used_at is null and added_at > now() - interval '4 days'
+    from (select topic from ai_autoposts where status <> 'error' order by id desc limit 40) t;
+  select max(created_at) into last_app from ai_autoposts where kind = 'app' and status <> 'error';
+  select max(created_at) into last_tip from ai_autoposts where kind = 'tip' and status <> 'error';
+  for n in 1..15 loop
+    select * into nw from ai_news where used_at is null and added_at > now() - interval '3 days'
       order by coalesce(published_at, added_at) desc limit 1;
-  end if;
-  if nw.url is not null then
+    exit when nw.url is null;
+    if _news_dup(nw.url, nw.title) then
+      update ai_news set used_at = now() where url = nw.url;
+      nw := null;
+      continue;
+    end if;
+    exit;
+  end loop;
+
+  if last_app is null or last_app < now() - interval '30 minutes' then
+    v_kind := 'app';
+    nw := null;
+    select t into app_item from unnest(app_topics) t
+      where split_part(t, '|', 1) not in (select a.topic from ai_autoposts a where a.kind = 'app' order by a.id desc limit 18)
+      order by random() limit 1;
+    app_item := coalesce(app_item, app_topics[1 + floor(random() * array_length(app_topics, 1))::int]);
+    v_topic := split_part(app_item, '|', 1);
+    facts := 'App: VYFRI — an Arabic social and messaging app for Android, designed and built by its owner "' ||
+      coalesce((select display_name from profiles where id = own), 'the owner') ||
+      '" with Flutter (the app) and Supabase/PostgreSQL (the server), where every security rule is enforced on the server.' ||
+      E'\nTopic of this post: ' || v_topic || E'\nFacts about it (use ONLY these):\n' || split_part(app_item, '|', 2) ||
+      E'\nUpcoming features: do NOT promise or invent specific upcoming features. Say new features keep coming based on users'' ideas, and invite them to send suggestions from: الإعدادات ← اقترح ميزة للتطبيق 💡.';
+  elsif nw.url is not null then
     v_kind := 'news';
     v_topic := nw.title;
     update ai_news set used_at = now() where url = nw.url;
     facts := 'Source: ' || nw.source || E'\nHeadline: ' || nw.title ||
       E'\nPublished: ' || coalesce(to_char(nw.published_at, 'YYYY-MM-DD'), 'recent') ||
       E'\nSummary from the source: ' || coalesce(nullif(nw.summary, ''), '(no summary, only the headline is known)');
-  else
+  elsif force or last_tip is null or last_tip < now() - interval '45 minutes' then
     v_kind := 'tip';
     select t into v_topic from unnest(tips) t
       where t not in (select a.topic from ai_autoposts a where a.kind = 'tip' order by a.id desc limit 40)
@@ -7496,13 +7562,35 @@ begin
     v_topic := coalesce(v_topic, tips[1 + floor(random() * array_length(tips, 1))::int]);
     facts := 'General cybersecurity awareness topic: ' || v_topic ||
       E'\n(Use only well-established, widely accepted security advice. No statistics unless they are famous and certain.)';
+  else
+    delete from private_settings where key = 'autopost_force';
+    return; -- ماكو شي جديد هسه: ما ننشر حتى ما نكرر
   end if;
+  delete from private_settings where key = 'autopost_force';
 
-  sys := 'You are a senior cybersecurity journalist and awareness expert who writes posts for the official account of the social app «VYFRI». ' ||
+  if v_kind = 'app' then
+    sys := 'You are the official voice of the social app «VYFRI», writing a post on its own account to explain the app to its users. ' ||
+      'Write in clear, warm, correct Modern Standard Arabic (you may add a light friendly touch).' ||
+      E'\n\nACCURACY RULES (most important):' ||
+      E'\n- Use ONLY the facts given in the input. Never invent features, numbers, prices, dates, buttons or menus that are not in the input.' ||
+      E'\n- Never promise specific upcoming features.' ||
+      E'\n- Reason carefully in your head first and check every sentence before you output; output only the final result.' ||
+      E'\n\nPOST FORMAT (plain text, NO markdown symbols like ** or # headings; emojis are welcome):' ||
+      E'\n1) First line: a short eye-catching title that starts with one fitting emoji.' ||
+      E'\n2) Empty line, then a line starting with "🔴 الميزة:" and 2-3 sentences explaining it simply.' ||
+      E'\n3) A line "🟡 شلون تستخدمها:" then 2 to 4 short steps, each on its own line starting with "✅ " (only steps supported by the facts).' ||
+      E'\n4) A line starting with "🟢 ليش تفيدك:" and 1-2 sentences.' ||
+      E'\n5) A line starting with "💡 " inviting users to send their ideas from الإعدادات ← اقترح ميزة للتطبيق 💡.' ||
+      E'\n6) Last line: 3 to 5 hashtags including #VYFRI and #تطبيق_VYFRI.' ||
+      E'\nTotal length 500 to 1200 characters. Leave an empty line between sections.' ||
+      E'\n\nIMAGE PROMPT: Also write an English prompt for an AI image generator: a striking, modern, premium illustration of a smartphone social app experience that matches this exact feature, glowing UI shapes (no readable text), cinematic lighting, deep navy, neon cyan and electric purple colors, square composition, highly detailed. Absolutely NO text, letters, numbers, logos or real people''s faces.' ||
+      E'\n\nREPLY WITH EXACTLY THIS AND NOTHING ELSE:\n[POST]\n(the post)\n[/POST]\n[IMAGE]\n(the image prompt)\n[/IMAGE]';
+  else
+  sys := 'You are a senior cybersecurity and technology journalist and awareness expert who writes posts for the official account of the social app «VYFRI». ' ||
     'Write in clear, correct Modern Standard Arabic that every Arab reader understands, friendly and professional.' ||
     E'\n\nACCURACY RULES (most important):' ||
     E'\n- Use ONLY the facts given in the input. Never invent numbers, CVE IDs, victim names, dates, versions, prices, quotes or claims that are not in the input.' ||
-    E'\n- If the input is short, explain the general risk and how to stay safe instead of making up details.' ||
+    E'\n- If the input is short, explain the general idea and why it matters instead of making up details.' ||
     E'\n- Keep company, product and CVE names in English exactly as written in the input.' ||
     E'\n- Reason carefully in your head first and check every sentence before you output; output only the final result.' ||
     E'\n\nPOST FORMAT (plain text, NO markdown symbols like ** or # headings; emojis are welcome):' ||
@@ -7510,12 +7598,14 @@ begin
     E'\n2) Empty line, then a line starting with "🔴 " followed by ' ||
       case when v_kind = 'news' then '"الخبر:" and 2-3 sentences about what happened.' else '"الفكرة:" and 2-3 sentences explaining the topic simply.' end ||
     E'\n3) A line starting with "🟡 لماذا يهمك:" and 1-2 sentences.' ||
-    E'\n4) A line "🟢 كيف تحمي نفسك:" then 3 to 5 short practical steps, each on its own line starting with "✅ ".' ||
+    E'\n4) A line "🟢 ' || case when v_kind = 'news' then 'ماذا تفعل:' else 'كيف تحمي نفسك:' end ||
+      '" then 3 to 5 short practical points, each on its own line starting with "✅ " (for pure technology news: what it means for the reader and practical tips).' ||
     case when v_kind = 'news' then E'\n5) A line "📰 المصدر: " followed by the source name.' else E'\n5) A line starting with "💡 " with one memorable short tip.' end ||
-    E'\n6) Last line: 3 to 5 relevant hashtags, the first one is #الأمن_السيبراني and one of them is #VYFRI.' ||
+    E'\n6) Last line: 3 to 5 relevant hashtags: the first is #الأمن_السيبراني if the topic is about security, otherwise #تكنولوجيا; one of them is #VYFRI.' ||
     E'\nTotal length 600 to 1400 characters. Leave an empty line between sections.' ||
-    E'\n\nIMAGE PROMPT: Also write an English prompt for an AI image generator for a striking, modern, professional illustration about this exact topic: cinematic lighting, cyber colors (deep navy, neon cyan, electric purple), square composition, highly detailed. Absolutely NO text, letters, numbers, logos, brand marks or real people''s faces in the image.' ||
+    E'\n\nIMAGE PROMPT: Also write an English prompt for an AI image generator for a striking, modern, professional illustration about this exact topic: cinematic lighting, futuristic tech colors (deep navy, neon cyan, electric purple), square composition, highly detailed. Absolutely NO text, letters, numbers, logos, brand marks or real people''s faces in the image.' ||
     E'\n\nREPLY WITH EXACTLY THIS AND NOTHING ELSE:\n[POST]\n(the post)\n[/POST]\n[IMAGE]\n(the image prompt)\n[/IMAGE]';
+  end if;
   usr := 'Write today''s post.' || E'\n\nINPUT:\n' || facts ||
     case when recent is not null then E'\n\nRecent posts on the account (do not repeat them or write something too similar):\n' || recent else '' end;
 
@@ -7691,7 +7781,7 @@ begin
   if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
   if coalesce(p_quality, 'medium') not in ('low', 'medium', 'high') then raise exception 'جودة غير معروفة'; end if;
   update ai_config set autopost = coalesce(p_on, false),
-    autopost_minutes = least(greatest(coalesce(p_minutes, 60), 30), 1440),
+    autopost_minutes = least(greatest(coalesce(p_minutes, 60), 1), 1440),
     autopost_image = coalesce(p_image, true), image_quality = coalesce(p_quality, 'medium'), updated_at = now()
   where id = 1;
 end $$;
@@ -8407,6 +8497,17 @@ exception when others then
 end $$;
 
 -- ---------- المحادثات: ملفات بأعلى دقة (حد الملف الواحد 50 ميغا حسب خطة الخادم) ----------
+
+-- =====================================================================
+--  الإصدار 62: المالك طلب النشر كل دقيقة (أخبار جديدة بدون تكرار + منشورات عن التطبيق كل نص ساعة)
+-- =====================================================================
+do $$ begin
+  if not exists(select 1 from private_settings where key = 'v62_every_minute') then
+    update ai_config set autopost = true, autopost_minutes = 1, updated_at = now() where id = 1;
+    insert into private_settings(key, value) values ('v62_every_minute', '1');
+  end if;
+exception when others then raise notice 'v62: %', sqlerrm;
+end $$;
 
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

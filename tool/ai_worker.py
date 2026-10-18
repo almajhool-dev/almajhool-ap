@@ -35,6 +35,15 @@ FEEDS = [
     ("CISA", "https://www.cisa.gov/cybersecurity-advisories/all.xml"),
     ("Malwarebytes Labs", "https://www.malwarebytes.com/blog/feed/index.xml"),
     ("Sophos News", "https://news.sophos.com/en-us/feed/"),
+    # تكنولوجيا عامة
+    ("The Verge", "https://www.theverge.com/rss/index.xml"),
+    ("TechCrunch", "https://techcrunch.com/feed/"),
+    ("Ars Technica", "https://feeds.arstechnica.com/arstechnica/index"),
+    ("Engadget", "https://www.engadget.com/rss.xml"),
+    ("Wired", "https://www.wired.com/feed/rss"),
+    ("9to5Google", "https://9to5google.com/feed/"),
+    ("Android Authority", "https://www.androidauthority.com/feed/"),
+    ("MIT Technology Review", "https://www.technologyreview.com/feed/"),
 ]
 
 
@@ -273,7 +282,7 @@ def main():
     start = time.time()
     last_news = 0.0
     while time.time() - start < RUN_SECONDS:
-        if time.time() - last_news > 30 * 60:
+        if time.time() - last_news > 5 * 60:
             push_news()
             last_news = time.time()
         try:
