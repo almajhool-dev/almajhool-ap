@@ -44,14 +44,15 @@ class _SettingsTabState extends State<SettingsTab> {
     final g = TextEditingController(text: st.googleClientId ?? '');
     var phone = st.phoneLogin;
     final sid = TextEditingController(), tok = TextEditingController(), svc = TextEditingController();
-    final gu = TextEditingController(), gp = TextEditingController();
+    final gu = TextEditingController(), gp = TextEditingController(), tg = TextEditingController();
     Map<String, dynamic> sms = const {};
     try {
       sms = ((await supa.rpc('sms_status')) as Map).cast<String, dynamic>();
     } catch (_) {}
     if (!mounted) return;
     final gate = sms['gate'] == true;
-    final linked = gate || (sms['sid'] == true && sms['token'] == true && sms['service'] == true);
+    final tgBot = st.tgBot;
+    final linked = tgBot != null || gate || (sms['sid'] == true && sms['token'] == true && sms['service'] == true);
     final ok = await showDialog<bool>(
       context: context,
       builder: (c) => StatefulBuilder(
@@ -72,11 +73,22 @@ class _SettingsTabState extends State<SettingsTab> {
                 title: const Text('الدخول برقم الهاتف'),
                 subtitle: Text(linked
                     ? 'خدمة الرسائل مربوطة ✅ (رسائل آخر 24 ساعة: ${sms['sent_today'] ?? 0})'
-                    : 'اربط هاتف الرسائل بالخانات الجوه أول، بعدين فعّله'),
+                    : 'اربط بوت تيليكرام بالخانة الجوه أول، بعدين فعّله'),
                 value: phone,
                 onChanged: (v) => set(() => phone = v),
               ),
               const SizedBox(height: 6),
+              Text(tgBot != null
+                  ? 'التحقق المجاني عبر تيليكرام شغال ✅ بالبوت @$tgBot (الصق توكن جديد بس إذا تريد تغيّره):'
+                  : 'التحقق المجاني عبر تيليكرام (موصى به): الصق توكن البوت من @BotFather',
+                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+              TextField(
+                controller: tg,
+                obscureText: true,
+                textDirection: TextDirection.ltr,
+                decoration: InputDecoration(labelText: 'Bot token', hintText: tgBot != null ? 'محفوظ ✅' : '123456789:AAH...'),
+              ),
+              const SizedBox(height: 14),
               Text(gate
                   ? 'هاتف الرسائل المجاني مربوط ✅ (اتركها فاضية إذا ما تريد تغيّرها):'
                   : 'هاتف الرسائل المجاني (من تطبيق SMS Gateway ← Cloud server):',
@@ -122,6 +134,10 @@ class _SettingsTabState extends State<SettingsTab> {
     );
     if (ok != true) return;
     try {
+      if (tg.text.trim().isNotEmpty) {
+        final r = ((await supa.rpc('set_tg_login', params: {'p_token': tg.text.trim()})) as Map);
+        if (mounted) showSnack(context, 'انربط البوت @${r['bot']} ✅');
+      }
       if (gu.text.trim().isNotEmpty || gp.text.trim().isNotEmpty) {
         await supa.rpc('set_sms_gate', params: {'p_user': gu.text.trim(), 'p_pass': gp.text.trim()});
       }

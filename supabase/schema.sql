@@ -6873,5 +6873,206 @@ end $$;
 revoke execute on function public.sms_status() from public, anon;
 grant execute on function public.sms_status() to authenticated;
 
+-- =====================================================================
+--  الإصدار 56: إنشاء حساب/الدخول برقم الهاتف «مجانًا» عن طريق تيليكرام.
+--  المستخدم يفتح بوت التطبيق ويضغط «مشاركة رقمي» — تيليكرام نفسه يضمن إن الرقم ماله
+--  (نقبل بس جهة الاتصال اللي تخص نفس المرسل). ما يكلف أي رسالة SMS.
+-- =====================================================================
+alter table public.app_settings add column if not exists tg_bot text;
+
+create table if not exists public.tg_verify (
+  nonce text primary key,
+  chat_id bigint,
+  phone text,
+  created_at timestamptz not null default now(),
+  verified_at timestamptz
+);
+create index if not exists tg_verify_chat_idx on public.tg_verify(chat_id, created_at desc);
+alter table public.tg_verify enable row level security;
+revoke all on public.tg_verify from anon, authenticated;
+
+create or replace function public._tg_api(p_method text, p_body jsonb) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare tok text; r extensions.http_response; j jsonb;
+begin
+  select value into tok from private_settings where key = 'tg_login_token';
+  if coalesce(tok, '') = '' then return null; end if;
+  begin
+    perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '8000');
+  exception when others then null;
+  end;
+  begin
+    select * into r from extensions.http((
+      'POST', 'https://api.telegram.org/bot' || tok || '/' || p_method,
+      array[]::extensions.http_header[], 'application/json', p_body::text)::extensions.http_request);
+    j := r.content::jsonb;
+  exception when others then return null;
+  end;
+  return j;
+end $$;
+revoke execute on function public._tg_api(text, jsonb) from public, anon, authenticated;
+
+-- إنشاء الحساب أو الدخول له برقم هاتف مؤكد (مشترك بين طرق التحقق)
+create or replace function public._phone_account(ph text) returns jsonb
+language plpgsql security definer set search_path = public, extensions, auth as $$
+declare uid uuid; em text; pw text;
+begin
+  em := 'p' || substr(ph, 2) || '@phone.almajhool.app';
+  select user_id into uid from phone_logins where phone = ph;
+  if uid is not null and not exists(select 1 from auth.users where id = uid) then
+    delete from phone_logins where phone = ph; uid := null;
+  end if;
+  pw := encode(gen_random_bytes(24), 'hex');
+  if uid is null then
+    uid := gen_random_uuid();
+    insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+                            raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+                            confirmation_token, recovery_token, email_change_token_new, email_change)
+    values ('00000000-0000-0000-0000-000000000000', uid, 'authenticated', 'authenticated', em,
+            crypt(pw, gen_salt('bf')), now(),
+            '{"provider":"phone","providers":["phone","email"]}'::jsonb,
+            jsonb_build_object('display_name', 'مستخدم ' || right(ph, 4)), now(), now(), '', '', '', '');
+    insert into auth.identities (id, user_id, provider_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
+    values (gen_random_uuid(), uid, uid::text,
+            jsonb_build_object('sub', uid::text, 'email', em, 'email_verified', true),
+            'email', now(), now(), now());
+    insert into phone_logins(phone, user_id) values (ph, uid);
+  else
+    select email into em from auth.users where id = uid;
+    update auth.users set encrypted_password = crypt(pw, gen_salt('bf')), updated_at = now() where id = uid;
+  end if;
+  return jsonb_build_object('email', em, 'password', pw);
+end $$;
+revoke execute on function public._phone_account(text) from public, anon, authenticated;
+
+-- التطبيق يبدي التحقق: ياخذ رمز سري ورابط البوت
+create or replace function public.phone_tg_start() returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare bot text; n text;
+begin
+  select tg_bot into bot from app_settings where id = 1;
+  if coalesce(bot, '') = '' or not coalesce((select phone_login from app_settings where id = 1), false) then
+    raise exception 'الدخول برقم الهاتف غير مفعّل حاليًا';
+  end if;
+  if not _ip_ok('tg_start', 10, 600) then raise exception 'rate_limited: محاولات كثيرة، حاول بعد شوية'; end if;
+  n := encode(gen_random_bytes(16), 'hex');
+  insert into tg_verify(nonce) values (n);
+  if random() < 0.05 then delete from tg_verify where created_at < now() - interval '1 hour'; end if;
+  return jsonb_build_object('nonce', n, 'url', 'https://t.me/' || bot || '?start=' || n);
+end $$;
+revoke execute on function public.phone_tg_start() from public;
+grant execute on function public.phone_tg_start() to anon, authenticated;
+
+-- التطبيق يسأل: تأكد الرقم؟ إذا إي يدخل للحساب (مرة وحدة بس)
+create or replace function public.phone_tg_check(p_nonce text) returns jsonb
+language plpgsql security definer set search_path = public, extensions, auth as $$
+declare v tg_verify;
+begin
+  if p_nonce is null or p_nonce !~ '^[0-9a-f]{32}$' then raise exception 'طلب غير صالح'; end if;
+  select * into v from tg_verify where nonce = p_nonce for update;
+  if not found or v.created_at < now() - interval '15 minutes' then
+    return jsonb_build_object('status', 'expired');
+  end if;
+  if v.phone is null then return jsonb_build_object('status', 'pending'); end if;
+  delete from tg_verify where nonce = p_nonce;
+  return _phone_account(v.phone) || jsonb_build_object('status', 'ok');
+end $$;
+revoke execute on function public.phone_tg_check(text) from public;
+grant execute on function public.phone_tg_check(text) to anon, authenticated;
+
+-- يقرا رسائل البوت (كل 5 ثواني، بس إذا اكو أحد ينتظر تحقق)
+create or replace function public._tg_poll() returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare j jsonb; u jsonb; m jsonb; off bigint; chat bigint; txt text; n text; ph text; c jsonb;
+begin
+  if not exists(select 1 from tg_verify where verified_at is null and created_at > now() - interval '15 minutes') then
+    return;
+  end if;
+  off := coalesce((select value from private_settings where key = 'tg_login_offset')::bigint, 0);
+  j := _tg_api('getUpdates', jsonb_build_object('offset', off, 'timeout', 0, 'limit', 50,
+                                                 'allowed_updates', jsonb_build_array('message')));
+  if j is null or coalesce((j->>'ok')::boolean, false) = false then return; end if;
+  for u in select * from jsonb_array_elements(j->'result') loop
+    off := greatest(off, (u->>'update_id')::bigint + 1);
+    m := u->'message';
+    if m is null then continue; end if;
+    chat := (m->'chat'->>'id')::bigint;
+    if (m->'chat'->>'type') is distinct from 'private' then continue; end if;
+    txt := coalesce(m->>'text', '');
+    c := m->'contact';
+    if txt like '/start %' then
+      n := substr(txt, 8);
+      update tg_verify set chat_id = chat
+        where nonce = n and verified_at is null and created_at > now() - interval '15 minutes';
+      if found then
+        perform _tg_api('sendMessage', jsonb_build_object('chat_id', chat,
+          'text', 'أهلًا 👋' || E'\n' || 'اضغط الزر الجوه «📱 مشاركة رقمي» حتى نأكد رقمك ونفتحلك حسابك بتطبيق المبرمج المجهول.',
+          'reply_markup', jsonb_build_object('keyboard',
+              jsonb_build_array(jsonb_build_array(jsonb_build_object('text', '📱 مشاركة رقمي', 'request_contact', true))),
+              'resize_keyboard', true, 'one_time_keyboard', true)));
+      else
+        perform _tg_api('sendMessage', jsonb_build_object('chat_id', chat,
+          'text', 'انتهت صلاحية الرابط. ارجع للتطبيق واضغط «تحقق عبر تيليكرام» مرة ثانية.'));
+      end if;
+    elsif c is not null then
+      -- نقبل بس رقم المرسل نفسه (مو جهة اتصال شخص ثاني)
+      if (c->>'user_id') is null or (c->>'user_id')::bigint <> (m->'from'->>'id')::bigint then
+        perform _tg_api('sendMessage', jsonb_build_object('chat_id', chat,
+          'text', 'لازم تشارك رقمك انت من الزر «📱 مشاركة رقمي» مو رقم شخص ثاني.'));
+        continue;
+      end if;
+      ph := '+' || regexp_replace(coalesce(c->>'phone_number', ''), '[^0-9]', '', 'g');
+      if ph !~ '^\+[1-9][0-9]{6,14}$' then continue; end if;
+      update tg_verify set phone = ph, verified_at = now()
+        where nonce = (select nonce from tg_verify where chat_id = chat and verified_at is null
+                         and created_at > now() - interval '15 minutes' order by created_at desc limit 1);
+      if found then
+        perform _tg_api('sendMessage', jsonb_build_object('chat_id', chat,
+          'text', 'تم تأكيد رقمك ✅' || E'\n' || 'ارجع هسه للتطبيق، راح تدخل لحسابك تلقائيًا.',
+          'reply_markup', jsonb_build_object('remove_keyboard', true)));
+      else
+        perform _tg_api('sendMessage', jsonb_build_object('chat_id', chat,
+          'text', 'ماكو طلب تحقق مفتوح. ارجع للتطبيق واضغط «تحقق عبر تيليكرام».',
+          'reply_markup', jsonb_build_object('remove_keyboard', true)));
+      end if;
+    end if;
+  end loop;
+  insert into private_settings(key, value) values ('tg_login_offset', off::text)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+end $$;
+revoke execute on function public._tg_poll() from public, anon, authenticated;
+do $$ begin
+  perform cron.schedule('almajhool-tg-login', '5 seconds', 'select public._tg_poll()');
+exception when others then raise notice 'tg login cron: %', sqlerrm;
+end $$;
+
+-- المالك يلصق توكن البوت من التطبيق (ينحفظ ومحد يكدر يقراه)، والخادم يجيب اسم البوت وحده
+create or replace function public.set_tg_login(p_token text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare t text := btrim(coalesce(p_token, '')); j jsonb; bot text;
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if t = '' then
+    delete from private_settings where key in ('tg_login_token', 'tg_login_offset');
+    update app_settings set tg_bot = null, updated_at = now() where id = 1;
+    return jsonb_build_object('bot', null);
+  end if;
+  if t !~ '^[0-9]{5,12}:[A-Za-z0-9_-]{30,50}$' then raise exception 'توكن البوت غير صحيح (يشبه 123456789:AAH...)'; end if;
+  insert into private_settings(key, value) values ('tg_login_token', t)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  j := _tg_api('getMe', '{}'::jsonb);
+  bot := j->'result'->>'username';
+  if j is null or bot is null then
+    delete from private_settings where key = 'tg_login_token';
+    raise exception 'التوكن ما اشتغل، تأكد إنك نسخته كامل من BotFather';
+  end if;
+  perform _tg_api('deleteWebhook', '{}'::jsonb);
+  delete from private_settings where key = 'tg_login_offset';
+  update app_settings set tg_bot = bot, updated_at = now() where id = 1;
+  return jsonb_build_object('bot', bot);
+end $$;
+revoke execute on function public.set_tg_login(text) from public, anon;
+grant execute on function public.set_tg_login(text) to authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

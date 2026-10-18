@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/config.dart';
 import '../../providers/providers.dart';
@@ -199,7 +200,11 @@ class _LoginScreenState extends State<LoginScreen> {
                               style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(50)),
                               onPressed: _busy
                                   ? null
-                                  : () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PhoneLoginScreen())),
+                                  : () => Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                          builder: (_) =>
+                                              st.tgBot != null ? const TelegramPhoneScreen() : const PhoneLoginScreen())),
                               icon: const Icon(Icons.phone_iphone_rounded),
                               label: const Text('الدخول برقم الهاتف'),
                             ),
@@ -729,6 +734,146 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
             child: const Text('تغيير الرقم'),
           ),
       ]),
+    );
+  }
+}
+
+
+/// التحقق المجاني من رقم الهاتف عن طريق بوت تيليكرام (بدون رسائل SMS):
+/// المستخدم يفتح البوت ويضغط «مشاركة رقمي»، والتطبيق يدخل تلقائيًا أول ما يتأكد الرقم.
+class TelegramPhoneScreen extends StatefulWidget {
+  const TelegramPhoneScreen({super.key});
+  @override
+  State<TelegramPhoneScreen> createState() => _TelegramPhoneScreenState();
+}
+
+class _TelegramPhoneScreenState extends State<TelegramPhoneScreen> with WidgetsBindingObserver {
+  String? _nonce;
+  String? _url;
+  bool _busy = false;
+  bool _waiting = false;
+  bool _done = false;
+  int _polls = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState s) {
+    if (s == AppLifecycleState.resumed && _waiting) _check();
+  }
+
+  Future<void> _start() async {
+    setState(() => _busy = true);
+    try {
+      if (_nonce == null) {
+        final r = ((await supa.rpc('phone_tg_start')) as Map).cast<String, dynamic>();
+        _nonce = r['nonce'] as String;
+        _url = r['url'] as String;
+      }
+      final ok = await launchUrl(Uri.parse(_url!), mode: LaunchMode.externalApplication);
+      if (!ok && mounted) showSnack(context, 'نصّب تيليكرام أول، وبعدين حاول مرة ثانية', error: true);
+      if (!mounted) return;
+      setState(() => _waiting = true);
+      _polls = 0;
+      _loop();
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _loop() {
+    Future<void>.delayed(const Duration(seconds: 3), () async {
+      if (!mounted || !_waiting || _done) return;
+      await _check();
+      if (++_polls < 300) _loop();
+    });
+  }
+
+  Future<void> _check() async {
+    final n = _nonce;
+    if (n == null || _done) return;
+    try {
+      final r = ((await supa.rpc('phone_tg_check', params: {'p_nonce': n})) as Map).cast<String, dynamic>();
+      final st = r['status'];
+      if (st == 'expired') {
+        _nonce = null;
+        if (mounted) {
+          setState(() => _waiting = false);
+          showSnack(context, 'انتهى الوقت، اضغط الزر مرة ثانية', error: true);
+        }
+        return;
+      }
+      if (st != 'ok' || _done) return;
+      _done = true;
+      await supa.auth.signInWithPassword(email: r['email'] as String, password: r['password'] as String);
+      final p = await ProfileRepository().get(supa.auth.currentUser!.id);
+      if (p?.isBanned ?? false) {
+        await AuthRepository().signOut();
+        throw Exception('هذا الحساب محظور نهائيًا من قبل الإدارة');
+      }
+      if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+    } catch (e) {
+      if (mounted && _done) {
+        _done = false;
+        showSnack(context, friendlyError(e), error: true);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Scaffold(
+      appBar: AppBar(title: const Text('الدخول برقم الهاتف')),
+      body: SafeArea(
+        child: ListView(padding: const EdgeInsets.all(24), children: [
+          const SizedBox(height: 12),
+          Icon(Icons.verified_user_rounded, size: 72, color: cs.primary),
+          const SizedBox(height: 16),
+          const Text('نأكد رقمك مجانًا عن طريق تيليكرام',
+              textAlign: TextAlign.center, style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 12),
+          const Text(
+            '١. اضغط الزر الجوه، راح ينفتح بوت التطبيق بتيليكرام\n'
+            '٢. اضغط «Start» أو «بدء»\n'
+            '٣. اضغط زر «📱 مشاركة رقمي» ووافق\n'
+            '٤. ارجع للتطبيق — تدخل لحسابك تلقائيًا',
+            style: TextStyle(fontSize: 15, height: 1.9),
+          ),
+          const SizedBox(height: 24),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+            onPressed: _busy ? null : _start,
+            icon: _busy
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.send_rounded),
+            label: Text(_waiting ? 'افتح تيليكرام مرة ثانية' : 'تحقق عبر تيليكرام'),
+          ),
+          if (_waiting) ...[
+            const SizedBox(height: 20),
+            const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+              SizedBox(width: 10),
+              Text('ننتظر تأكيد رقمك من تيليكرام...'),
+            ]),
+          ],
+          const SizedBox(height: 24),
+          Text('رقمك ما ينعرض لأي مستخدم، ويستخدم بس لتسجيل دخولك.',
+              textAlign: TextAlign.center, style: TextStyle(fontSize: 12.5, color: cs.onSurfaceVariant)),
+        ]),
+      ),
     );
   }
 }

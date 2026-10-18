@@ -143,6 +143,8 @@ class AppStatusProvider extends ChangeNotifier {
   String? googleClientId;
   /// الدخول برقم الهاتف (يظهر بس إذا المالك فعّله بعد ربط خدمة SMS)
   bool phoneLogin = false;
+  /// بوت تيليكرام للتحقق المجاني من الرقم
+  String? tgBot;
   String updateUrl = 'https://t.me/ikd5n';
   String updateMessage = 'هذه النسخة قديمة ومتوقفة. نزّل النسخة الجديدة من قناتنا على تلكرام.';
   RealtimeChannel? _ch;
@@ -173,6 +175,8 @@ class AppStatusProvider extends ChangeNotifier {
     final g = m['google_web_client_id'];
     googleClientId = g is String && g.isNotEmpty ? g : null;
     phoneLogin = m['phone_login'] == true;
+    final tb = m['tg_bot'];
+    tgBot = tb is String && tb.isNotEmpty ? tb : null;
     loaded = true;
     notifyListeners();
   }
