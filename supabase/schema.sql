@@ -7070,11 +7070,22 @@ begin
   end if;
   perform _tg_api('deleteWebhook', '{}'::jsonb);
   delete from private_settings where key = 'tg_login_offset';
-  update app_settings set tg_bot = bot, updated_at = now() where id = 1;
+  update app_settings set tg_bot = bot, phone_login = true, updated_at = now() where id = 1;
   return jsonb_build_object('bot', bot);
 end $$;
 revoke execute on function public.set_tg_login(text) from public, anon;
 grant execute on function public.set_tg_login(text) to authenticated;
+
+-- =====================================================================
+--  الإصدار 57: بوت تيليكرام انربط بس زر «الدخول برقم الهاتف» بقى طافي — نشغّله مرة وحدة.
+-- =====================================================================
+do $$ begin
+  if not exists(select 1 from private_settings where key = 'v57_phone_on') then
+    update app_settings set phone_login = true, updated_at = now() where id = 1 and coalesce(tg_bot, '') <> '';
+    insert into private_settings(key, value) values ('v57_phone_on', '1');
+  end if;
+exception when others then raise notice 'v57: %', sqlerrm;
+end $$;
 
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
