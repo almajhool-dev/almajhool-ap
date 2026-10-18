@@ -406,6 +406,22 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        // تصوير الشاشة: ممنوع للكل، ومسموح لمالك التطبيق بس
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "almajhool/screen")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "allowCapture") {
+                    val allow = call.argument<Boolean>("on") ?: false
+                    runOnUiThread {
+                        try {
+                            if (allow) window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                            else window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                        } catch (t: Throwable) {}
+                    }
+                    result.success(allow)
+                } else {
+                    result.notImplemented()
+                }
+            }
         pipChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "almajhool/pip")
         pipChannel?.setMethodCallHandler { call, result ->
             if (call.method == "setAuto") {

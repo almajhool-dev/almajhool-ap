@@ -11,6 +11,7 @@ import '../repositories/social_repositories.dart';
 import '../repositories/user_repositories.dart';
 import '../services/core_services.dart';
 import '../services/local_notifications.dart';
+import '../services/screen_guard.dart';
 
 class ThemeProvider extends ChangeNotifier {
   static const _key = 'theme_mode';
@@ -43,6 +44,13 @@ class SessionProvider extends ChangeNotifier {
   final _profiles = ProfileRepository();
   SessionStatus status = SessionStatus.loading;
   Profile? profile;
+
+  @override
+  void notifyListeners() {
+    // تصوير الشاشة مسموح لمالك التطبيق بس
+    ScreenGuard.allowCapture(profile?.isOwner ?? false);
+    super.notifyListeners();
+  }
   StreamSubscription<AuthState>? _sub;
   RealtimeChannel? _profileChannel;
 
