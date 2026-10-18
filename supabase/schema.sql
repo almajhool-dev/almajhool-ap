@@ -7556,7 +7556,7 @@ begin
       values (v_kind, left(v_topic, 300), nw.url, post, left(img, 3000), 'need_image')
       returning id into ap_id;
     -- بدون مفتاح OpenAI (أو الصور مطفية) ينشر النص فورًا
-    if not cfg.autopost_image or not exists(select 1 from private_settings where key = 'ai_key_openai') then
+    if not cfg.autopost_image or not exists(select 1 from private_settings where key in ('ai_key_openai', 'ai_key_cloudflare')) then
       perform _autopost_publish(ap_id, null);
     end if;
   exception when others then
@@ -7608,7 +7608,7 @@ grant execute on function public.ai_news_push(text, jsonb) to anon, authenticate
 
 create or replace function public.ai_img_claim(p_gh text) returns jsonb
 language plpgsql security definer set search_path = public, extensions as $$
-declare a ai_autoposts; cfg ai_config; k text; nm text;
+declare a ai_autoposts; cfg ai_config; k text; nm text; cf text;
 begin
   if not _gh_verify(p_gh) then return null; end if;
   insert into private_settings(key, value) values ('ai_worker_seen', now()::text)
@@ -7619,7 +7619,8 @@ begin
   if a.id is null then return null; end if;
   select * into cfg from ai_config where id = 1;
   k := (select value from private_settings where key = 'ai_key_openai');
-  if k is null or not cfg.autopost_image then
+  cf := (select value from private_settings where key = 'ai_key_cloudflare');
+  if (k is null and cf is null) or not cfg.autopost_image then
     perform _autopost_publish(a.id, null);
     return null;
   end if;
@@ -7628,7 +7629,9 @@ begin
   insert into ai_upload_tickets(name, expires_at) values (nm, now() + interval '15 minutes');
   delete from ai_upload_tickets where expires_at < now() - interval '1 day';
   return jsonb_build_object('id', a.id, 'prompt', a.image_prompt, 'key', k, 'model', cfg.model_image,
-    'quality', cfg.image_quality, 'name', nm, 'bucket', 'posts');
+    'quality', cfg.image_quality, 'name', nm, 'bucket', 'posts',
+    'cf', case when cf is not null then jsonb_build_object('account', split_part(cf, ':', 1),
+                                                          'token', substr(cf, position(':' in cf) + 1)) end);
 end $$;
 revoke execute on function public.ai_img_claim(text) from public;
 grant execute on function public.ai_img_claim(text) to anon, authenticated;
@@ -7727,6 +7730,7 @@ begin
   return jsonb_build_object(
     'on', c.autopost, 'image', c.autopost_image, 'model_image', c.model_image, 'quality', c.image_quality,
     'key_openai', exists(select 1 from private_settings where key = 'ai_key_openai'),
+    'key_cloudflare', exists(select 1 from private_settings where key = 'ai_key_cloudflare'),
     'text_keys', (select coalesce(jsonb_agg(replace(key, 'ai_key_', '')), '[]'::jsonb) from private_settings
                   where key in ('ai_key_gemini', 'ai_key_groq', 'ai_key_openrouter', 'ai_key_anthropic')),
     'first_provider', c.first_provider, 'forced', exists(select 1 from private_settings where key = 'autopost_force'),
@@ -7752,9 +7756,14 @@ language plpgsql security definer set search_path = public as $$
 declare prov text := p_provider;
 begin
   if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
-  if prov not in ('anthropic', 'gemini', 'groq', 'openrouter', 'openai') then raise exception 'مزوّد غير معروف'; end if;
+  if prov not in ('anthropic', 'gemini', 'groq', 'openrouter', 'openai', 'cloudflare') then raise exception 'مزوّد غير معروف'; end if;
   if char_length(coalesce(btrim(p_key), '')) < 20 then raise exception 'المفتاح غير صالح'; end if;
   if _is_openai_key(p_key) then prov := 'openai'; end if;
+  -- مفتاح Cloudflare للصور المجانية: «رقم الحساب:التوكن»
+  if btrim(p_key) ~ '^[0-9a-fA-F]{32}\s*:\s*\S{20,}$' then
+    prov := 'cloudflare';
+    p_key := regexp_replace(btrim(p_key), '\s*:\s*', ':');
+  end if;
   insert into private_settings(key, value) values ('ai_key_' || prov, btrim(p_key))
     on conflict (key) do update set value = excluded.value, updated_at = now();
 end $$;

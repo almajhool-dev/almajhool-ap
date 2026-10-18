@@ -150,6 +150,43 @@ def openai_image(key, model, prompt, quality):
         return r.read()
 
 
+def cf_image(acc, tok, prompt):
+    """صور مجانية من Cloudflare Workers AI (FLUX): الحد المجاني اليومي يكفي ~100 صورة."""
+    base = f"https://api.cloudflare.com/client/v4/accounts/{acc}/ai/run/@cf/black-forest-labs/"
+    hdr = {"Authorization": f"Bearer {tok}"}
+    errs = []
+    # 1) FLUX.2 klein: أوضح وأدق
+    try:
+        b = "----vyfri" + str(int(time.time() * 1000))
+        parts = []
+        for k, v in (("prompt", prompt[:2000]), ("width", "1024"), ("height", "1024")):
+            parts.append(f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n')
+        body = ("".join(parts) + f"--{b}--\r\n").encode()
+        req = urllib.request.Request(base + "flux-2-klein-4b", data=body, method="POST",
+                                     headers={**hdr, "Content-Type": f"multipart/form-data; boundary={b}"})
+        with urllib.request.urlopen(req, timeout=180) as r:
+            d = json.loads(r.read())
+        img = (d.get("result") or d).get("image")
+        if img:
+            return base64.b64decode(img)
+        errs.append("klein: empty")
+    except Exception as e:  # noqa: BLE001
+        errs.append("klein: " + http_err(e)[:150])
+    # 2) FLUX.1 schnell احتياط
+    try:
+        req = urllib.request.Request(base + "flux-1-schnell", data=json.dumps({"prompt": prompt[:2000], "steps": 8}).encode(),
+                                     method="POST", headers={**hdr, "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=180) as r:
+            d = json.loads(r.read())
+        img = (d.get("result") or d).get("image")
+        if img:
+            return base64.b64decode(img)
+        errs.append("schnell: empty")
+    except Exception as e:  # noqa: BLE001
+        errs.append("schnell: " + http_err(e)[:150])
+    raise RuntimeError(" | ".join(errs))
+
+
 def http_err(e):
     if isinstance(e, urllib.error.HTTPError):
         try:
@@ -160,6 +197,22 @@ def http_err(e):
 
 
 def make_image(job):
+    data, err = None, None
+    if job.get("key"):
+        data, err = make_openai_image(job)
+    cf = job.get("cf") or {}
+    if data is None and cf.get("account") and cf.get("token"):
+        log("using free Cloudflare images" + (f" (OpenAI: {str(err)[:80]})" if err else ""))
+        for p in ((job.get("prompt") or SAFE_PROMPT), SAFE_PROMPT):
+            try:
+                return cf_image(cf["account"], cf["token"], p), None
+            except Exception as e:  # noqa: BLE001
+                err = ("Cloudflare: " + str(e))[:300]
+                log("cf image failed:", err)
+    return data, err
+
+
+def make_openai_image(job):
     key, prompt = job["key"], (job.get("prompt") or SAFE_PROMPT)[:3500]
     quality = job.get("quality") or "medium"
     models = [job.get("model") or "gpt-image-2"]
