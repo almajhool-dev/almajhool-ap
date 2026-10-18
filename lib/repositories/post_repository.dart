@@ -114,7 +114,7 @@ class PostRepository {
     var video = keepVideoUrl;
     if (newVideo != null) {
       final size = await newVideo.length();
-      if (size > 50 * 1024 * 1024) throw Exception('حجم الفيديو أكبر من 50 ميغابايت');
+      if (size > 50 * 1024 * 1024) throw Exception('الفيديو كبير، اختاره مرة ثانية حتى ينضغط تلقائيًا');
       final name = '${newVideo.name} ${newVideo.path}'.toLowerCase();
       final ext = name.contains('.mov') ? 'mov' : (name.contains('.webm') ? 'webm' : 'mp4');
       final path = '${myId!}/${const Uuid().v4()}.$ext';

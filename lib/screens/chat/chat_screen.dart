@@ -17,6 +17,7 @@ import '../../repositories/user_repositories.dart';
 import '../../services/call_service.dart';
 import '../../services/core_services.dart';
 import '../../services/media_service.dart';
+import '../../services/video_shrink.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../../widgets/message_bubble.dart';
@@ -546,7 +547,12 @@ class _ChatScreenState extends State<ChatScreen> {
             children: [
               _attachItem(c, Icons.photo_library_rounded, 'صورة', AppColors.violet, () => MediaService.pickImage()),
               _attachItem(c, Icons.photo_camera_rounded, 'كاميرا', AppColors.pink, () => MediaService.pickImage(camera: true)),
-              _attachItem(c, Icons.videocam_rounded, 'فيديو', Colors.orange, MediaService.pickVideo),
+              _attachItem(c, Icons.videocam_rounded, 'فيديو', Colors.orange, () async {
+                final m = await MediaService.pickVideo();
+                if (m == null || m.x == null || m.size <= VideoShrink.maxBytes || !mounted) return m;
+                final x = await VideoShrink.fit(context, m.x!);
+                return PickedMedia(File(x.path), 'video', x.name, await x.length(), x: x);
+              }),
               _attachItem(c, Icons.attach_file_rounded, 'ملف', AppColors.cyan, MediaService.pickFile),
               _attachItem(c, Icons.hd_rounded, 'صورة/فيديو\nبأعلى دقة', Colors.teal, MediaService.pickMediaAsFile),
             ],

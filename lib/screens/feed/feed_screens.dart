@@ -25,6 +25,7 @@ import '../live/live_screens.dart';
 import 'community.dart';
 import 'image_editor.dart';
 import 'stories.dart';
+import '../../services/video_shrink.dart';
 import '../reels/reels_screen.dart';
 import '../market/market_screens.dart';
 
@@ -685,9 +686,11 @@ class _ComposePostScreenState extends State<ComposePostScreen> {
   Future<void> _pickVideo() async {
     final x = await ImagePicker().pickVideo(source: ImageSource.gallery);
     if (x == null) return;
-    final f = x;
-    if (await x.length() > 50 * 1024 * 1024) {
-      if (mounted) showSnack(context, 'الفيديو أكبر من 50 ميغابايت، قصّه أو صدّره بحجم أصغر', error: true);
+    XFile f;
+    try {
+      f = await VideoShrink.fit(context, x);
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
       return;
     }
     if (mounted) {
@@ -764,6 +767,8 @@ class _ComposePostScreenState extends State<ComposePostScreen> {
     }
     setState(() => _busy = true);
     try {
+      // فيديو مشارك من CapCut أو غيره وحجمه كبير: ينضغط تلقائيًا
+      if (_newVideo != null) _newVideo = await VideoShrink.fit(context, _newVideo!);
       await PostRepository().save(
         id: widget.editing?.id,
         content: _text.text,

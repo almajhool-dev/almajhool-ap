@@ -16,6 +16,7 @@ import '../../providers/providers.dart';
 import '../../repositories/live_repository.dart';
 import '../../repositories/story_repository.dart';
 import '../../services/xfile_util.dart';
+import '../../services/video_shrink.dart';
 import '../../services/core_services.dart';
 import '../../services/privacy_service.dart';
 import '../../utils/helpers.dart';
@@ -121,10 +122,11 @@ class StoryBarState extends State<StoryBar> {
   Future<void> _addVideo(ImageSource src) async {
     final x = await ImagePicker().pickVideo(source: src, maxDuration: const Duration(seconds: 60));
     if (x == null || !mounted) return;
-    final f = x;
-    final size = await x.length();
-    if (size > 50 * 1024 * 1024) {
-      if (mounted) showSnack(context, 'المقطع كبير، لازم يكون أقل من 50 ميگا', error: true);
+    XFile f;
+    try {
+      f = await VideoShrink.fit(context, x);
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
       return;
     }
     // نعرف طول المقطع
