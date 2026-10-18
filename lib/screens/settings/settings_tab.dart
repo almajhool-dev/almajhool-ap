@@ -43,6 +43,13 @@ class _SettingsTabState extends State<SettingsTab> {
     final st = context.read<AppStatusProvider>();
     final g = TextEditingController(text: st.googleClientId ?? '');
     var phone = st.phoneLogin;
+    final sid = TextEditingController(), tok = TextEditingController(), svc = TextEditingController();
+    Map<String, dynamic> sms = const {};
+    try {
+      sms = ((await supa.rpc('sms_status')) as Map).cast<String, dynamic>();
+    } catch (_) {}
+    if (!mounted) return;
+    final linked = sms['sid'] == true && sms['token'] == true && sms['service'] == true;
     final ok = await showDialog<bool>(
       context: context,
       builder: (c) => StatefulBuilder(
@@ -50,7 +57,7 @@ class _SettingsTabState extends State<SettingsTab> {
           title: const Text('خيارات تسجيل الدخول'),
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('Google: الصق «Web client ID» من Google Cloud (نفسه اللي حطيته بلوحة Supabase). '
+              const Text('Google: الصق «Web client ID» من Google Cloud (نوعه Web مو Android). '
                   'اتركه فاضي حتى تخفي زر Google.', style: TextStyle(fontSize: 12.5)),
               TextField(
                 controller: g,
@@ -61,9 +68,30 @@ class _SettingsTabState extends State<SettingsTab> {
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('الدخول برقم الهاتف'),
-                subtitle: const Text('فعّله بس بعد ما تربط خدمة رسائل SMS بلوحة Supabase'),
+                subtitle: Text(linked
+                    ? 'خدمة الرسائل مربوطة ✅ (رسائل آخر 24 ساعة: ${sms['sent_today'] ?? 0})'
+                    : 'اربط Twilio بالخانات الجوه أول، بعدين فعّله'),
                 value: phone,
                 onChanged: (v) => set(() => phone = v),
+              ),
+              const SizedBox(height: 6),
+              Text(linked ? 'مفاتيح Twilio (اتركها فاضية إذا ما تريد تغيّرها):' : 'مفاتيح Twilio (من لوحة Twilio):',
+                  style: const TextStyle(fontSize: 12.5)),
+              TextField(
+                controller: sid,
+                textDirection: TextDirection.ltr,
+                decoration: InputDecoration(labelText: 'Account SID', hintText: linked ? 'محفوظ ✅' : 'AC...'),
+              ),
+              TextField(
+                controller: tok,
+                obscureText: true,
+                textDirection: TextDirection.ltr,
+                decoration: InputDecoration(labelText: 'Auth Token', hintText: linked ? 'محفوظ ✅' : '32 حرف'),
+              ),
+              TextField(
+                controller: svc,
+                textDirection: TextDirection.ltr,
+                decoration: InputDecoration(labelText: 'Verify Service SID', hintText: linked ? 'محفوظ ✅' : 'VA...'),
               ),
             ]),
           ),
@@ -76,6 +104,10 @@ class _SettingsTabState extends State<SettingsTab> {
     );
     if (ok != true) return;
     try {
+      if (sid.text.trim().isNotEmpty || tok.text.trim().isNotEmpty || svc.text.trim().isNotEmpty) {
+        await supa.rpc('set_sms_provider',
+            params: {'p_sid': sid.text.trim(), 'p_token': tok.text.trim(), 'p_service': svc.text.trim()});
+      }
       await supa.rpc('set_login_options', params: {'p_google_client': g.text.trim(), 'p_phone': phone});
       await st.load();
       if (mounted) showSnack(context, 'تم الحفظ ✅');

@@ -6497,5 +6497,169 @@ do $$ begin
 exception when others then raise notice 'v52: %', sqlerrm;
 end $$;
 
+-- =====================================================================
+--  الإصدار 53: الدخول برقم الهاتف من الخادم مباشرة عبر Twilio Verify
+--  (ما يحتاج لوحة Supabase). مفاتيح Twilio تنحفظ هنا للكتابة فقط ومحد يكدر يقراها.
+--  حماية الرصيد: حد لكل جهاز ولكل رقم ولكل يوم، ودول محددة بس.
+-- =====================================================================
+create table if not exists public.phone_logins (
+  phone text primary key,
+  user_id uuid not null,
+  created_at timestamptz not null default now()
+);
+alter table public.phone_logins enable row level security;
+revoke all on public.phone_logins from anon, authenticated;
+
+create table if not exists public.phone_sends (
+  phone text not null,
+  at timestamptz not null default now()
+);
+create index if not exists phone_sends_idx on public.phone_sends(phone, at desc);
+alter table public.phone_sends enable row level security;
+revoke all on public.phone_sends from anon, authenticated;
+
+create or replace function public._phone_ok(p text) returns boolean
+language sql immutable as $$
+  select p ~ '^\+(964|966|971|965|962|963|961|20|90|98|49|44|1)[0-9]{6,12}$'
+     and char_length(p) between 9 and 16
+$$;
+
+create or replace function public._twilio(p_path text, p_body text) returns extensions.http_response
+language plpgsql security definer set search_path = public, extensions as $$
+declare sid text; tok text; svc text; r extensions.http_response;
+begin
+  select value into sid from private_settings where key = 'twilio_sid';
+  select value into tok from private_settings where key = 'twilio_token';
+  select value into svc from private_settings where key = 'twilio_verify_sid';
+  if coalesce(sid, '') = '' or coalesce(tok, '') = '' or coalesce(svc, '') = '' then
+    raise exception 'خدمة الرسائل ما مربوطة بعد';
+  end if;
+  begin
+    perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '12000');
+  exception when others then null;
+  end;
+  begin
+    select * into r from extensions.http((
+      'POST', 'https://verify.twilio.com/v2/Services/' || svc || '/' || p_path,
+      array[extensions.http_header('Authorization',
+            'Basic ' || replace(encode(convert_to(sid || ':' || tok, 'UTF8'), 'base64'), E'\n', ''))],
+      'application/x-www-form-urlencoded', p_body)::extensions.http_request);
+  exception when others then
+    raise exception 'ما قدرنا نتواصل ويا خدمة الرسائل، حاول بعد شوية';
+  end;
+  return r;
+end $$;
+revoke execute on function public._twilio(text, text) from public, anon, authenticated;
+
+create or replace function public.phone_send_code(p_phone text) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare ph text := regexp_replace(coalesce(p_phone, ''), '[^0-9+]', '', 'g'); r extensions.http_response;
+begin
+  if not coalesce((select phone_login from app_settings where id = 1), false) then
+    raise exception 'الدخول برقم الهاتف غير مفعّل حاليًا';
+  end if;
+  if not _phone_ok(ph) then raise exception 'رقم الهاتف غير صحيح أو الدولة غير مدعومة'; end if;
+  if not _ip_ok('phone_send', 5, 3600) then raise exception 'rate_limited: محاولات كثيرة، حاول بعد ساعة'; end if;
+  if (select count(*) from phone_sends where phone = ph and at > now() - interval '10 minutes') >= 2
+     or (select count(*) from phone_sends where phone = ph and at > now() - interval '1 day') >= 6 then
+    raise exception 'rate_limited: طلبت رموز كثيرة لهذا الرقم، حاول لاحقًا';
+  end if;
+  if (select count(*) from phone_sends where at > now() - interval '1 day') >= 300 then
+    raise exception 'rate_limited: خدمة الرسائل مشغولة اليوم، حاول باچر أو ادخل بطريقة ثانية';
+  end if;
+  r := _twilio('Verifications', 'To=' || replace(ph, '+', '%2B') || '&Channel=sms');
+  if r.status not in (200, 201) then
+    raise exception 'ما قدرنا ندز الرسالة (%). تأكد من الرقم أو حاول بعد شوية', r.status;
+  end if;
+  insert into phone_sends(phone) values (ph);
+  if random() < 0.05 then delete from phone_sends where at < now() - interval '2 days'; end if;
+  return jsonb_build_object('ok', true);
+end $$;
+revoke execute on function public.phone_send_code(text) from public;
+grant execute on function public.phone_send_code(text) to anon, authenticated;
+
+create or replace function public.phone_verify(p_phone text, p_code text) returns jsonb
+language plpgsql security definer set search_path = public, extensions, auth as $$
+declare
+  ph text := regexp_replace(coalesce(p_phone, ''), '[^0-9+]', '', 'g');
+  code text := regexp_replace(coalesce(p_code, ''), '[^0-9]', '', 'g');
+  r extensions.http_response; j jsonb; uid uuid; em text; pw text;
+begin
+  if not _phone_ok(ph) then raise exception 'رقم الهاتف غير صحيح'; end if;
+  if char_length(code) not between 4 and 10 then raise exception 'رمز التحقق غير صحيح'; end if;
+  if not _ip_ok('phone_verify', 10, 600) then raise exception 'rate_limited: محاولات كثيرة، حاول بعد شوية'; end if;
+  r := _twilio('VerificationCheck', 'To=' || replace(ph, '+', '%2B') || '&Code=' || code);
+  begin j := r.content::jsonb; exception when others then j := '{}'::jsonb; end;
+  if r.status <> 200 or coalesce(j->>'status', '') <> 'approved' then
+    raise exception 'رمز التحقق غلط أو انتهت صلاحيته';
+  end if;
+
+  em := 'p' || substr(ph, 2) || '@phone.almajhool.app';
+  select user_id into uid from phone_logins where phone = ph;
+  if uid is not null and not exists(select 1 from auth.users where id = uid) then
+    delete from phone_logins where phone = ph; uid := null;
+  end if;
+  pw := encode(gen_random_bytes(24), 'hex');
+  if uid is null then
+    uid := gen_random_uuid();
+    insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+                            raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+                            confirmation_token, recovery_token, email_change_token_new, email_change)
+    values ('00000000-0000-0000-0000-000000000000', uid, 'authenticated', 'authenticated', em,
+            crypt(pw, gen_salt('bf')), now(),
+            '{"provider":"phone","providers":["phone","email"]}'::jsonb,
+            jsonb_build_object('display_name', 'مستخدم ' || right(ph, 4)), now(), now(), '', '', '', '');
+    insert into auth.identities (id, user_id, provider_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
+    values (gen_random_uuid(), uid, uid::text,
+            jsonb_build_object('sub', uid::text, 'email', em, 'email_verified', true),
+            'email', now(), now(), now());
+    insert into phone_logins(phone, user_id) values (ph, uid);
+  else
+    select email into em from auth.users where id = uid;
+    update auth.users set encrypted_password = crypt(pw, gen_salt('bf')), updated_at = now() where id = uid;
+  end if;
+  return jsonb_build_object('email', em, 'password', pw);
+end $$;
+revoke execute on function public.phone_verify(text, text) from public;
+grant execute on function public.phone_verify(text, text) to anon, authenticated;
+
+-- المالك يلصق مفاتيح Twilio من التطبيق (تنحفظ ومحد يكدر يقراها، حتى المالك)
+create or replace function public.set_sms_provider(p_sid text, p_token text, p_service text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if nullif(btrim(p_sid), '') is not null then
+    if btrim(p_sid) !~ '^AC[0-9a-fA-F]{32}$' then raise exception 'Account SID لازم يبدي بـ AC وطوله 34'; end if;
+    insert into private_settings(key, value) values ('twilio_sid', btrim(p_sid))
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end if;
+  if nullif(btrim(p_token), '') is not null then
+    if btrim(p_token) !~ '^[0-9a-fA-F]{32}$' then raise exception 'Auth Token لازم يكون 32 حرف'; end if;
+    insert into private_settings(key, value) values ('twilio_token', btrim(p_token))
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end if;
+  if nullif(btrim(p_service), '') is not null then
+    if btrim(p_service) !~ '^VA[0-9a-fA-F]{32}$' then raise exception 'Verify Service SID لازم يبدي بـ VA وطوله 34'; end if;
+    insert into private_settings(key, value) values ('twilio_verify_sid', btrim(p_service))
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end if;
+  return sms_status();
+end $$;
+revoke execute on function public.set_sms_provider(text, text, text) from public, anon;
+grant execute on function public.set_sms_provider(text, text, text) to authenticated;
+
+create or replace function public.sms_status() returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  return jsonb_build_object(
+    'sid', exists(select 1 from private_settings where key = 'twilio_sid' and value <> ''),
+    'token', exists(select 1 from private_settings where key = 'twilio_token' and value <> ''),
+    'service', exists(select 1 from private_settings where key = 'twilio_verify_sid' and value <> ''),
+    'sent_today', (select count(*) from phone_sends where at > now() - interval '1 day'));
+end $$;
+revoke execute on function public.sms_status() from public, anon;
+grant execute on function public.sms_status() to authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

@@ -83,10 +83,15 @@ class AuthRepository {
   }
 
   /// إرسال رمز تحقق SMS للرقم (بصيغة دولية مثل +9647801234567)
-  Future<void> sendPhoneCode(String phone) => supa.auth.signInWithOtp(phone: phone, shouldCreateUser: true);
+  Future<void> sendPhoneCode(String phone) async {
+    // الخادم يدز الرمز عبر خدمة الرسائل المربوطة (Twilio) — ما يحتاج لوحة Supabase
+    await supa.rpc('phone_send_code', params: {'p_phone': phone});
+  }
 
   Future<void> verifyPhoneCode(String phone, String code) async {
-    await supa.auth.verifyOTP(type: OtpType.sms, phone: phone, token: code.trim());
+    final r = ((await supa.rpc('phone_verify', params: {'p_phone': phone, 'p_code': code.trim()})) as Map)
+        .cast<String, dynamic>();
+    await supa.auth.signInWithPassword(email: r['email'] as String, password: r['password'] as String);
   }
 
   Future<void> signIn(String email, String password) =>
