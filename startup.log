@@ -1,0 +1,680 @@
+ABIS: x86_64,arm64-v8a
+=================== v79 ===================
+Performing Streamed Install
+Success
+Status: ok
+LaunchState: UNKNOWN (0)
+Activity: com.almajhool.almajhool_app/.MainActivity
+WaitTime: 1219
+Complete
+[v79] pid=3832
+      topResumedActivity=ActivityRecord{3f0ffd3 u0 com.google.android.apps.nexuslauncher/.NexusLauncherActivity t7}
+  mCurrentFocus=Window{c61270e u0 com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity}
+  mFocusedApp=ActivityRecord{3f0ffd3 u0 com.google.android.apps.nexuslauncher/.NexusLauncherActivity t7}
+--- logcat (v79) ---
+10-18 07:54:03.758   521  2648 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10098. pid: 3090
+10-18 07:54:03.925   834   864 V WindowManagerShell: Transition requested: android.os.BinderProxy@92321e8 TransitionRequestInfo { type = OPEN, triggerTask = TaskInfo{userId=0 taskId=8 displayId=0 isRunning=true baseIntent=Intent { flg=0x10000000 cmp=com.almajhool.almajhool_app/.MainActivity } baseActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} topActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} origActivity=null realActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} numActivities=1 lastActiveTime=38859 supportsMultiWindow=true resizeMode=1 isResizeable=true minWidth=-1 minHeight=-1 defaultMinSize=220 token=WCT{android.window.IWindowContainerToken$Stub$Proxy@9ba5001} topActivityType=1 pictureInPictureParams=null shouldDockBigOverlays=false launchIntoPipHostTaskId=-1 lastParentTaskIdBeforePip=-1 displayCutoutSafeInsets=null topActivityInfo=ActivityInfo{a7a8ea6 com.almajhool.almajhool_app.MainActivity} launchCookies=[] positionInParent=Point(0, 0) parentTaskId=-1 isFocused=false isVisible=false isVisibleRequested=false isSleeping=false topActivityInSizeCompat=false topActivityEligibleForLetterboxEducation= false topActivityLetterboxed= false isFromDoubleTap= false topActivityLetterboxVerticalPosition= -1 topActivityLetterboxHorizontalPosition= -1 topActivityLetterboxWidth=-1 topActivityLetterboxHeight=-1 locusId=null displayAreaFeatureId=1 cameraCompatControlState=hidden}, remoteTransition = null, displayChange = null }
+10-18 07:54:03.930   521  2298 I ActivityTaskManager: START u0 {flg=0x10000000 cmp=com.almajhool.almajhool_app/.MainActivity} with LAUNCH_SINGLE_TOP from uid 2000 (BAL_ALLOW_PERMISSION) result code=0
+10-18 07:54:03.951   521   788 D CoreBackPreview: Window{c4e08b9 u0 Splash Screen com.almajhool.almajhool_app}: Setting back callback OnBackInvokedCallbackInfo{mCallback=android.window.IOnBackInvokedCallback$Stub$Proxy@3d7775, mPriority=0, mIsAnimationCallback=false}
+10-18 07:54:04.008   521  2554 W system_server: Long monitor contention with owner ActivityManager (550) at void com.android.server.am.BroadcastQueueModernImpl.checkPendingColdStartValidity()(BroadcastQueueModernImpl.java:551) waiters=5 in android.content.ComponentName com.android.server.am.ActivityManagerService.startService(android.app.IApplicationThread, android.content.Intent, java.lang.String, boolean, java.lang.String, java.lang.String, int, boolean, int, java.lang.String, java.lang.String) for 198ms
+10-18 07:54:04.141  3227  3227 I l.almajhool_app: Using CollectorTypeCC GC.
+10-18 07:54:04.142  3227  3227 W l.almajhool_app: Unexpected CPU variant for x86: x86_64.
+10-18 07:54:04.142  3227  3227 W l.almajhool_app: Known variants: atom, sandybridge, silvermont, goldmont, goldmont-plus, tremont, kabylake, default
+10-18 07:54:04.151   521   551 W ActivityManager: Slow operation: 71ms so far, now at startProcess: returned from zygote!
+10-18 07:54:04.151   521   551 W ActivityManager: Slow operation: 110ms so far, now at startProcess: done updating battery stats
+10-18 07:54:04.151   521   551 W ActivityManager: Slow operation: 111ms so far, now at startProcess: building log message
+10-18 07:54:04.151   521   551 I ActivityManager: Start proc 3227:com.almajhool.almajhool_app/u0a192 for next-top-activity {com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity}
+10-18 07:54:04.151   521   551 W ActivityManager: Slow operation: 111ms so far, now at startProcess: starting to update pids map
+10-18 07:54:04.151   521   551 W ActivityManager: Slow operation: 111ms so far, now at startProcess: done updating pids map
+10-18 07:54:04.154  3227  3227 E l.almajhool_app: Not starting debugger since process cannot load the jdwp agent.
+10-18 07:54:04.222  3227  3227 D nativeloader: Configuring clns-6 for other apk /data/app/~~JLlFTAh8zvGZMG0a6inxBg==/com.almajhool.almajhool_app-bxY76Y2YdXJEXEIJm9XMrg==/base.apk. target_sdk_version=36, uses_libraries=, library_path=/data/app/~~JLlFTAh8zvGZMG0a6inxBg==/com.almajhool.almajhool_app-bxY76Y2YdXJEXEIJm9XMrg==/lib/x86_64:/data/app/~~JLlFTAh8zvGZMG0a6inxBg==/com.almajhool.almajhool_app-bxY76Y2YdXJEXEIJm9XMrg==/base.apk!/lib/x86_64, permitted_path=/data:/mnt/expand:/data/user/0/com.almajhool.almajhool_app
+10-18 07:54:04.225  3227  3227 V GraphicsEnvironment: ANGLE GameManagerService for com.almajhool.almajhool_app: false
+10-18 07:54:04.225  3227  3227 V GraphicsEnvironment: com.almajhool.almajhool_app is not listed in per-application setting
+10-18 07:54:04.240   521   804 I SdkSandboxManager: No SDKs used. Skipping SDK data reconcilation for CallingInfo{mUid=10192, mPackageName='com.almajhool.almajhool_app, mAppProcessToken='null'}
+10-18 07:54:04.244   521  1647 I ActivityManager: Background started FGS: Allowed [callingPackage: com.google.android.inputmethod.latin; callingUid: 10142; uidState: IMPB; uidBFSL: n/a; intent: Intent { cmp=com.google.android.inputmethod.latin/com.google.android.apps.inputmethod.libs.dataservice.superpacks.SuperpacksForegroundTaskService }; code:CURRENT_INPUT_METHOD; tempAllowListReason:<null>; targetSdkVersion:33; callerTargetSdkVersion:33; startForegroundCount:0; bindFromPackage:null: isBindService:false]
+10-18 07:54:04.255   521  2810 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10192. pid: 3227
+10-18 07:54:04.255   521   540 V WindowManager: Sent Transition #6 createdAt=10-18 07:54:03.851 via request=TransitionRequestInfo { type = OPEN, triggerTask = TaskInfo{userId=0 taskId=8 displayId=0 isRunning=true baseIntent=Intent { flg=0x10000000 cmp=com.almajhool.almajhool_app/.MainActivity } baseActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} topActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} origActivity=null realActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} numActivities=1 lastActiveTime=38859 supportsMultiWindow=true resizeMode=1 isResizeable=true minWidth=-1 minHeight=-1 defaultMinSize=220 token=WCT{RemoteToken{dc8ec51 Task{c92d551 #8 type=standard I=com.almajhool.almajhool_app/.MainActivity}}} topActivityType=1 pictureInPictureParams=null shouldDockBigOverlays=false launchIntoPipHostTaskId=-1 lastParentTaskIdBeforePip=-1 displayCutoutSafeInsets=null topActivityInfo=ActivityInfo{e337cb6 com.almajhool.almajhool_app.MainActivity} launchCookies=[] positionInParent=Point(0, 0) parentTaskId=-1 isFocused=false isVisible=false isVisibleRequested=false isSleeping=false topActivityInSizeCompat=false topActivityEligibleForLetterboxEducation= false topActivityLetterboxed= false isFromDoubleTap= false topActivityLetterboxVerticalPosition= -1 topActivityLetterboxHorizontalPosition= -1 topActivityLetterboxWidth=-1 topActivityLetterboxHeight=-1 locusId=null displayAreaFeatureId=1 cameraCompatControlState=hidden}, remoteTransition = null, displayChange = null }
+10-18 07:54:04.255   521   540 V WindowManager:     info={id=6 t=OPEN f=0x0 trk=0 r=[0@Point(0, 0)] c=[{WCT{RemoteToken{dc8ec51 Task{c92d551 #8 type=standard I=com.almajhool.almajhool_app/.MainActivity}}} m=OPEN f=NONE leash=Surface(name=Task=8)/@0x421c691 sb=Rect(0, 0 - 320, 640) eb=Rect(0, 0 - 320, 640) d=0},{WCT{RemoteToken{6afbdb7 Task{f4ce1f2 #1 type=home}}} m=TO_BACK f=SHOW_WALLPAPER leash=Surface(name=Task=1)/@0x37a30d4 sb=Rect(0, 0 - 320, 640) eb=Rect(0, 0 - 320, 640) d=0}]}
+10-18 07:54:04.308   521   550 I ActivityManager: com.google.android.packageinstaller is exempt from freezer
+10-18 07:54:04.320   835   835 I SafetyLabelChangedBroadcastReceiver: received broadcast packageName: com.almajhool.almajhool_app, current user: UserHandle{0}, packageChangeEvent: NEW_INSTALL, intent user: UserHandle{0}
+10-18 07:54:04.354   521   551 I ActivityManager: Start proc 3260:com.google.android.packageinstaller/u0a95 for broadcast {com.google.android.packageinstaller/com.android.packageinstaller.PackageInstalledReceiver}
+10-18 07:54:04.522   521   551 W ActivityManager: Slow operation: 215ms so far, now at startProcess: done updating pids map
+10-18 07:54:04.532   521  2810 W ActivityManager: Foreground service started from background can not have location/camera/microphone access: service com.google.android.inputmethod.latin/com.google.android.apps.inputmethod.libs.dataservice.superpacks.SuperpacksForegroundTaskService
+10-18 07:54:04.750   521  2816 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10095. pid: 3260
+10-18 07:54:04.904  3227  3227 E FlutterLoader: Flutter initialization failed.
+10-18 07:54:04.904  3227  3227 E FlutterLoader: java.util.concurrent.ExecutionException: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at java.util.concurrent.FutureTask.report(FutureTask.java:122)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at java.util.concurrent.FutureTask.get(FutureTask.java:191)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at i50.a(r8-map-id-6bd59904c51ee67a945d8ca690cf50735af4a095b5a98b165fc85c52b5f13ffc:41)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at h40.<init>(r8-map-id-6bd59904c51ee67a945d8ca690cf50735af4a095b5a98b165fc85c52b5f13ffc:34)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at q30.onCreate(r8-map-id-6bd59904c51ee67a945d8ca690cf50735af4a095b5a98b165fc85c52b5f13ffc:322)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at com.almajhool.almajhool_app.MainActivity.onCreate(r8-map-id-6bd59904c51ee67a945d8ca690cf50735af4a095b5a98b165fc85c52b5f13ffc:13)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at android.app.Activity.performCreate(Activity.java:8595)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at android.app.Activity.performCreate(Activity.java:8573)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1456)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:3764)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:3922)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:103)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at android.app.servertransaction.TransactionExecutor.executeCallbacks(TransactionExecutor.java:139)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:96)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:2443)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at android.os.Handler.dispatchMessage(Handler.java:106)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at android.os.Looper.loopOnce(Looper.java:205)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at android.os.Looper.loop(Looper.java:294)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at android.app.ActivityThread.main(ActivityThread.java:8177)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at java.lang.reflect.Method.invoke(Native Method)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:552)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:971)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: Caused by: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at java.lang.Runtime.load0(Runtime.java:933)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at java.lang.System.load(System.java:1625)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at io.flutter.embedding.engine.FlutterJNI.loadLibrary(r8-map-id-6bd59904c51ee67a945d8ca690cf50735af4a095b5a98b165fc85c52b5f13ffc:398)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at g50.call(r8-map-id-6bd59904c51ee67a945d8ca690cf50735af4a095b5a98b165fc85c52b5f13ffc:17)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at java.util.concurrent.FutureTask.run(FutureTask.java:264)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1145)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:644)
+10-18 07:54:04.904  3227  3227 E FlutterLoader: 	at java.lang.Thread.run(Thread.java:1012)
+10-18 07:54:04.904  3227  3227 D AndroidRuntime: Shutting down VM
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: FATAL EXCEPTION: main
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: Process: com.almajhool.almajhool_app, PID: 3227
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity}: java.lang.RuntimeException: java.util.concurrent.ExecutionException: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:3782)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:3922)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:103)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeCallbacks(TransactionExecutor.java:139)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:96)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:2443)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:106)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:205)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:294)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:8177)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:552)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:971)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: Caused by: java.lang.RuntimeException: java.util.concurrent.ExecutionException: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at t90.n(r8-map-id-6bd59904c51ee67a945d8ca690cf50735af4a095b5a98b165fc85c52b5f13ffc:3)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at i50.a(r8-map-id-6bd59904c51ee67a945d8ca690cf50735af4a095b5a98b165fc85c52b5f13ffc:817)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at h40.<init>(r8-map-id-6bd59904c51ee67a945d8ca690cf50735af4a095b5a98b165fc85c52b5f13ffc:34)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at q30.onCreate(r8-map-id-6bd59904c51ee67a945d8ca690cf50735af4a095b5a98b165fc85c52b5f13ffc:322)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at com.almajhool.almajhool_app.MainActivity.onCreate(r8-map-id-6bd59904c51ee67a945d8ca690cf50735af4a095b5a98b165fc85c52b5f13ffc:13)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:8595)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:8573)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1456)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:3764)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	... 12 more
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: Caused by: java.util.concurrent.ExecutionException: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at java.util.concurrent.FutureTask.report(FutureTask.java:122)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at java.util.concurrent.FutureTask.get(FutureTask.java:191)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at i50.a(r8-map-id-6bd59904c51ee67a945d8ca690cf50735af4a095b5a98b165fc85c52b5f13ffc:41)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	... 19 more
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: Caused by: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at java.lang.Runtime.load0(Runtime.java:933)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at java.lang.System.load(System.java:1625)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at io.flutter.embedding.engine.FlutterJNI.loadLibrary(r8-map-id-6bd59904c51ee67a945d8ca690cf50735af4a095b5a98b165fc85c52b5f13ffc:398)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at g50.call(r8-map-id-6bd59904c51ee67a945d8ca690cf50735af4a095b5a98b165fc85c52b5f13ffc:17)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at java.util.concurrent.FutureTask.run(FutureTask.java:264)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1145)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:644)
+10-18 07:54:04.905  3227  3227 E AndroidRuntime: 	at java.lang.Thread.run(Thread.java:1012)
+10-18 07:54:04.912  1668  2039 W SnapshotHandler: 	at libcore.io.IoBridge.open(IoBridge.java:574)
+10-18 07:54:04.912  1668  2039 W SnapshotHandler: 	at libcore.io.Linux.open(Native Method)
+10-18 07:54:04.912  1668  2039 W SnapshotHandler: 	at libcore.io.ForwardingOs.open(ForwardingOs.java:563)
+10-18 07:54:04.912  1668  2039 W SnapshotHandler: 	at libcore.io.BlockGuardOs.open(BlockGuardOs.java:274)
+10-18 07:54:04.912  1668  2039 W SnapshotHandler: 	at libcore.io.ForwardingOs.open(ForwardingOs.java:563)
+10-18 07:54:04.912  1668  2039 W SnapshotHandler: 	at libcore.io.IoBridge.open(IoBridge.java:560)
+10-18 07:54:04.955   521   942 W ActivityTaskManager:   Force finishing activity com.almajhool.almajhool_app/.MainActivity
+10-18 07:54:04.964  1604  1876 W SnapshotHandler: 	at libcore.io.IoBridge.open(IoBridge.java:574)
+10-18 07:54:04.964  1604  1876 W SnapshotHandler: 	at libcore.io.Linux.open(Native Method)
+10-18 07:54:04.964  1604  1876 W SnapshotHandler: 	at libcore.io.ForwardingOs.open(ForwardingOs.java:563)
+10-18 07:54:04.964  1604  1876 W SnapshotHandler: 	at libcore.io.BlockGuardOs.open(BlockGuardOs.java:274)
+10-18 07:54:04.964  1604  1876 W SnapshotHandler: 	at libcore.io.ForwardingOs.open(ForwardingOs.java:563)
+10-18 07:54:04.964  1604  1876 W SnapshotHandler: 	at libcore.io.IoBridge.open(IoBridge.java:560)
+10-18 07:54:04.968   521   534 I ActivityManager: Process com.almajhool.almajhool_app (pid 3227) has died: fg  TOP 
+10-18 07:54:05.034   521   540 V WindowManager:     info={id=7 t=CLOSE f=0x10 trk=0 r=[0@Point(0, 0)] c=[{WCT{RemoteToken{6afbdb7 Task{f4ce1f2 #1 type=home}}} m=TO_FRONT f=SHOW_WALLPAPER|MOVE_TO_TOP leash=Surface(name=Task=1)/@0x37a30d4 sb=Rect(0, 0 - 320, 640) eb=Rect(0, 0 - 320, 640) d=0},{WCT{RemoteToken{dc8ec51 Task{c92d551 #8 type=standard I=com.almajhool.almajhool_app/.MainActivity}}} m=CLOSE f=NONE leash=Surface(name=Task=8)/@0x421c691 sb=Rect(0, 0 - 320, 640) eb=Rect(0, 0 - 320, 640) d=0},{null m=TO_FRONT f=IS_WALLPAPER leash=Surface(name=WallpaperWindowToken{2c4f8d token=android.os.Binder@dde7824})/@0x244d268 sb=Rect(0, 0 - 320, 640) eb=Rect(0, 0 - 320, 640) d=0}]}
+10-18 07:54:05.061   521  1669 W InputManager-JNI: Input channel object 'c4e08b9 Splash Screen com.almajhool.almajhool_app (client)' was disposed without first being removed with the input manager!
+10-18 07:54:05.457   521   543 W ActivityTaskManager: Activity top resumed state loss timeout for ActivityRecord{4fc8fdb u0 com.almajhool.almajhool_app/.MainActivity t-1 f}}
+10-18 07:54:05.624   521   540 I ActivityManager: Posting BOOT_COMPLETED user #0
+10-18 07:54:05.630   521   550 D SystemServerTimingAsync: ssm.onUnlockedUser-0_com.android.server.am.ActivityManagerService$Lifecycle
+10-18 07:54:05.630   521   550 V SystemServerTimingAsync: ssm.onUnlockedUser-0_com.android.server.am.ActivityManagerService$Lifecycle took to complete: 0ms
+10-18 07:54:05.765  1048  1048 D CarrierSvcBindHelper: onPackageAdded: com.almajhool.almajhool_app
+10-18 07:54:05.767  1048  1294 D ImsResolver: maybeAddedImsService, packageName: com.almajhool.almajhool_app
+10-18 07:54:05.951   521   541 W Looper  : Slow dispatch took 212ms android.ui h=com.android.server.am.ActivityManagerService$UiHandler c=null m=68
+10-18 07:54:05.976   521   551 I ActivityManager: Start proc 3393:com.android.traceur/u0a115 for broadcast {com.android.traceur/com.android.traceur.Receiver}
+10-18 07:54:06.011  1048  1048 D CarrierSvcBindHelper: onPackageModified: com.almajhool.almajhool_app
+10-18 07:54:06.015  1048  1294 D ImsResolver: maybeAddedImsService, packageName: com.almajhool.almajhool_app
+10-18 07:54:06.028   521   551 I ActivityManager: Start proc 3399:com.google.android.gms.unstable/u0a132 for service {com.google.android.gms/com.google.android.gms.droidguard.DroidGuardService}
+10-18 07:54:06.164   521  2999 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10115. pid: 3393
+10-18 07:54:06.190  3399  3399 D nativeloader: InitLlndkLibrariesProduct: libEGL.so:libGLESv1_CM.so:libGLESv2.so:libGLESv3.so:libRS.so:libandroid_net.so:libbinder_ndk.so:libc.so:libcgrouprc.so:libclang_rt.asan-x86_64-android.so:libcom.android.tethering.connectivity_native.so:libdl.so:libft2.so:liblog.so:libm.so:libmediandk.so:libnativewindow.so:libneuralnetworks.so:libselinux.so:libsync.so:libvndksupport.so:libvulkan.so
+10-18 07:54:06.190  3399  3399 D nativeloader: InitVndkspLibrariesProduct: android.hardware.common-V2-ndk.so:android.hardware.common.fmq-V1-ndk.so:android.hardware.graphics.allocator-V2-ndk.so:android.hardware.graphics.common-V4-ndk.so:android.hardware.graphics.common@1.0.so:android.hardware.graphics.common@1.1.so:android.hardware.graphics.common@1.2.so:android.hardware.graphics.composer3-V1-ndk.so:android.hardware.graphics.mapper@2.0.so:android.hardware.graphics.mapper@2.1.so:android.hardware.graphics.mapper@3.0.so:android.hardware.graphics.mapper@4.0.so:android.hardware.renderscript@1.0.so:android.hidl.memory.token@1.0.so:android.hidl.memory@1.0-impl.so:android.hidl.memory@1.0.so:android.hidl.safe_union@1.0.so:libRSCpuRef.so:libRSDriver.so:libRS_internal.so:libbase.so:libbcinfo.so:libblas.so:libc++.so:libcompiler_rt.so:libcutils.so:libdmabufheap.so:libgralloctypes.so:libhardware.so:libhidlbase.so:libhidlmemory.so:libion.so:libjsoncpp.so:liblzma.so:libprocessgroup.so:libunwindstack.so:libutils.so:libutilscallstack.so:libz.so
+10-18 07:54:06.303   521   551 I ActivityManager: Start proc 3453:com.google.android.onetimeinitializer/u0a125 for broadcast {com.google.android.onetimeinitializer/com.google.android.onetimeinitializer.OneTimeInitializerReceiver}
+10-18 07:54:06.451  3453  3453 D nativeloader: InitLlndkLibrariesProduct: libEGL.so:libGLESv1_CM.so:libGLESv2.so:libGLESv3.so:libRS.so:libandroid_net.so:libbinder_ndk.so:libc.so:libcgrouprc.so:libclang_rt.asan-x86_64-android.so:libcom.android.tethering.connectivity_native.so:libdl.so:libft2.so:liblog.so:libm.so:libmediandk.so:libnativewindow.so:libneuralnetworks.so:libselinux.so:libsync.so:libvndksupport.so:libvulkan.so
+10-18 07:54:06.452  3453  3453 D nativeloader: InitVndkspLibrariesProduct: android.hardware.common-V2-ndk.so:android.hardware.common.fmq-V1-ndk.so:android.hardware.graphics.allocator-V2-ndk.so:android.hardware.graphics.common-V4-ndk.so:android.hardware.graphics.common@1.0.so:android.hardware.graphics.common@1.1.so:android.hardware.graphics.common@1.2.so:android.hardware.graphics.composer3-V1-ndk.so:android.hardware.graphics.mapper@2.0.so:android.hardware.graphics.mapper@2.1.so:android.hardware.graphics.mapper@3.0.so:android.hardware.graphics.mapper@4.0.so:android.hardware.renderscript@1.0.so:android.hidl.memory.token@1.0.so:android.hidl.memory@1.0-impl.so:android.hidl.memory@1.0.so:android.hidl.safe_union@1.0.so:libRSCpuRef.so:libRSDriver.so:libRS_internal.so:libbase.so:libbcinfo.so:libblas.so:libc++.so:libcompiler_rt.so:libcutils.so:libdmabufheap.so:libgralloctypes.so:libhardware.so:libhidlbase.so:libhidlmemory.so:libion.so:libjsoncpp.so:liblzma.so:libprocessgroup.so:libunwindstack.so:libutils.so:libutilscallstack.so:libz.so
+10-18 07:54:06.484  1585  1585 I AiAiEcho: AppFetcherImplV2 updateApps package:[com.almajhool.almajhool_app], userId:[0], reason:[package is added.].
+10-18 07:54:06.519   521  2999 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10125. pid: 3453
+10-18 07:54:06.695   521   613 D ActivityManager: freezing 1947 com.google.android.partnersetup
+10-18 07:54:06.792   521   551 I ActivityManager: Start proc 3499:com.android.camera2/u0a145 for broadcast {com.android.camera2/com.android.camera.SetActivitiesCameraReceiver}
+10-18 07:54:06.809  1668  2312 I ContentCaptureHelper: Setting logging level to DEBUG
+10-18 07:54:06.984   521   551 I ActivityManager: Start proc 3516:com.android.dynsystem/1000 for broadcast {com.android.dynsystem/com.android.dynsystem.BootCompletedReceiver}
+10-18 07:54:07.026  3499  3499 D nativeloader: InitLlndkLibrariesProduct: libEGL.so:libGLESv1_CM.so:libGLESv2.so:libGLESv3.so:libRS.so:libandroid_net.so:libbinder_ndk.so:libc.so:libcgrouprc.so:libclang_rt.asan-x86_64-android.so:libcom.android.tethering.connectivity_native.so:libdl.so:libft2.so:liblog.so:libm.so:libmediandk.so:libnativewindow.so:libneuralnetworks.so:libselinux.so:libsync.so:libvndksupport.so:libvulkan.so
+10-18 07:54:07.026  3499  3499 D nativeloader: InitVndkspLibrariesProduct: android.hardware.common-V2-ndk.so:android.hardware.common.fmq-V1-ndk.so:android.hardware.graphics.allocator-V2-ndk.so:android.hardware.graphics.common-V4-ndk.so:android.hardware.graphics.common@1.0.so:android.hardware.graphics.common@1.1.so:android.hardware.graphics.common@1.2.so:android.hardware.graphics.composer3-V1-ndk.so:android.hardware.graphics.mapper@2.0.so:android.hardware.graphics.mapper@2.1.so:android.hardware.graphics.mapper@3.0.so:android.hardware.graphics.mapper@4.0.so:android.hardware.renderscript@1.0.so:android.hidl.memory.token@1.0.so:android.hidl.memory@1.0-impl.so:android.hidl.memory@1.0.so:android.hidl.safe_union@1.0.so:libRSCpuRef.so:libRSDriver.so:libRS_internal.so:libbase.so:libbcinfo.so:libblas.so:libc++.so:libcompiler_rt.so:libcutils.so:libdmabufheap.so:libgralloctypes.so:libhardware.so:libhidlbase.so:libhidlmemory.so:libion.so:libjsoncpp.so:liblzma.so:libprocessgroup.so:libunwindstack.so:libutils.so:libutilscallstack.so:libz.so
+10-18 07:54:07.143   521  2986 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10145. pid: 3499
+10-18 07:54:07.185   521  2999 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10132. pid: 3399
+10-18 07:54:07.381   521  2555 W system_server: Core platform API violation: Llibcore/io/Memory;->pokeByte(JB)V from Lcom/android/permission/jarjar/com/google/protobuf/UnsafeUtil; using reflection
+10-18 07:54:07.381   521  2555 W system_server: Core platform API violation: Llibcore/io/Memory;->peekByte(J)B from Lcom/android/permission/jarjar/com/google/protobuf/UnsafeUtil; using reflection
+10-18 07:54:07.404   521   551 I ActivityManager: Start proc 3558:com.android.intentresolver/u0a92 for broadcast {com.android.intentresolver/com.android.intentresolver.ChooserActivityReEnabler}
+10-18 07:54:07.421   521  2555 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 1000. pid: 3516
+10-18 07:54:07.439   521   551 I ActivityManager: Start proc 3563:com.android.dynsystem:dynsystem/1000 for service {com.android.dynsystem/com.android.dynsystem.DynamicSystemInstallationService}
+10-18 07:54:07.578  1585  1585 I AiAiEcho: AppFetcherImpl onPackageChanged com.almajhool.almajhool_app.
+10-18 07:54:07.581  1585  2833 I AiAiEcho: AppIndexer Package:[com.almajhool.almajhool_app] UserProfile:[0] Enabled:[true].
+10-18 07:54:07.581  1585  2833 I AiAiEcho: AppFetcherImplV2 updateApps package:[com.almajhool.almajhool_app], userId:[0], reason:[package is updated.].
+10-18 07:54:07.607   521  2986 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 1000. pid: 3563
+10-18 07:54:07.671   521  2298 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10092. pid: 3558
+10-18 07:54:07.674   521   574 I ActivityManager: Killing 3558:com.android.intentresolver/u0a92 (adj 905): change com.android.intentresolver
+10-18 07:54:07.740   521  2999 V ActivityManager: Got obituary of 3558:com.android.intentresolver
+10-18 07:54:07.796   521   613 D ActivityManager: freezing 1688 com.google.android.googlesdksetup
+10-18 07:54:07.857   521   551 I ActivityManager: Start proc 3634:com.android.nfc/1027 for broadcast {com.android.nfc/com.android.nfc.NfcBootCompletedReceiver}
+10-18 07:54:08.048   521  2337 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 1027. pid: 3634
+10-18 07:54:08.050   521   574 I ActivityManager: Killing 3634:com.android.nfc/1027 (adj 905): change com.android.nfc
+10-18 07:54:08.066   521   550 I ActivityManager: com.android.shell is exempt from freezer
+10-18 07:54:08.070   521   551 I ActivityManager: Start proc 3666:com.android.shell/2000 for broadcast {com.android.shell/com.android.shell.HeapDumpReceiver}
+10-18 07:54:08.161   521  1669 V ActivityManager: Got obituary of 3634:com.android.nfc
+10-18 07:54:08.238   521  2816 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 2000. pid: 3666
+10-18 07:54:08.269   521   551 I ActivityManager: Start proc 3686:com.google.android.configupdater/u0a129 for broadcast {com.google.android.configupdater/com.google.android.configupdater.MainReceiver}
+10-18 07:54:08.457  3686  3686 D nativeloader: InitLlndkLibrariesProduct: libEGL.so:libGLESv1_CM.so:libGLESv2.so:libGLESv3.so:libRS.so:libandroid_net.so:libbinder_ndk.so:libc.so:libcgrouprc.so:libclang_rt.asan-x86_64-android.so:libcom.android.tethering.connectivity_native.so:libdl.so:libft2.so:liblog.so:libm.so:libmediandk.so:libnativewindow.so:libneuralnetworks.so:libselinux.so:libsync.so:libvndksupport.so:libvulkan.so
+10-18 07:54:08.457  3686  3686 D nativeloader: InitVndkspLibrariesProduct: android.hardware.common-V2-ndk.so:android.hardware.common.fmq-V1-ndk.so:android.hardware.graphics.allocator-V2-ndk.so:android.hardware.graphics.common-V4-ndk.so:android.hardware.graphics.common@1.0.so:android.hardware.graphics.common@1.1.so:android.hardware.graphics.common@1.2.so:android.hardware.graphics.composer3-V1-ndk.so:android.hardware.graphics.mapper@2.0.so:android.hardware.graphics.mapper@2.1.so:android.hardware.graphics.mapper@3.0.so:android.hardware.graphics.mapper@4.0.so:android.hardware.renderscript@1.0.so:android.hidl.memory.token@1.0.so:android.hidl.memory@1.0-impl.so:android.hidl.memory@1.0.so:android.hidl.safe_union@1.0.so:libRSCpuRef.so:libRSDriver.so:libRS_internal.so:libbase.so:libbcinfo.so:libblas.so:libc++.so:libcompiler_rt.so:libcutils.so:libdmabufheap.so:libgralloctypes.so:libhardware.so:libhidlbase.so:libhidlmemory.so:libion.so:libjsoncpp.so:liblzma.so:libprocessgroup.so:libunwindstack.so:libutils.so:libutilscallstack.so:libz.so
+10-18 07:54:08.480   521  2986 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10129. pid: 3686
+10-18 07:54:08.633   521   531 W JavaBinder: BinderProxy is being destroyed but the application did not call unlinkToDeath to unlink all of its death recipients beforehand.  Releasing leaked death recipient: com.android.server.am.ActivityManagerService$14
+10-18 07:54:08.826  1866  2611 W libc    : Access denied finding property "ro.hardware.chipname"
+10-18 07:54:08.909   521   574 E ActivityManager: Unable to freeze binder for 2498: -11
+10-18 07:54:08.911   521   574 I ActivityManager: Killing 2498:com.google.android.gm/u0a141 (adj 0): change com.google.android.gm
+10-18 07:54:08.912   521   574 W ActivityManager: Scheduling restart of crashed service com.google.android.gm/com.android.email.job.BootCompletedJob$BootCompletedJobService in 1000ms for connection
+10-18 07:54:08.913   521   574 W ActivityManager: Scheduling restart of crashed service com.google.android.gm/com.android.email.job.MigrateDaJob$MigrateDaJobService in 10999ms for connection
+10-18 07:54:08.913   521   574 W ActivityManager: Scheduling restart of crashed service com.google.android.gm/androidx.work.impl.background.systemjob.SystemJobService in 20999ms for connection
+10-18 07:54:08.932   521  1669 W ActivityManager: Service done with onDestroy, but not inDestroying: ServiceRecord{f364821 u0 com.google.android.gm/com.android.email.job.UpgradeJob$UpgradeJobService}, app=ProcessRecord{1b4f545 0:com.google.android.gm/u0a141}
+10-18 07:54:08.933   521  1669 W ActivityManager: finishReceiver: no app for android.os.BinderProxy@c2fd1cf
+10-18 07:54:08.974   521   550 D ActivityManager: sync unfroze 1947 com.google.android.partnersetup for 3
+10-18 07:54:08.981   521   613 D ActivityManager: freezing 1441 com.android.carrierconfig
+10-18 07:54:09.064   521  2814 V ActivityManager: Got obituary of 2498:com.google.android.gm
+10-18 07:54:09.194   521   551 I ActivityManager: Start proc 3790:com.google.android.projection.gearhead:shared/u0a123 for broadcast {com.google.android.projection.gearhead/com.google.android.apps.auto.components.app.fzero.FzeroReceiver}
+10-18 07:54:09.287   521   551 I ActivityManager: Start proc 3793:com.google.android.rkpdapp/u0a191 for service {com.google.android.rkpdapp/com.android.rkpdapp.service.RemoteProvisioningService}
+10-18 07:54:09.465  3793  3793 D nativeloader:   com_android_tethering: libandroid_net_connectivity_com_android_net_module_util_jni.so:libcronet.114.0.5735.84.so:libframework-connectivity-jni.so:libframework-connectivity-tiramisu-jni.so:libservice-connectivity.so
+10-18 07:54:09.480  3790  3790 D nativeloader: InitLlndkLibrariesProduct: libEGL.so:libGLESv1_CM.so:libGLESv2.so:libGLESv3.so:libRS.so:libandroid_net.so:libbinder_ndk.so:libc.so:libcgrouprc.so:libclang_rt.asan-x86_64-android.so:libcom.android.tethering.connectivity_native.so:libdl.so:libft2.so:liblog.so:libm.so:libmediandk.so:libnativewindow.so:libneuralnetworks.so:libselinux.so:libsync.so:libvndksupport.so:libvulkan.so
+10-18 07:54:09.484  3790  3790 D nativeloader: InitVndkspLibrariesProduct: android.hardware.common-V2-ndk.so:android.hardware.common.fmq-V1-ndk.so:android.hardware.graphics.allocator-V2-ndk.so:android.hardware.graphics.common-V4-ndk.so:android.hardware.graphics.common@1.0.so:android.hardware.graphics.common@1.1.so:android.hardware.graphics.common@1.2.so:android.hardware.graphics.composer3-V1-ndk.so:android.hardware.graphics.mapper@2.0.so:android.hardware.graphics.mapper@2.1.so:android.hardware.graphics.mapper@3.0.so:android.hardware.graphics.mapper@4.0.so:android.hardware.renderscript@1.0.so:android.hidl.memory.token@1.0.so:android.hidl.memory@1.0-impl.so:android.hidl.memory@1.0.so:android.hidl.safe_union@1.0.so:libRSCpuRef.so:libRSDriver.so:libRS_internal.so:libbase.so:libbcinfo.so:libblas.so:libc++.so:libcompiler_rt.so:libcutils.so:libdmabufheap.so:libgralloctypes.so:libhardware.so:libhidlbase.so:libhidlmemory.so:libion.so:libjsoncpp.so:liblzma.so:libprocessgroup.so:libunwindstack.so:libutils.so:libutilscallstack.so:libz.so
+10-18 07:54:09.571   521  2555 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10123. pid: 3790
+10-18 07:54:09.651   521   551 I ActivityManager: Start proc 3832:com.almajhool.almajhool_app/u0a192 for broadcast {com.almajhool.almajhool_app/id.flutter.flutter_background_service.BootReceiver}
+10-18 07:54:09.661  3832  3832 I l.almajhool_app: Using CollectorTypeCC GC.
+10-18 07:54:09.662  3832  3832 W l.almajhool_app: Unexpected CPU variant for x86: x86_64.
+10-18 07:54:09.662  3832  3832 W l.almajhool_app: Known variants: atom, sandybridge, silvermont, goldmont, goldmont-plus, tremont, kabylake, default
+10-18 07:54:09.685  3832  3832 E l.almajhool_app: Not starting debugger since process cannot load the jdwp agent.
+10-18 07:54:09.798   521  2555 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10191. pid: 3793
+10-18 07:54:09.841  3832  3832 D nativeloader: Configuring clns-6 for other apk /data/app/~~JLlFTAh8zvGZMG0a6inxBg==/com.almajhool.almajhool_app-bxY76Y2YdXJEXEIJm9XMrg==/base.apk. target_sdk_version=36, uses_libraries=, library_path=/data/app/~~JLlFTAh8zvGZMG0a6inxBg==/com.almajhool.almajhool_app-bxY76Y2YdXJEXEIJm9XMrg==/lib/x86_64:/data/app/~~JLlFTAh8zvGZMG0a6inxBg==/com.almajhool.almajhool_app-bxY76Y2YdXJEXEIJm9XMrg==/base.apk!/lib/x86_64, permitted_path=/data:/mnt/expand:/data/user/0/com.almajhool.almajhool_app
+10-18 07:54:09.850  3832  3832 V GraphicsEnvironment: ANGLE GameManagerService for com.almajhool.almajhool_app: false
+10-18 07:54:09.850  3832  3832 V GraphicsEnvironment: com.almajhool.almajhool_app is not listed in per-application setting
+10-18 07:54:09.872   521   535 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10192. pid: 3832
+10-18 07:54:09.921   521   551 I ActivityManager: Start proc 3855:com.google.android.gm/u0a141 for broadcast {com.google.android.gm/com.google.android.libraries.internal.growth.growthkit.tiktok.GrowthKitBootCompletedListener_Receiver}
+10-18 07:54:10.279  3855  3855 D nativeloader: InitLlndkLibrariesProduct: libEGL.so:libGLESv1_CM.so:libGLESv2.so:libGLESv3.so:libRS.so:libandroid_net.so:libbinder_ndk.so:libc.so:libcgrouprc.so:libclang_rt.asan-x86_64-android.so:libcom.android.tethering.connectivity_native.so:libdl.so:libft2.so:liblog.so:libm.so:libmediandk.so:libnativewindow.so:libneuralnetworks.so:libselinux.so:libsync.so:libvndksupport.so:libvulkan.so
+10-18 07:54:10.281  3855  3855 D nativeloader: InitVndkspLibrariesProduct: android.hardware.common-V2-ndk.so:android.hardware.common.fmq-V1-ndk.so:android.hardware.graphics.allocator-V2-ndk.so:android.hardware.graphics.common-V4-ndk.so:android.hardware.graphics.common@1.0.so:android.hardware.graphics.common@1.1.so:android.hardware.graphics.common@1.2.so:android.hardware.graphics.composer3-V1-ndk.so:android.hardware.graphics.mapper@2.0.so:android.hardware.graphics.mapper@2.1.so:android.hardware.graphics.mapper@3.0.so:android.hardware.graphics.mapper@4.0.so:android.hardware.renderscript@1.0.so:android.hidl.memory.token@1.0.so:android.hidl.memory@1.0-impl.so:android.hidl.memory@1.0.so:android.hidl.safe_union@1.0.so:libRSCpuRef.so:libRSDriver.so:libRS_internal.so:libbase.so:libbcinfo.so:libblas.so:libc++.so:libcompiler_rt.so:libcutils.so:libdmabufheap.so:libgralloctypes.so:libhardware.so:libhidlbase.so:libhidlmemory.so:libion.so:libjsoncpp.so:liblzma.so:libprocessgroup.so:libunwindstack.so:libutils.so:libutilscallstack.so:libz.so
+10-18 07:54:10.394   521   613 D ActivityManager: freezing 1698 com.android.printspooler
+10-18 07:54:10.519   521   613 D ActivityManager: freezing 2707 com.android.chrome
+10-18 07:54:10.527   521   549 D ActivityManager: sync unfroze 2707 com.android.chrome for 8
+10-18 07:54:10.605   521  1669 W ActivityManager: Unable to start service Intent { cmp=com.google.android.apps.tachyon/.clientapi.ClientApiService } U=0: not found
+10-18 07:54:10.670   521   550 I ActivityManager: reportOnUserCompletedEvent(0): stored=10, eligible=111
+10-18 07:54:10.681   521  3946 D SystemServerTimingAsync: ssm.onCompletedEventUser-0_{|Unlocked|}_com.android.server.am.ActivityManagerService$Lifecycle
+10-18 07:54:10.681   521  3946 V SystemServerTimingAsync: ssm.onCompletedEventUser-0_{|Unlocked|}_com.android.server.am.ActivityManagerService$Lifecycle took to complete: 0ms
+10-18 07:54:10.704   521   613 D ActivityManager: freezing 1332 com.android.cellbroadcastreceiver
+10-18 07:54:10.714   521  2799 I ActivityManager: Background started FGS: Allowed [callingPackage: com.google.android.googlequicksearchbox; callingUid: 10131; uidState: BTOP; uidBFSL: [BFSL]; intent: Intent { cmp=com.google.android.googlequicksearchbox/com.google.android.libraries.mdi.download.foreground.sting.ForegroundDownloadService (has extras) }; code:ACTIVITY_STARTER; tempAllowListReason:<2cef46b android.intent.action.PRE_BOOT_COMPLETED/u0,reasonCode:PRE_BOOT_COMPLETED,duration:20000,callingUid:1000>; targetSdkVersion:31; callerTargetSdkVersion:31; startForegroundCount:0; bindFromPackage:null: isBindService:false]
+10-18 07:54:10.761   521  1669 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10141. pid: 3855
+10-18 07:54:10.979   521   613 D ActivityManager: freezing 1480 com.google.android.ext.services
+10-18 07:54:11.186   521  2799 E ActivityManager: Cannot find package for uid: 1013
+10-18 07:54:11.589   521  2799 I ActivityManager: Background started FGS: Allowed [callingPackage: com.google.android.apps.wellbeing; callingUid: 10119; uidState: BTOP; uidBFSL: [BFSL]; intent: Intent { cmp=com.google.android.apps.wellbeing/com.google.apps.tiktok.concurrent.InternalForegroundService (has extras) }; code:BACKGROUND_ACTIVITY_PERMISSION; tempAllowListReason:<479b0bd android.intent.action.BOOT_COMPLETED/u0,reasonCode:BOOT_COMPLETED,duration:20000,callingUid:1000>; targetSdkVersion:33; callerTargetSdkVersion:33; startForegroundCount:0; bindFromPackage:null: isBindService:false]
+10-18 07:54:11.601  3399  3432 W libc    : Access denied finding property "persist.adb.tls_server.enable"
+10-18 07:54:11.734  3399  3432 W libc    : Access denied finding property "service.adb.tls.port"
+10-18 07:54:11.863   521   613 D ActivityManager: freezing 2413 com.google.android.tts
+10-18 07:54:13.001  1023  1610 W droid.bluetooth: Core platform API violation: Llibcore/io/Memory;->pokeByte(JB)V from Lcom/google/protobuf/UnsafeUtil; using reflection
+10-18 07:54:13.001  1023  1610 W droid.bluetooth: Core platform API violation: Llibcore/io/Memory;->peekByte(J)B from Lcom/google/protobuf/UnsafeUtil; using reflection
+10-18 07:54:13.203   521   551 I ActivityManager: Start proc 4101:com.google.android.settings.intelligence/u0a118 for broadcast {com.google.android.settings.intelligence/com.google.android.settings.intelligence.modules.contextualcards.impl.JobBootBroadcastReceiver}
+10-18 07:54:13.302   521  1174 E ActivityManager: Sending non-protected broadcast com.android.settings.battery.action.PERIODIC_JOB_RECHECK from system 1049:com.android.settings/1000 pkg com.android.settings
+10-18 07:54:13.302   521  1174 E ActivityManager: java.lang.Throwable
+10-18 07:54:13.302   521  1174 E ActivityManager: 	at com.android.server.am.ActivityManagerService.checkBroadcastFromSystem(ActivityManagerService.java:14306)
+10-18 07:54:13.302   521  1174 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentLockedTraced(ActivityManagerService.java:15131)
+10-18 07:54:13.302   521  1174 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentLocked(ActivityManagerService.java:14370)
+10-18 07:54:13.302   521  1174 E ActivityManager: 	at com.android.server.am.ActivityManagerService.broadcastIntentWithFeature(ActivityManagerService.java:15336)
+10-18 07:54:13.302   521  1174 E ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:2653)
+10-18 07:54:13.302   521  1174 E ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(ActivityManagerService.java:2720)
+10-18 07:54:13.302   521  1174 E ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1339)
+10-18 07:54:13.302   521  1174 E ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1275)
+10-18 07:54:13.337   521   541 W Looper  : Slow dispatch took 133ms android.ui h=com.android.server.am.ActivityManagerService$UiHandler c=com.android.server.am.UidObserverController$$ExternalSyntheticLambda0@2e110a m=0
+10-18 07:54:13.362  4101  4101 D nativeloader: InitLlndkLibrariesProduct: libEGL.so:libGLESv1_CM.so:libGLESv2.so:libGLESv3.so:libRS.so:libandroid_net.so:libbinder_ndk.so:libc.so:libcgrouprc.so:libclang_rt.asan-x86_64-android.so:libcom.android.tethering.connectivity_native.so:libdl.so:libft2.so:liblog.so:libm.so:libmediandk.so:libnativewindow.so:libneuralnetworks.so:libselinux.so:libsync.so:libvndksupport.so:libvulkan.so
+10-18 07:54:13.363  4101  4101 D nativeloader: InitVndkspLibrariesProduct: android.hardware.common-V2-ndk.so:android.hardware.common.fmq-V1-ndk.so:android.hardware.graphics.allocator-V2-ndk.so:android.hardware.graphics.common-V4-ndk.so:android.hardware.graphics.common@1.0.so:android.hardware.graphics.common@1.1.so:android.hardware.graphics.common@1.2.so:android.hardware.graphics.composer3-V1-ndk.so:android.hardware.graphics.mapper@2.0.so:android.hardware.graphics.mapper@2.1.so:android.hardware.graphics.mapper@3.0.so:android.hardware.graphics.mapper@4.0.so:android.hardware.renderscript@1.0.so:android.hidl.memory.token@1.0.so:android.hidl.memory@1.0-impl.so:android.hidl.memory@1.0.so:android.hidl.safe_union@1.0.so:libRSCpuRef.so:libRSDriver.so:libRS_internal.so:libbase.so:libbcinfo.so:libblas.so:libc++.so:libcompiler_rt.so:libcutils.so:libdmabufheap.so:libgralloctypes.so:libhardware.so:libhidlbase.so:libhidlmemory.so:libion.so:libjsoncpp.so:liblzma.so:libprocessgroup.so:libunwindstack.so:libutils.so:libutilscallstack.so:libz.so
+10-18 07:54:13.504   521   613 D ActivityManager: freezing 2719 com.android.carrierdefaultapp
+10-18 07:54:13.514   521   534 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10118. pid: 4101
+10-18 07:54:13.670   521   574 I ActivityManager: Killing 4101:com.google.android.settings.intelligence/u0a118 (adj 0): change com.google.android.settings.intelligence
+10-18 07:54:13.717   521   893 V ActivityManager: Got obituary of 4101:com.google.android.settings.intelligence
+10-18 07:54:13.783   521   551 I ActivityManager: Start proc 4144:com.google.android.settings.intelligence/u0a118 for broadcast {com.google.android.settings.intelligence/com.google.android.settings.intelligence.modules.batterywidget.impl.BatteryWidgetBootBroadcastReceiver}
+10-18 07:54:13.806   521   534 W ActivityManager: Unable to start service Intent { act=com.google.android.gms.home.service.START pkg=com.google.android.gms } U=0: not found
+10-18 07:54:13.822   521  1174 W ActivityManager: Unbind failed: could not find connection for android.os.BinderProxy@8f7c965
+10-18 07:54:13.945  4144  4144 D nativeloader: InitLlndkLibrariesProduct: libEGL.so:libGLESv1_CM.so:libGLESv2.so:libGLESv3.so:libRS.so:libandroid_net.so:libbinder_ndk.so:libc.so:libcgrouprc.so:libclang_rt.asan-x86_64-android.so:libcom.android.tethering.connectivity_native.so:libdl.so:libft2.so:liblog.so:libm.so:libmediandk.so:libnativewindow.so:libneuralnetworks.so:libselinux.so:libsync.so:libvndksupport.so:libvulkan.so
+10-18 07:54:13.946  4144  4144 D nativeloader: InitVndkspLibrariesProduct: android.hardware.common-V2-ndk.so:android.hardware.common.fmq-V1-ndk.so:android.hardware.graphics.allocator-V2-ndk.so:android.hardware.graphics.common-V4-ndk.so:android.hardware.graphics.common@1.0.so:android.hardware.graphics.common@1.1.so:android.hardware.graphics.common@1.2.so:android.hardware.graphics.composer3-V1-ndk.so:android.hardware.graphics.mapper@2.0.so:android.hardware.graphics.mapper@2.1.so:android.hardware.graphics.mapper@3.0.so:android.hardware.graphics.mapper@4.0.so:android.hardware.renderscript@1.0.so:android.hidl.memory.token@1.0.so:android.hidl.memory@1.0-impl.so:android.hidl.memory@1.0.so:android.hidl.safe_union@1.0.so:libRSCpuRef.so:libRSDriver.so:libRS_internal.so:libbase.so:libbcinfo.so:libblas.so:libc++.so:libcompiler_rt.so:libcutils.so:libdmabufheap.so:libgralloctypes.so:libhardware.so:libhidlbase.so:libhidlmemory.so:libion.so:libjsoncpp.so:liblzma.so:libprocessgroup.so:libunwindstack.so:libutils.so:libutilscallstack.so:libz.so
+10-18 07:54:14.011   521   613 D ActivityManager: freezing 2893 com.google.android.webview:webview_service
+10-18 07:54:14.121   521  1174 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10118. pid: 4144
+10-18 07:54:14.508  3399  3432 W libc    : Access denied finding property "persist.adb.tls_server.enable"
+10-18 07:54:14.510  3399  3432 W libc    : Access denied finding property "service.adb.tls.port"
+10-18 07:54:14.570  1049  1396 W libc    : Access denied finding property "ro.vendor.aware_available"
+10-18 07:54:14.655  1049  1396 W libc    : Access denied finding property "ro.vendor.aware_available"
+10-18 07:54:14.671   521   551 I ActivityManager: Start proc 4210:com.google.android.googlequicksearchbox/u0a131 for broadcast {com.google.android.googlequicksearchbox/com.google.android.libraries.phenotype.client.stable.PhenotypeUpdateBackgroundBroadcastReceiver}
+=================== v80 ===================
+Performing Streamed Install
+Success
+Status: ok
+LaunchState: UNKNOWN (0)
+Activity: com.almajhool.almajhool_app/.MainActivity
+WaitTime: 428
+Complete
+[v80] pid=
+      topResumedActivity=ActivityRecord{3f0ffd3 u0 com.google.android.apps.nexuslauncher/.NexusLauncherActivity t7}
+  mCurrentFocus=Window{c61270e u0 com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity}
+  mFocusedApp=ActivityRecord{3f0ffd3 u0 com.google.android.apps.nexuslauncher/.NexusLauncherActivity t7}
+--- logcat (v80) ---
+10-18 07:54:42.080  1048  1294 D ImsResolver: maybeAddedImsService, packageName: com.almajhool.almajhool_app
+10-18 07:54:42.091   521   804 I SdkSandboxManager: No SDKs used. Skipping SDK data reconcilation for CallingInfo{mUid=10193, mPackageName='com.almajhool.almajhool_app, mAppProcessToken='null'}
+10-18 07:54:42.103   835   835 I SafetyLabelChangedBroadcastReceiver: received broadcast packageName: com.almajhool.almajhool_app, current user: UserHandle{0}, packageChangeEvent: NEW_INSTALL, intent user: UserHandle{0}
+10-18 07:54:42.148  1048  1048 D CarrierSvcBindHelper: onPackageModified: com.almajhool.almajhool_app
+10-18 07:54:42.155  1048  1294 D ImsResolver: maybeAddedImsService, packageName: com.almajhool.almajhool_app
+10-18 07:54:42.213   834   864 V WindowManagerShell: Transition requested: android.os.BinderProxy@ae490e1 TransitionRequestInfo { type = OPEN, triggerTask = TaskInfo{userId=0 taskId=9 displayId=0 isRunning=true baseIntent=Intent { flg=0x10000000 cmp=com.almajhool.almajhool_app/.MainActivity } baseActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} topActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} origActivity=null realActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} numActivities=1 lastActiveTime=77141 supportsMultiWindow=true resizeMode=2 isResizeable=true minWidth=-1 minHeight=-1 defaultMinSize=220 token=WCT{android.window.IWindowContainerToken$Stub$Proxy@67c6e06} topActivityType=1 pictureInPictureParams=null shouldDockBigOverlays=false launchIntoPipHostTaskId=-1 lastParentTaskIdBeforePip=-1 displayCutoutSafeInsets=null topActivityInfo=ActivityInfo{b24dcc7 com.almajhool.almajhool_app.MainActivity} launchCookies=[] positionInParent=Point(0, 0) parentTaskId=-1 isFocused=false isVisible=false isVisibleRequested=false isSleeping=false topActivityInSizeCompat=false topActivityEligibleForLetterboxEducation= false topActivityLetterboxed= false isFromDoubleTap= false topActivityLetterboxVerticalPosition= -1 topActivityLetterboxHorizontalPosition= -1 topActivityLetterboxWidth=-1 topActivityLetterboxHeight=-1 locusId=null displayAreaFeatureId=1 cameraCompatControlState=hidden}, remoteTransition = null, displayChange = null }
+10-18 07:54:42.220   521  1676 I ActivityTaskManager: START u0 {flg=0x10000000 cmp=com.almajhool.almajhool_app/.MainActivity} with LAUNCH_SINGLE_TOP from uid 2000 (BAL_ALLOW_PERMISSION) result code=0
+10-18 07:54:42.242   521  2996 D CoreBackPreview: Window{9e1c821 u0 Splash Screen com.almajhool.almajhool_app}: Setting back callback OnBackInvokedCallbackInfo{mCallback=android.window.IOnBackInvokedCallback$Stub$Proxy@818ed2, mPriority=0, mIsAnimationCallback=false}
+10-18 07:54:42.264   521   551 I ActivityManager: Start proc 5234:com.almajhool.almajhool_app/u0a193 for next-top-activity {com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity}
+10-18 07:54:42.282  1585  1585 I AiAiEcho: AppFetcherImplV2 updateApps package:[com.almajhool.almajhool_app], userId:[0], reason:[package is added.].
+10-18 07:54:42.296   521   540 V WindowManager: Sent Transition #8 createdAt=10-18 07:54:42.176 via request=TransitionRequestInfo { type = OPEN, triggerTask = TaskInfo{userId=0 taskId=9 displayId=0 isRunning=true baseIntent=Intent { flg=0x10000000 cmp=com.almajhool.almajhool_app/.MainActivity } baseActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} topActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} origActivity=null realActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} numActivities=1 lastActiveTime=77141 supportsMultiWindow=true resizeMode=2 isResizeable=true minWidth=-1 minHeight=-1 defaultMinSize=220 token=WCT{RemoteToken{7e1ec52 Task{6f2915f #9 type=standard I=com.almajhool.almajhool_app/.MainActivity}}} topActivityType=1 pictureInPictureParams=null shouldDockBigOverlays=false launchIntoPipHostTaskId=-1 lastParentTaskIdBeforePip=-1 displayCutoutSafeInsets=null topActivityInfo=ActivityInfo{7935820 com.almajhool.almajhool_app.MainActivity} launchCookies=[] positionInParent=Point(0, 0) parentTaskId=-1 isFocused=false isVisible=false isVisibleRequested=false isSleeping=false topActivityInSizeCompat=false topActivityEligibleForLetterboxEducation= false topActivityLetterboxed= false isFromDoubleTap= false topActivityLetterboxVerticalPosition= -1 topActivityLetterboxHorizontalPosition= -1 topActivityLetterboxWidth=-1 topActivityLetterboxHeight=-1 locusId=null displayAreaFeatureId=1 cameraCompatControlState=hidden}, remoteTransition = null, displayChange = null }
+10-18 07:54:42.305   521   540 V WindowManager:     info={id=8 t=OPEN f=0x0 trk=0 r=[0@Point(0, 0)] c=[{WCT{RemoteToken{7e1ec52 Task{6f2915f #9 type=standard I=com.almajhool.almajhool_app/.MainActivity}}} m=OPEN f=NONE leash=Surface(name=Task=9)/@0xc15e7fd sb=Rect(0, 0 - 320, 640) eb=Rect(0, 0 - 320, 640) d=0},{WCT{RemoteToken{6afbdb7 Task{f4ce1f2 #1 type=home}}} m=TO_BACK f=SHOW_WALLPAPER leash=Surface(name=Task=1)/@0x37a30d4 sb=Rect(0, 0 - 320, 640) eb=Rect(0, 0 - 320, 640) d=0}]}
+10-18 07:54:42.311  5234  5234 I l.almajhool_app: Using CollectorTypeCC GC.
+10-18 07:54:42.311  5234  5234 W l.almajhool_app: Unexpected CPU variant for x86: x86_64.
+10-18 07:54:42.311  5234  5234 W l.almajhool_app: Known variants: atom, sandybridge, silvermont, goldmont, goldmont-plus, tremont, kabylake, default
+10-18 07:54:42.316  1585  1585 I AiAiEcho: AppFetcherImpl onPackageChanged com.almajhool.almajhool_app.
+10-18 07:54:42.317  1585  3487 I AiAiEcho: AppIndexer Package:[com.almajhool.almajhool_app] UserProfile:[0] Enabled:[true].
+10-18 07:54:42.320  1585  3487 I AiAiEcho: AppFetcherImplV2 updateApps package:[com.almajhool.almajhool_app], userId:[0], reason:[package is updated.].
+10-18 07:54:42.327  5234  5234 E l.almajhool_app: Not starting debugger since process cannot load the jdwp agent.
+10-18 07:54:42.359  5234  5234 D nativeloader: Configuring clns-6 for other apk /data/app/~~cPhgXXjf5Yu-8cPgPPOfIQ==/com.almajhool.almajhool_app-rvKC3UIPjvVMtfRVkqdh1A==/base.apk. target_sdk_version=36, uses_libraries=, library_path=/data/app/~~cPhgXXjf5Yu-8cPgPPOfIQ==/com.almajhool.almajhool_app-rvKC3UIPjvVMtfRVkqdh1A==/lib/x86_64:/data/app/~~cPhgXXjf5Yu-8cPgPPOfIQ==/com.almajhool.almajhool_app-rvKC3UIPjvVMtfRVkqdh1A==/base.apk!/lib/x86_64, permitted_path=/data:/mnt/expand:/data/user/0/com.almajhool.almajhool_app
+10-18 07:54:42.366  5234  5234 V GraphicsEnvironment: ANGLE GameManagerService for com.almajhool.almajhool_app: false
+10-18 07:54:42.366  5234  5234 V GraphicsEnvironment: com.almajhool.almajhool_app is not listed in per-application setting
+10-18 07:54:42.374   521  2996 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10193. pid: 5234
+10-18 07:54:42.537  5234  5234 E FlutterLoader: Flutter initialization failed.
+10-18 07:54:42.537  5234  5234 E FlutterLoader: java.util.concurrent.ExecutionException: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at java.util.concurrent.FutureTask.report(FutureTask.java:122)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at java.util.concurrent.FutureTask.get(FutureTask.java:191)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at z50.a(r8-map-id-48a55fdd91dc7e9fc84b3ce593ea120b1bc9e0137b24c4c99e878c451158f24e:41)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at y40.<init>(r8-map-id-48a55fdd91dc7e9fc84b3ce593ea120b1bc9e0137b24c4c99e878c451158f24e:34)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at h40.onCreate(r8-map-id-48a55fdd91dc7e9fc84b3ce593ea120b1bc9e0137b24c4c99e878c451158f24e:322)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at com.almajhool.almajhool_app.MainActivity.onCreate(r8-map-id-48a55fdd91dc7e9fc84b3ce593ea120b1bc9e0137b24c4c99e878c451158f24e:13)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at android.app.Activity.performCreate(Activity.java:8595)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at android.app.Activity.performCreate(Activity.java:8573)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1456)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:3764)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:3922)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:103)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at android.app.servertransaction.TransactionExecutor.executeCallbacks(TransactionExecutor.java:139)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:96)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:2443)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at android.os.Handler.dispatchMessage(Handler.java:106)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at android.os.Looper.loopOnce(Looper.java:205)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at android.os.Looper.loop(Looper.java:294)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at android.app.ActivityThread.main(ActivityThread.java:8177)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at java.lang.reflect.Method.invoke(Native Method)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:552)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:971)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: Caused by: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at java.lang.Runtime.load0(Runtime.java:933)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at java.lang.System.load(System.java:1625)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at io.flutter.embedding.engine.FlutterJNI.loadLibrary(r8-map-id-48a55fdd91dc7e9fc84b3ce593ea120b1bc9e0137b24c4c99e878c451158f24e:398)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at x50.call(r8-map-id-48a55fdd91dc7e9fc84b3ce593ea120b1bc9e0137b24c4c99e878c451158f24e:17)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at java.util.concurrent.FutureTask.run(FutureTask.java:264)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1145)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:644)
+10-18 07:54:42.537  5234  5234 E FlutterLoader: 	at java.lang.Thread.run(Thread.java:1012)
+10-18 07:54:42.539  5234  5234 D AndroidRuntime: Shutting down VM
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: FATAL EXCEPTION: main
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: Process: com.almajhool.almajhool_app, PID: 5234
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity}: java.lang.RuntimeException: java.util.concurrent.ExecutionException: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:3782)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:3922)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:103)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeCallbacks(TransactionExecutor.java:139)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:96)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:2443)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:106)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:205)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:294)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:8177)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:552)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:971)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: Caused by: java.lang.RuntimeException: java.util.concurrent.ExecutionException: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at la0.n(r8-map-id-48a55fdd91dc7e9fc84b3ce593ea120b1bc9e0137b24c4c99e878c451158f24e:3)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at z50.a(r8-map-id-48a55fdd91dc7e9fc84b3ce593ea120b1bc9e0137b24c4c99e878c451158f24e:817)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at y40.<init>(r8-map-id-48a55fdd91dc7e9fc84b3ce593ea120b1bc9e0137b24c4c99e878c451158f24e:34)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at h40.onCreate(r8-map-id-48a55fdd91dc7e9fc84b3ce593ea120b1bc9e0137b24c4c99e878c451158f24e:322)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at com.almajhool.almajhool_app.MainActivity.onCreate(r8-map-id-48a55fdd91dc7e9fc84b3ce593ea120b1bc9e0137b24c4c99e878c451158f24e:13)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:8595)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:8573)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1456)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:3764)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	... 12 more
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: Caused by: java.util.concurrent.ExecutionException: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at java.util.concurrent.FutureTask.report(FutureTask.java:122)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at java.util.concurrent.FutureTask.get(FutureTask.java:191)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at z50.a(r8-map-id-48a55fdd91dc7e9fc84b3ce593ea120b1bc9e0137b24c4c99e878c451158f24e:41)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	... 19 more
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: Caused by: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at java.lang.Runtime.load0(Runtime.java:933)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at java.lang.System.load(System.java:1625)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at io.flutter.embedding.engine.FlutterJNI.loadLibrary(r8-map-id-48a55fdd91dc7e9fc84b3ce593ea120b1bc9e0137b24c4c99e878c451158f24e:398)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at x50.call(r8-map-id-48a55fdd91dc7e9fc84b3ce593ea120b1bc9e0137b24c4c99e878c451158f24e:17)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at java.util.concurrent.FutureTask.run(FutureTask.java:264)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1145)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:644)
+10-18 07:54:42.540  5234  5234 E AndroidRuntime: 	at java.lang.Thread.run(Thread.java:1012)
+10-18 07:54:42.562   521   944 W ActivityTaskManager:   Force finishing activity com.almajhool.almajhool_app/.MainActivity
+10-18 07:54:42.571   521  1676 I ActivityManager: Process com.almajhool.almajhool_app (pid 5234) has died: fg  TOP 
+10-18 07:54:42.633   521   540 V WindowManager:     info={id=9 t=CLOSE f=0x10 trk=0 r=[0@Point(0, 0)] c=[{WCT{RemoteToken{6afbdb7 Task{f4ce1f2 #1 type=home}}} m=TO_FRONT f=SHOW_WALLPAPER|MOVE_TO_TOP leash=Surface(name=Task=1)/@0x37a30d4 sb=Rect(0, 0 - 320, 640) eb=Rect(0, 0 - 320, 640) d=0},{WCT{RemoteToken{7e1ec52 Task{6f2915f #9 type=standard I=com.almajhool.almajhool_app/.MainActivity}}} m=CLOSE f=NONE leash=Surface(name=Task=9)/@0xc15e7fd sb=Rect(0, 0 - 320, 640) eb=Rect(0, 0 - 320, 640) d=0},{null m=TO_FRONT f=IS_WALLPAPER leash=Surface(name=WallpaperWindowToken{2c4f8d token=android.os.Binder@dde7824})/@0x244d268 sb=Rect(0, 0 - 320, 640) eb=Rect(0, 0 - 320, 640) d=0}]}
+10-18 07:54:42.673  1866  5101 I BlockstoreStorage: Clearing Blockstore Data for package com.almajhool.almajhool_app [CONTEXT service_id=258 ]
+10-18 07:54:42.708   521  1647 W InputManager-JNI: Input channel object '9e1c821 Splash Screen com.almajhool.almajhool_app (client)' was disposed without first being removed with the input manager!
+10-18 07:54:42.806   521   613 D ActivityManager: freezing 1678 com.google.android.youtube
+10-18 07:54:43.063   521   543 W ActivityTaskManager: Activity top resumed state loss timeout for ActivityRecord{a2ec0b2 u0 com.almajhool.almajhool_app/.MainActivity t-1 f}}
+10-18 07:54:43.491   521   613 D ActivityManager: freezing 2423 com.google.android.apps.wallpaper
+10-18 07:54:44.294   521   550 D ActivityManager: sync unfroze 1623 com.google.android.apps.youtube.music for 3
+10-18 07:54:44.416   521   613 D ActivityManager: freezing 3793 com.google.android.rkpdapp
+10-18 07:54:44.657   521   550 D ActivityManager: sync unfroze 1678 com.google.android.youtube for 3
+10-18 07:54:45.268   521  2815 D ActivityManager: sync unfroze 3793 com.google.android.rkpdapp for 6
+10-18 07:54:45.318   521   613 D ActivityManager: freezing 4317 com.google.android.gms.ui
+10-18 07:54:45.569  3399  3431 W libc    : Access denied finding property "persist.adb.tls_server.enable"
+10-18 07:54:45.574  3399  3431 W libc    : Access denied finding property "service.adb.tls.port"
+10-18 07:54:46.328  3399  3431 W libc    : Access denied finding property "persist.adb.tls_server.enable"
+10-18 07:54:46.332  3399  3431 W libc    : Access denied finding property "service.adb.tls.port"
+10-18 07:54:47.885   521  2799 I ActivityManager: Process com.google.android.gms (pid 1866) has died: fg  BTOP
+10-18 07:54:47.895   521  2799 W ActivityManager: Exception when unbinding service com.google.android.gms/.chimera.PersistentApiService
+10-18 07:54:47.895   521  2799 W ActivityManager: android.os.DeadObjectException
+10-18 07:54:47.895   521  2799 W ActivityManager: 	at android.os.BinderProxy.transactNative(Native Method)
+10-18 07:54:47.895   521  2799 W ActivityManager: 	at android.os.BinderProxy.transact(BinderProxy.java:584)
+10-18 07:54:47.895   521  2799 W ActivityManager: 	at android.app.IApplicationThread$Stub$Proxy.scheduleUnbindService(IApplicationThread.java:1419)
+10-18 07:54:47.895   521  2799 W ActivityManager: 	at com.android.server.am.ActiveServices.removeConnectionLocked(ActiveServices.java:5896)
+10-18 07:54:47.895   521  2799 W ActivityManager: 	at com.android.server.am.ActiveServices.killServicesLocked(ActiveServices.java:6432)
+10-18 07:54:47.895   521  2799 W ActivityManager: 	at com.android.server.am.ActivityManagerService.cleanUpApplicationRecordLocked(ActivityManagerService.java:12989)
+10-18 07:54:47.895   521  2799 W ActivityManager: 	at com.android.server.am.ActivityManagerService.handleAppDiedLocked(ActivityManagerService.java:3338)
+10-18 07:54:47.895   521  2799 W ActivityManager: 	at com.android.server.am.ActivityManagerService.appDiedLocked(ActivityManagerService.java:3453)
+10-18 07:54:47.895   521  2799 W ActivityManager: 	at com.android.server.am.ActivityManagerService$AppDeathRecipient.binderDied(ActivityManagerService.java:1583)
+10-18 07:54:47.895   521  2799 W ActivityManager: 	at android.os.IBinder$DeathRecipient.binderDied(IBinder.java:319)
+10-18 07:54:47.895   521  2799 W ActivityManager: 	at android.os.BinderProxy.sendDeathNotice(BinderProxy.java:704)
+10-18 07:54:47.896   521  2799 W ActivityManager: Exception when unbinding service com.google.android.gms/.gcm.http.GoogleHttpService
+10-18 07:54:47.896   521  2799 W ActivityManager: android.os.DeadObjectException
+10-18 07:54:47.896   521  2799 W ActivityManager: 	at android.os.BinderProxy.transactNative(Native Method)
+10-18 07:54:47.896   521  2799 W ActivityManager: 	at android.os.BinderProxy.transact(BinderProxy.java:584)
+10-18 07:54:47.896   521  2799 W ActivityManager: 	at android.app.IApplicationThread$Stub$Proxy.scheduleUnbindService(IApplicationThread.java:1419)
+10-18 07:54:47.896   521  2799 W ActivityManager: 	at com.android.server.am.ActiveServices.removeConnectionLocked(ActiveServices.java:5896)
+10-18 07:54:47.896   521  2799 W ActivityManager: 	at com.android.server.am.ActiveServices.killServicesLocked(ActiveServices.java:6432)
+10-18 07:54:47.896   521  2799 W ActivityManager: 	at com.android.server.am.ActivityManagerService.cleanUpApplicationRecordLocked(ActivityManagerService.java:12989)
+10-18 07:54:47.896   521  2799 W ActivityManager: 	at com.android.server.am.ActivityManagerService.handleAppDiedLocked(ActivityManagerService.java:3338)
+10-18 07:54:47.896   521  2799 W ActivityManager: 	at com.android.server.am.ActivityManagerService.appDiedLocked(ActivityManagerService.java:3453)
+10-18 07:54:47.896   521  2799 W ActivityManager: 	at com.android.server.am.ActivityManagerService$AppDeathRecipient.binderDied(ActivityManagerService.java:1583)
+10-18 07:54:47.896   521  2799 W ActivityManager: 	at android.os.IBinder$DeathRecipient.binderDied(IBinder.java:319)
+10-18 07:54:47.896   521  2799 W ActivityManager: 	at android.os.BinderProxy.sendDeathNotice(BinderProxy.java:704)
+10-18 07:54:47.897   521  2799 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.chimera.container.ExternalFileApkService in 1000ms for start-requested
+10-18 07:54:47.897   521  2799 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.chimera.GmsBoundBrokerService in 11000ms for connection
+10-18 07:54:47.897   521  2799 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.chimera.GmsIntentOperationService in 21000ms for start-requested
+10-18 07:54:47.897   521  2799 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.chimera.GmsApiService in 31000ms for connection
+10-18 07:54:47.897   521  2799 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.icing.service.AppIndexingService in 41000ms for connection
+10-18 07:54:47.897   521  2799 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.icing.service.IndexService in 51000ms for connection
+10-18 07:54:47.909   521  1174 W ActivityManager: Exception when unbinding service com.google.android.gms/.auth.GetToken
+10-18 07:54:47.909   521  1174 W ActivityManager: android.os.DeadObjectException
+10-18 07:54:47.909   521  1174 W ActivityManager: 	at android.os.BinderProxy.transactNative(Native Method)
+10-18 07:54:47.909   521  1174 W ActivityManager: 	at android.os.BinderProxy.transact(BinderProxy.java:584)
+10-18 07:54:47.909   521  1174 W ActivityManager: 	at android.app.IApplicationThread$Stub$Proxy.scheduleUnbindService(IApplicationThread.java:1419)
+10-18 07:54:47.909   521  1174 W ActivityManager: 	at com.android.server.am.ActiveServices.removeConnectionLocked(ActiveServices.java:5896)
+10-18 07:54:47.909   521  1174 W ActivityManager: 	at com.android.server.am.ActiveServices.unbindServiceLocked(ActiveServices.java:3970)
+10-18 07:54:47.909   521  1174 W ActivityManager: 	at com.android.server.am.ActivityManagerService.unbindService(ActivityManagerService.java:13426)
+10-18 07:54:47.909   521  1174 W ActivityManager: 	at android.app.IActivityManager$Stub.onTransact(IActivityManager.java:2907)
+10-18 07:54:47.909   521  1174 W ActivityManager: 	at com.android.server.am.ActivityManagerService.onTransact(ActivityManagerService.java:2720)
+10-18 07:54:47.909   521  1174 W ActivityManager: 	at android.os.Binder.execTransactInternal(Binder.java:1339)
+10-18 07:54:47.909   521  1174 W ActivityManager: 	at android.os.Binder.execTransact(Binder.java:1275)
+10-18 07:54:47.911   521  2814 I ActivityManager: Process com.google.android.gms.persistent (pid 1413) has died: fg  BTOP
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/com.google.android.location.internal.server.HardwareArProviderService in 60983ms for connection
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.chimera.PersistentIntentOperationService in 70983ms for start-requested
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.nearby.messages.service.NearbyMessagesService in 80983ms for start-requested
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/com.google.android.location.fused.FusedLocationService in 90983ms for connection
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.clearcut.debug.ClearcutDebugDumpService in 100983ms for start-requested
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.location.persistent.LocationPersistentService in 110983ms for start-requested
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.geotimezone.GeoTimeZoneService in 120983ms for connection
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.location.geocode.GeocodeService in 130983ms for connection
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.nearby.exposurenotification.service.ExposureMatchingService in 140983ms for start-requested
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.auth.setup.devicesignals.LockScreenService in 150983ms for start-requested
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.deviceconnection.service.DeviceConnectionWatcherService in 160983ms for start-requested
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.nearby.sharing.ReceiveSurfaceService in 170983ms for start-requested
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.auth.account.authenticator.GoogleAccountAuthenticatorService in 180983ms for connection
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/com.google.android.location.internal.GoogleLocationManagerService in 190983ms for start-requested
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.gcm.GcmService in 200983ms for start-requested
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.chimera.PersistentDirectBootAwareApiService in 210983ms for connection
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/com.google.android.contextmanager.service.ContextManagerService in 220982ms for start-requested
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.thunderbird.EmergencyPersistentService in 230982ms for start-requested
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/com.google.android.location.internal.server.GoogleLocationService in 240982ms for start-requested
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/com.google.android.location.network.NetworkLocationService in 250982ms for connection
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.chimera.PersistentBoundBrokerService in 260982ms for connection
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.fido.fido2.pollux.CableAuthenticatorService in 270982ms for start-requested
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.common.stats.GmsCoreStatsService in 280982ms for start-requested
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.gcm.nts.SchedulerService in 290982ms for start-requested
+10-18 07:54:47.914   521  2814 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.nearby.exposurenotification.service.ExposureNotificationInternalService in 300982ms for start-requested
+10-18 07:54:47.945   521   551 I ActivityManager: Start proc 5350:com.google.android.gms.persistent/u0a132 for service {com.google.android.gms/com.google.android.gms.chimera.PersistentBoundBrokerService}
+10-18 07:54:47.979   521   550 W ActivityManager: Rescheduling restart of crashed service com.google.android.gms/.chimera.container.ExternalFileApkService in 918ms for other
+10-18 07:54:47.979   521   550 W ActivityManager: Rescheduling restart of crashed service com.google.android.gms/.chimera.GmsBoundBrokerService in 10918ms for other
+10-18 07:54:47.979   521   550 W ActivityManager: Rescheduling restart of crashed service com.google.android.gms/.chimera.GmsIntentOperationService in 20918ms for other
+10-18 07:54:47.979   521   550 W ActivityManager: Rescheduling restart of crashed service com.google.android.gms/.icing.service.AppIndexingService in 30918ms for other
+10-18 07:54:47.979   521   550 W ActivityManager: Rescheduling restart of crashed service com.google.android.gms/.icing.service.IndexService in 40918ms for other
+10-18 07:54:48.012  5350  5350 D nativeloader: InitLlndkLibrariesProduct: libEGL.so:libGLESv1_CM.so:libGLESv2.so:libGLESv3.so:libRS.so:libandroid_net.so:libbinder_ndk.so:libc.so:libcgrouprc.so:libclang_rt.asan-x86_64-android.so:libcom.android.tethering.connectivity_native.so:libdl.so:libft2.so:liblog.so:libm.so:libmediandk.so:libnativewindow.so:libneuralnetworks.so:libselinux.so:libsync.so:libvndksupport.so:libvulkan.so
+10-18 07:54:48.013  5350  5350 D nativeloader: InitVndkspLibrariesProduct: android.hardware.common-V2-ndk.so:android.hardware.common.fmq-V1-ndk.so:android.hardware.graphics.allocator-V2-ndk.so:android.hardware.graphics.common-V4-ndk.so:android.hardware.graphics.common@1.0.so:android.hardware.graphics.common@1.1.so:android.hardware.graphics.common@1.2.so:android.hardware.graphics.composer3-V1-ndk.so:android.hardware.graphics.mapper@2.0.so:android.hardware.graphics.mapper@2.1.so:android.hardware.graphics.mapper@3.0.so:android.hardware.graphics.mapper@4.0.so:android.hardware.renderscript@1.0.so:android.hidl.memory.token@1.0.so:android.hidl.memory@1.0-impl.so:android.hidl.memory@1.0.so:android.hidl.safe_union@1.0.so:libRSCpuRef.so:libRSDriver.so:libRS_internal.so:libbase.so:libbcinfo.so:libblas.so:libc++.so:libcompiler_rt.so:libcutils.so:libdmabufheap.so:libgralloctypes.so:libhardware.so:libhidlbase.so:libhidlmemory.so:libion.so:libjsoncpp.so:liblzma.so:libprocessgroup.so:libunwindstack.so:libutils.so:libutilscallstack.so:libz.so
+10-18 07:54:48.047   521  2799 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10132. pid: 5350
+10-18 07:54:48.163   521   551 I ActivityManager: Start proc 5404:com.google.android.gms/u0a132 for service {com.google.android.gms/com.google.android.gms.checkin.CheckinApiService}
+10-18 07:54:48.219  5404  5404 D nativeloader: InitLlndkLibrariesProduct: libEGL.so:libGLESv1_CM.so:libGLESv2.so:libGLESv3.so:libRS.so:libandroid_net.so:libbinder_ndk.so:libc.so:libcgrouprc.so:libclang_rt.asan-x86_64-android.so:libcom.android.tethering.connectivity_native.so:libdl.so:libft2.so:liblog.so:libm.so:libmediandk.so:libnativewindow.so:libneuralnetworks.so:libselinux.so:libsync.so:libvndksupport.so:libvulkan.so
+10-18 07:54:48.220  5404  5404 D nativeloader: InitVndkspLibrariesProduct: android.hardware.common-V2-ndk.so:android.hardware.common.fmq-V1-ndk.so:android.hardware.graphics.allocator-V2-ndk.so:android.hardware.graphics.common-V4-ndk.so:android.hardware.graphics.common@1.0.so:android.hardware.graphics.common@1.1.so:android.hardware.graphics.common@1.2.so:android.hardware.graphics.composer3-V1-ndk.so:android.hardware.graphics.mapper@2.0.so:android.hardware.graphics.mapper@2.1.so:android.hardware.graphics.mapper@3.0.so:android.hardware.graphics.mapper@4.0.so:android.hardware.renderscript@1.0.so:android.hidl.memory.token@1.0.so:android.hidl.memory@1.0-impl.so:android.hidl.memory@1.0.so:android.hidl.safe_union@1.0.so:libRSCpuRef.so:libRSDriver.so:libRS_internal.so:libbase.so:libbcinfo.so:libblas.so:libc++.so:libcompiler_rt.so:libcutils.so:libdmabufheap.so:libgralloctypes.so:libhardware.so:libhidlbase.so:libhidlmemory.so:libion.so:libjsoncpp.so:liblzma.so:libprocessgroup.so:libunwindstack.so:libutils.so:libutilscallstack.so:libz.so
+10-18 07:54:48.280   521  2799 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10132. pid: 5404
+10-18 07:54:49.017   521   594 D ActivityManager: sync unfroze 4317 com.google.android.gms.ui for 6
+10-18 07:54:49.089   521  2554 I ActivityManager: Process com.google.android.gms.ui (pid 4317) has died: fg  SVC 
+10-18 07:54:49.090   521  2554 W ActivityManager: Scheduling restart of crashed service com.google.android.gms/.chimera.UiIntentOperationService in 1000ms for start-requested
+10-18 07:54:49.148   521  2810 W ActivityManager: Unable to start service Intent { act=com.google.android.gms.home.service.START pkg=com.google.android.gms } U=0: not found
+10-18 07:54:49.148   521  2810 W ActivityManager: Unbind failed: could not find connection for android.os.BinderProxy@6531b02
+10-18 07:54:49.326  5350  5546 I SemanticLocation: 	at libcore.io.IoBridge.open(IoBridge.java:574)
+10-18 07:54:49.326  5350  5546 I SemanticLocation: 	at libcore.io.Linux.open(Native Method)
+10-18 07:54:49.326  5350  5546 I SemanticLocation: 	at libcore.io.ForwardingOs.open(ForwardingOs.java:563)
+10-18 07:54:49.326  5350  5546 I SemanticLocation: 	at libcore.io.BlockGuardOs.open(BlockGuardOs.java:274)
+10-18 07:54:49.326  5350  5546 I SemanticLocation: 	at libcore.io.ForwardingOs.open(ForwardingOs.java:563)
+10-18 07:54:49.326  5350  5546 I SemanticLocation: 	at libcore.io.IoBridge.open(IoBridge.java:560)
+10-18 07:54:49.397  5404  5485 W libc    : Access denied finding property "ro.hardware.chipname"
+10-18 07:54:49.710  5350  5546 I SemanticLocation: 	at libcore.io.IoBridge.open(IoBridge.java:574)
+10-18 07:54:49.710  5350  5546 I SemanticLocation: 	at libcore.io.Linux.open(Native Method)
+10-18 07:54:49.710  5350  5546 I SemanticLocation: 	at libcore.io.ForwardingOs.open(ForwardingOs.java:563)
+10-18 07:54:49.710  5350  5546 I SemanticLocation: 	at libcore.io.BlockGuardOs.open(BlockGuardOs.java:274)
+10-18 07:54:49.710  5350  5546 I SemanticLocation: 	at libcore.io.ForwardingOs.open(ForwardingOs.java:563)
+10-18 07:54:49.710  5350  5546 I SemanticLocation: 	at libcore.io.IoBridge.open(IoBridge.java:560)
+10-18 07:54:50.056  3399  5348 W libc    : Access denied finding property "persist.adb.tls_server.enable"
+10-18 07:54:50.060  3399  5348 W libc    : Access denied finding property "service.adb.tls.port"
+10-18 07:54:50.098   521   551 I ActivityManager: Start proc 5597:com.google.android.gms.ui/u0a132 for service {com.google.android.gms/com.google.android.gms.chimera.UiIntentOperationService}
+10-18 07:54:50.168  5597  5597 D nativeloader: InitLlndkLibrariesProduct: libEGL.so:libGLESv1_CM.so:libGLESv2.so:libGLESv3.so:libRS.so:libandroid_net.so:libbinder_ndk.so:libc.so:libcgrouprc.so:libclang_rt.asan-x86_64-android.so:libcom.android.tethering.connectivity_native.so:libdl.so:libft2.so:liblog.so:libm.so:libmediandk.so:libnativewindow.so:libneuralnetworks.so:libselinux.so:libsync.so:libvndksupport.so:libvulkan.so
+10-18 07:54:50.168  5597  5597 D nativeloader: InitVndkspLibrariesProduct: android.hardware.common-V2-ndk.so:android.hardware.common.fmq-V1-ndk.so:android.hardware.graphics.allocator-V2-ndk.so:android.hardware.graphics.common-V4-ndk.so:android.hardware.graphics.common@1.0.so:android.hardware.graphics.common@1.1.so:android.hardware.graphics.common@1.2.so:android.hardware.graphics.composer3-V1-ndk.so:android.hardware.graphics.mapper@2.0.so:android.hardware.graphics.mapper@2.1.so:android.hardware.graphics.mapper@3.0.so:android.hardware.graphics.mapper@4.0.so:android.hardware.renderscript@1.0.so:android.hidl.memory.token@1.0.so:android.hidl.memory@1.0-impl.so:android.hidl.memory@1.0.so:android.hidl.safe_union@1.0.so:libRSCpuRef.so:libRSDriver.so:libRS_internal.so:libbase.so:libbcinfo.so:libblas.so:libc++.so:libcompiler_rt.so:libcutils.so:libdmabufheap.so:libgralloctypes.so:libhardware.so:libhidlbase.so:libhidlmemory.so:libion.so:libjsoncpp.so:liblzma.so:libprocessgroup.so:libunwindstack.so:libutils.so:libutilscallstack.so:libz.so
+10-18 07:54:50.202   521  2648 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10132. pid: 5597
+10-18 07:54:50.631   521   613 D ActivityManager: freezing 2707 com.android.chrome
+10-18 07:54:50.714   521   613 D ActivityManager: freezing 3090 com.google.android.documentsui
+10-18 07:54:53.312   521   944 E RecoverySnapshotStorage: 	at libcore.io.IoBridge.open(IoBridge.java:574)
+10-18 07:54:53.312   521   944 E RecoverySnapshotStorage: 	at libcore.io.Linux.open(Native Method)
+10-18 07:54:53.312   521   944 E RecoverySnapshotStorage: 	at libcore.io.ForwardingOs.open(ForwardingOs.java:563)
+10-18 07:54:53.312   521   944 E RecoverySnapshotStorage: 	at libcore.io.BlockGuardOs.open(BlockGuardOs.java:274)
+10-18 07:54:53.312   521   944 E RecoverySnapshotStorage: 	at libcore.io.IoBridge.open(IoBridge.java:560)
+10-18 07:54:54.311  3399  4633 W libc    : Access denied finding property "persist.adb.tls_server.enable"
+10-18 07:54:54.311  3399  4633 W libc    : Access denied finding property "service.adb.tls.port"
+10-18 07:54:54.360  5404  5581 W libc    : Access denied finding property "ro.hardware.chipname"
+10-18 07:54:54.367   521   613 D ActivityManager: freezing 1623 com.google.android.apps.youtube.music
+10-18 07:54:54.594   521   613 D ActivityManager: freezing 4210 com.google.android.googlequicksearchbox
+10-18 07:54:54.919   521   613 D ActivityManager: freezing 1678 com.google.android.youtube
+10-18 07:54:55.210  3399  3429 W libc    : Access denied finding property "persist.adb.tls_server.enable"
+10-18 07:54:55.210  3399  3429 W libc    : Access denied finding property "service.adb.tls.port"
+10-18 07:54:55.272  5350  5380 I SemanticLocation: 	at libcore.io.IoBridge.open(IoBridge.java:574)
+10-18 07:54:55.272  5350  5380 I SemanticLocation: 	at libcore.io.Linux.open(Native Method)
+10-18 07:54:55.272  5350  5380 I SemanticLocation: 	at libcore.io.ForwardingOs.open(ForwardingOs.java:563)
+10-18 07:54:55.272  5350  5380 I SemanticLocation: 	at libcore.io.BlockGuardOs.open(BlockGuardOs.java:274)
+10-18 07:54:55.272  5350  5380 I SemanticLocation: 	at libcore.io.ForwardingOs.open(ForwardingOs.java:563)
+10-18 07:54:55.272  5350  5380 I SemanticLocation: 	at libcore.io.IoBridge.open(IoBridge.java:560)
+10-18 07:54:55.278  5350  5380 I SemanticLocation: 	at libcore.io.IoBridge.open(IoBridge.java:574)
+10-18 07:54:55.278  5350  5380 I SemanticLocation: 	at libcore.io.Linux.open(Native Method)
+10-18 07:54:55.278  5350  5380 I SemanticLocation: 	at libcore.io.ForwardingOs.open(ForwardingOs.java:563)
+10-18 07:54:55.278  5350  5380 I SemanticLocation: 	at libcore.io.BlockGuardOs.open(BlockGuardOs.java:274)
+10-18 07:54:55.278  5350  5380 I SemanticLocation: 	at libcore.io.ForwardingOs.open(ForwardingOs.java:563)
+10-18 07:54:55.278  5350  5380 I SemanticLocation: 	at libcore.io.IoBridge.open(IoBridge.java:560)
+=================== v83 ===================
+Performing Streamed Install
+Success
+Status: ok
+LaunchState: UNKNOWN (0)
+Activity: com.almajhool.almajhool_app/.MainActivity
+WaitTime: 229
+Complete
+[v83] pid=
+      topResumedActivity=ActivityRecord{3f0ffd3 u0 com.google.android.apps.nexuslauncher/.NexusLauncherActivity t7}
+  mCurrentFocus=Window{c61270e u0 com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity}
+  mFocusedApp=ActivityRecord{3f0ffd3 u0 com.google.android.apps.nexuslauncher/.NexusLauncherActivity t7}
+--- logcat (v83) ---
+10-18 07:55:18.855  1048  1294 D ImsResolver: maybeAddedImsService, packageName: com.almajhool.almajhool_app
+10-18 07:55:18.857  1048  1048 D CarrierSvcBindHelper: onPackageModified: com.almajhool.almajhool_app
+10-18 07:55:18.883  1048  1294 D ImsResolver: maybeAddedImsService, packageName: com.almajhool.almajhool_app
+10-18 07:55:18.901   834   864 V WindowManagerShell: Transition requested: android.os.BinderProxy@9428e18 TransitionRequestInfo { type = OPEN, triggerTask = TaskInfo{userId=0 taskId=10 displayId=0 isRunning=true baseIntent=Intent { flg=0x10000000 cmp=com.almajhool.almajhool_app/.MainActivity } baseActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} topActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} origActivity=null realActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} numActivities=1 lastActiveTime=113835 supportsMultiWindow=true resizeMode=2 isResizeable=true minWidth=-1 minHeight=-1 defaultMinSize=220 token=WCT{android.window.IWindowContainerToken$Stub$Proxy@7320071} topActivityType=1 pictureInPictureParams=null shouldDockBigOverlays=false launchIntoPipHostTaskId=-1 lastParentTaskIdBeforePip=-1 displayCutoutSafeInsets=null topActivityInfo=ActivityInfo{4d2ce56 com.almajhool.almajhool_app.MainActivity} launchCookies=[] positionInParent=Point(0, 0) parentTaskId=-1 isFocused=false isVisible=false isVisibleRequested=false isSleeping=false topActivityInSizeCompat=false topActivityEligibleForLetterboxEducation= false topActivityLetterboxed= false isFromDoubleTap= false topActivityLetterboxVerticalPosition= -1 topActivityLetterboxHorizontalPosition= -1 topActivityLetterboxWidth=-1 topActivityLetterboxHeight=-1 locusId=null displayAreaFeatureId=1 cameraCompatControlState=hidden}, remoteTransition = null, displayChange = null }
+10-18 07:55:18.902   521  2807 I ActivityTaskManager: START u0 {flg=0x10000000 cmp=com.almajhool.almajhool_app/.MainActivity} with LAUNCH_SINGLE_TOP from uid 2000 (BAL_ALLOW_PERMISSION) result code=0
+10-18 07:55:18.912   521   551 I ActivityManager: Start proc 5965:com.almajhool.almajhool_app/u0a194 for next-top-activity {com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity}
+10-18 07:55:18.920   521  2648 D CoreBackPreview: Window{830474e u0 Splash Screen com.almajhool.almajhool_app}: Setting back callback OnBackInvokedCallbackInfo{mCallback=android.window.IOnBackInvokedCallback$Stub$Proxy@9ad69f3, mPriority=0, mIsAnimationCallback=false}
+10-18 07:55:18.931  1585  1585 I AiAiEcho: AppFetcherImplV2 updateApps package:[com.almajhool.almajhool_app], userId:[0], reason:[package is added.].
+10-18 07:55:18.939  5965  5965 I l.almajhool_app: Using CollectorTypeCC GC.
+10-18 07:55:18.939  5965  5965 W l.almajhool_app: Unexpected CPU variant for x86: x86_64.
+10-18 07:55:18.939  5965  5965 W l.almajhool_app: Known variants: atom, sandybridge, silvermont, goldmont, goldmont-plus, tremont, kabylake, default
+10-18 07:55:18.940  5965  5965 E l.almajhool_app: Not starting debugger since process cannot load the jdwp agent.
+10-18 07:55:18.949  1585  1585 I AiAiEcho: AppFetcherImpl onPackageChanged com.almajhool.almajhool_app.
+10-18 07:55:18.953   521   540 V WindowManager: Sent Transition #10 createdAt=10-18 07:55:18.887 via request=TransitionRequestInfo { type = OPEN, triggerTask = TaskInfo{userId=0 taskId=10 displayId=0 isRunning=true baseIntent=Intent { flg=0x10000000 cmp=com.almajhool.almajhool_app/.MainActivity } baseActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} topActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} origActivity=null realActivity=ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity} numActivities=1 lastActiveTime=113835 supportsMultiWindow=true resizeMode=2 isResizeable=true minWidth=-1 minHeight=-1 defaultMinSize=220 token=WCT{RemoteToken{6eb05a1 Task{df593dd #10 type=standard I=com.almajhool.almajhool_app/.MainActivity}}} topActivityType=1 pictureInPictureParams=null shouldDockBigOverlays=false launchIntoPipHostTaskId=-1 lastParentTaskIdBeforePip=-1 displayCutoutSafeInsets=null topActivityInfo=ActivityInfo{94ea3c6 com.almajhool.almajhool_app.MainActivity} launchCookies=[] positionInParent=Point(0, 0) parentTaskId=-1 isFocused=false isVisible=false isVisibleRequested=false isSleeping=false topActivityInSizeCompat=false topActivityEligibleForLetterboxEducation= false topActivityLetterboxed= false isFromDoubleTap= false topActivityLetterboxVerticalPosition= -1 topActivityLetterboxHorizontalPosition= -1 topActivityLetterboxWidth=-1 topActivityLetterboxHeight=-1 locusId=null displayAreaFeatureId=1 cameraCompatControlState=hidden}, remoteTransition = null, displayChange = null }
+10-18 07:55:18.953  1585  2833 I AiAiEcho: AppIndexer Package:[com.almajhool.almajhool_app] UserProfile:[0] Enabled:[true].
+10-18 07:55:18.953  1585  2833 I AiAiEcho: AppFetcherImplV2 updateApps package:[com.almajhool.almajhool_app], userId:[0], reason:[package is updated.].
+10-18 07:55:18.954   521   540 V WindowManager:     info={id=10 t=OPEN f=0x0 trk=0 r=[0@Point(0, 0)] c=[{WCT{RemoteToken{6eb05a1 Task{df593dd #10 type=standard I=com.almajhool.almajhool_app/.MainActivity}}} m=OPEN f=NONE leash=Surface(name=Task=10)/@0xf9c13ab sb=Rect(0, 0 - 320, 640) eb=Rect(0, 0 - 320, 640) d=0},{WCT{RemoteToken{6afbdb7 Task{f4ce1f2 #1 type=home}}} m=TO_BACK f=SHOW_WALLPAPER leash=Surface(name=Task=1)/@0x37a30d4 sb=Rect(0, 0 - 320, 640) eb=Rect(0, 0 - 320, 640) d=0}]}
+10-18 07:55:18.991  5965  5965 D nativeloader: Configuring clns-6 for other apk /data/app/~~Hni-JfQR50i0KeAzw5XcaQ==/com.almajhool.almajhool_app-WHCwLOaAyeGHsLwlfsdcpQ==/base.apk. target_sdk_version=36, uses_libraries=, library_path=/data/app/~~Hni-JfQR50i0KeAzw5XcaQ==/com.almajhool.almajhool_app-WHCwLOaAyeGHsLwlfsdcpQ==/lib/x86_64:/data/app/~~Hni-JfQR50i0KeAzw5XcaQ==/com.almajhool.almajhool_app-WHCwLOaAyeGHsLwlfsdcpQ==/base.apk!/lib/x86_64, permitted_path=/data:/mnt/expand:/data/user/0/com.almajhool.almajhool_app
+10-18 07:55:18.999  5965  5965 V GraphicsEnvironment: ANGLE GameManagerService for com.almajhool.almajhool_app: false
+10-18 07:55:18.999  5965  5965 V GraphicsEnvironment: com.almajhool.almajhool_app is not listed in per-application setting
+10-18 07:55:19.004   521   594 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10194. pid: 5965
+10-18 07:55:19.096  5965  5965 E FlutterLoader: Flutter initialization failed.
+10-18 07:55:19.096  5965  5965 E FlutterLoader: java.util.concurrent.ExecutionException: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at java.util.concurrent.FutureTask.report(FutureTask.java:122)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at java.util.concurrent.FutureTask.get(FutureTask.java:191)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at k70.a(r8-map-id-d9caa230c2d317166dacf2a8459e3df856bf9e1065b4c43565595ac4318d86d8:41)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at i60.<init>(r8-map-id-d9caa230c2d317166dacf2a8459e3df856bf9e1065b4c43565595ac4318d86d8:34)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at r50.onCreate(r8-map-id-d9caa230c2d317166dacf2a8459e3df856bf9e1065b4c43565595ac4318d86d8:320)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at com.almajhool.almajhool_app.MainActivity.onCreate(r8-map-id-d9caa230c2d317166dacf2a8459e3df856bf9e1065b4c43565595ac4318d86d8:16)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at android.app.Activity.performCreate(Activity.java:8595)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at android.app.Activity.performCreate(Activity.java:8573)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1456)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:3764)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:3922)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:103)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at android.app.servertransaction.TransactionExecutor.executeCallbacks(TransactionExecutor.java:139)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:96)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:2443)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at android.os.Handler.dispatchMessage(Handler.java:106)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at android.os.Looper.loopOnce(Looper.java:205)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at android.os.Looper.loop(Looper.java:294)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at android.app.ActivityThread.main(ActivityThread.java:8177)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at java.lang.reflect.Method.invoke(Native Method)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:552)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:971)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: Caused by: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at java.lang.Runtime.load0(Runtime.java:933)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at java.lang.System.load(System.java:1625)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at io.flutter.embedding.engine.FlutterJNI.loadLibrary(r8-map-id-d9caa230c2d317166dacf2a8459e3df856bf9e1065b4c43565595ac4318d86d8:398)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at i70.call(r8-map-id-d9caa230c2d317166dacf2a8459e3df856bf9e1065b4c43565595ac4318d86d8:17)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at java.util.concurrent.FutureTask.run(FutureTask.java:264)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1145)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:644)
+10-18 07:55:19.096  5965  5965 E FlutterLoader: 	at java.lang.Thread.run(Thread.java:1012)
+10-18 07:55:19.097  5965  5965 D AndroidRuntime: Shutting down VM
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: FATAL EXCEPTION: main
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: Process: com.almajhool.almajhool_app, PID: 5965
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: java.lang.RuntimeException: Unable to start activity ComponentInfo{com.almajhool.almajhool_app/com.almajhool.almajhool_app.MainActivity}: java.lang.RuntimeException: java.util.concurrent.ExecutionException: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:3782)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at android.app.ActivityThread.handleLaunchActivity(ActivityThread.java:3922)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at android.app.servertransaction.LaunchActivityItem.execute(LaunchActivityItem.java:103)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.executeCallbacks(TransactionExecutor.java:139)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at android.app.servertransaction.TransactionExecutor.execute(TransactionExecutor.java:96)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:2443)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:106)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:205)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:294)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:8177)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:552)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:971)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: Caused by: java.lang.RuntimeException: java.util.concurrent.ExecutionException: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at u90.m(r8-map-id-d9caa230c2d317166dacf2a8459e3df856bf9e1065b4c43565595ac4318d86d8:3)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at k70.a(r8-map-id-d9caa230c2d317166dacf2a8459e3df856bf9e1065b4c43565595ac4318d86d8:817)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at i60.<init>(r8-map-id-d9caa230c2d317166dacf2a8459e3df856bf9e1065b4c43565595ac4318d86d8:34)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at r50.onCreate(r8-map-id-d9caa230c2d317166dacf2a8459e3df856bf9e1065b4c43565595ac4318d86d8:320)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at com.almajhool.almajhool_app.MainActivity.onCreate(r8-map-id-d9caa230c2d317166dacf2a8459e3df856bf9e1065b4c43565595ac4318d86d8:16)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:8595)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at android.app.Activity.performCreate(Activity.java:8573)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at android.app.Instrumentation.callActivityOnCreate(Instrumentation.java:1456)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at android.app.ActivityThread.performLaunchActivity(ActivityThread.java:3764)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	... 12 more
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: Caused by: java.util.concurrent.ExecutionException: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at java.util.concurrent.FutureTask.report(FutureTask.java:122)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at java.util.concurrent.FutureTask.get(FutureTask.java:191)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at k70.a(r8-map-id-d9caa230c2d317166dacf2a8459e3df856bf9e1065b4c43565595ac4318d86d8:41)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	... 19 more
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: Caused by: java.lang.UnsatisfiedLinkError: dlopen failed: "/data/data/com.almajhool.almajhool_app/app_lib/libflutter.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at java.lang.Runtime.load0(Runtime.java:933)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at java.lang.System.load(System.java:1625)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at io.flutter.embedding.engine.FlutterJNI.loadLibrary(r8-map-id-d9caa230c2d317166dacf2a8459e3df856bf9e1065b4c43565595ac4318d86d8:398)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at i70.call(r8-map-id-d9caa230c2d317166dacf2a8459e3df856bf9e1065b4c43565595ac4318d86d8:17)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at java.util.concurrent.FutureTask.run(FutureTask.java:264)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1145)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:644)
+10-18 07:55:19.097  5965  5965 E AndroidRuntime: 	at java.lang.Thread.run(Thread.java:1012)
+10-18 07:55:19.103   521   594 W ActivityTaskManager:   Force finishing activity com.almajhool.almajhool_app/.MainActivity
+10-18 07:55:19.114   521  2807 I ActivityManager: Process com.almajhool.almajhool_app (pid 5965) has died: fg  TOP 
+10-18 07:55:19.118   521   613 D ActivityManager: freezing 4853 com.google.android.settings.intelligence
+10-18 07:55:19.124   521   613 D ActivityManager: freezing 3686 com.google.android.configupdater
+10-18 07:55:19.160   521   540 V WindowManager:     info={id=11 t=CLOSE f=0x10 trk=0 r=[0@Point(0, 0)] c=[{WCT{RemoteToken{6afbdb7 Task{f4ce1f2 #1 type=home}}} m=TO_FRONT f=SHOW_WALLPAPER|MOVE_TO_TOP leash=Surface(name=Task=1)/@0x37a30d4 sb=Rect(0, 0 - 320, 640) eb=Rect(0, 0 - 320, 640) d=0},{WCT{RemoteToken{6eb05a1 Task{df593dd #10 type=standard I=com.almajhool.almajhool_app/.MainActivity}}} m=CLOSE f=NONE leash=Surface(name=Task=10)/@0xf9c13ab sb=Rect(0, 0 - 320, 640) eb=Rect(0, 0 - 320, 640) d=0},{null m=TO_FRONT f=IS_WALLPAPER leash=Surface(name=WallpaperWindowToken{2c4f8d token=android.os.Binder@dde7824})/@0x244d268 sb=Rect(0, 0 - 320, 640) eb=Rect(0, 0 - 320, 640) d=0}]}
+10-18 07:55:19.187   521  2807 W InputManager-JNI: Input channel object '830474e Splash Screen com.almajhool.almajhool_app (client)' was disposed without first being removed with the input manager!
+10-18 07:55:19.365  5404  5837 I BlockstoreStorage: Clearing Blockstore Data for package com.almajhool.almajhool_app [CONTEXT service_id=258 ]
+10-18 07:55:19.368  5350  5925 I ProximityAuth: [RecentAppsMediator] Package added: (user=UserHandle{0}) com.almajhool.almajhool_app
+10-18 07:55:19.461   521   534 I ActivityManager: Background started FGS: Allowed [callingPackage: com.google.android.apps.wellbeing; callingUid: 10119; uidState: BTOP; uidBFSL: [BFSL]; intent: Intent { cmp=com.google.android.apps.wellbeing/com.google.apps.tiktok.concurrent.InternalForegroundService (has extras) }; code:BACKGROUND_ACTIVITY_PERMISSION; tempAllowListReason:<null>; targetSdkVersion:33; callerTargetSdkVersion:33; startForegroundCount:0; bindFromPackage:null: isBindService:false]
+10-18 07:55:19.604   521   543 W ActivityTaskManager: Activity top resumed state loss timeout for ActivityRecord{34e051c u0 com.almajhool.almajhool_app/.MainActivity t-1 f}}
+10-18 07:55:20.671   521   613 D ActivityManager: freezing 1049 com.android.settings
+10-18 07:55:20.679   521   613 D ActivityManager: freezing 3563 com.android.dynsystem:dynsystem
+10-18 07:55:20.680   521   613 D ActivityManager: freezing 3516 com.android.dynsystem
+10-18 07:55:20.680   521   613 D ActivityManager: freezing 2468 com.android.localtransport
+10-18 07:55:25.739   521   613 D ActivityManager: freezing 3855 com.google.android.gm
+10-18 07:55:27.639   521   613 D ActivityManager: freezing 2423 com.google.android.apps.wallpaper
+10-18 07:55:27.814   521   613 D ActivityManager: freezing 2707 com.android.chrome
+10-18 07:55:27.845   521   613 D ActivityManager: freezing 3090 com.google.android.documentsui
+10-18 07:55:27.919   521   613 D ActivityManager: freezing 5919 com.android.externalstorage
+10-18 07:55:28.936   521   617 W ActivityManager: Unable to start service Intent { act=com.google.android.gms.drive.ApiService.RESET_AFTER_BOOT flg=0x4 cmp=com.google.android.gms/.drive.api.ApiService (has extras) } U=0: not found
+10-18 07:55:34.328   521   613 D ActivityManager: freezing 2294 com.google.android.contacts
+10-18 07:55:35.001   521   613 D ActivityManager: freezing 2047 com.google.android.as.oss
+10-18 07:55:47.994   521   606 I ActivityManager: PendingStartActivityUids startActivity to updateOomAdj delay:28391ms, uid:10169
+10-18 07:55:49.052   521   613 D ActivityManager: freezing 835 com.google.android.permissioncontroller
+10-18 07:55:49.311   521  2554 D ActivityManager: sync unfroze 3399 com.google.android.gms.unstable for 6
+10-18 07:55:49.408  5404  5477 W libc    : Access denied finding property "ro.hardware.chipname"
+10-18 07:55:49.455   521  2815 D ActivityManager: sync unfroze 3793 com.google.android.rkpdapp for 6
+10-18 07:55:49.694  3399  6040 W libc    : Access denied finding property "persist.adb.tls_server.enable"
+10-18 07:55:49.696  3399  6040 W libc    : Access denied finding property "service.adb.tls.port"
+10-18 07:55:49.733  5350  6037 I SemanticLocation: 	at libcore.io.IoBridge.open(IoBridge.java:574)
+10-18 07:55:49.733  5350  6037 I SemanticLocation: 	at libcore.io.Linux.open(Native Method)
+10-18 07:55:49.733  5350  6037 I SemanticLocation: 	at libcore.io.ForwardingOs.open(ForwardingOs.java:563)
+10-18 07:55:49.733  5350  6037 I SemanticLocation: 	at libcore.io.BlockGuardOs.open(BlockGuardOs.java:274)
+10-18 07:55:49.733  5350  6037 I SemanticLocation: 	at libcore.io.ForwardingOs.open(ForwardingOs.java:563)
+10-18 07:55:49.733  5350  6037 I SemanticLocation: 	at libcore.io.IoBridge.open(IoBridge.java:560)
+10-18 07:55:49.771  5350  6037 I SemanticLocation: 	at libcore.io.IoBridge.open(IoBridge.java:574)
+10-18 07:55:49.771  5350  6037 I SemanticLocation: 	at libcore.io.Linux.open(Native Method)
+10-18 07:55:49.771  5350  6037 I SemanticLocation: 	at libcore.io.ForwardingOs.open(ForwardingOs.java:563)
+10-18 07:55:49.771  5350  6037 I SemanticLocation: 	at libcore.io.BlockGuardOs.open(BlockGuardOs.java:274)
+10-18 07:55:49.771  5350  6037 I SemanticLocation: 	at libcore.io.ForwardingOs.open(ForwardingOs.java:563)
+10-18 07:55:49.771  5350  6037 I SemanticLocation: 	at libcore.io.IoBridge.open(IoBridge.java:560)
+10-18 07:55:50.279   521   818 D ActivityManager: sync unfroze 835 com.google.android.permissioncontroller for 6
+10-18 07:55:50.599   521   606 D ActivityManager: sync unfroze 2294 com.google.android.contacts for 6
+DONE
