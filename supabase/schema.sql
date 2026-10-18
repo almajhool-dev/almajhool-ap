@@ -7740,5 +7740,38 @@ end $$;
 revoke execute on function public.ai_autopost_gh(text, boolean) from public;
 grant execute on function public.ai_autopost_gh(text, boolean) to anon, authenticated;
 
+-- مفتاح OpenAI بدون تحديث التطبيق: إذا المالك لصقه بأي خانة مفتاح بكارت المساعد القديم
+-- (OpenAI يبدي بـ sk- بس مو sk-or- مال OpenRouter ولا sk-ant- مال Claude) ينحفظ كمفتاح الصور
+create or replace function public._is_openai_key(k text) returns boolean
+language sql immutable as $$
+  select coalesce(btrim(k), '') ~ '^sk-' and coalesce(btrim(k), '') !~ '^sk-(or|ant)-';
+$$;
+
+create or replace function public.ai_set_key(p_provider text, p_key text) returns void
+language plpgsql security definer set search_path = public as $$
+declare prov text := p_provider;
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if prov not in ('anthropic', 'gemini', 'groq', 'openrouter', 'openai') then raise exception 'مزوّد غير معروف'; end if;
+  if char_length(coalesce(btrim(p_key), '')) < 20 then raise exception 'المفتاح غير صالح'; end if;
+  if _is_openai_key(p_key) then prov := 'openai'; end if;
+  insert into private_settings(key, value) values ('ai_key_' || prov, btrim(p_key))
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+end $$;
+grant execute on function public.ai_set_key(text, text) to authenticated;
+
+-- إذا انلصق مفتاح OpenAI قبل هالتحديث بخانة مزوّد ثاني، ننقله لمكانه الصحيح
+do $$
+declare r record;
+begin
+  for r in select key, value from private_settings
+           where key in ('ai_key_gemini', 'ai_key_groq', 'ai_key_openrouter', 'ai_key_anthropic') and _is_openai_key(value) loop
+    insert into private_settings(key, value) values ('ai_key_openai', r.value)
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+    delete from private_settings where key = r.key;
+  end loop;
+exception when others then raise notice 'openai key move: %', sqlerrm;
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
