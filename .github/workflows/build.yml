@@ -72,7 +72,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
-          name: وهج v1.0.${{ github.run_number }}
+          name: VYFRI v1.0.${{ github.run_number }}
           make_latest: false
           body: |
             ## تحميل التطبيق

@@ -57,7 +57,7 @@ class LocalNotifications {
       android: AndroidNotificationDetails(
         'messages',
         'الرسائل والإشعارات',
-        channelDescription: 'إشعارات وهج',
+        channelDescription: 'إشعارات VYFRI',
         importance: Importance.high,
         priority: Priority.high,
       ),

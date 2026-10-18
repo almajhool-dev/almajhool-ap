@@ -8,7 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class AppConfig {
   AppConfig._();
 
-  static const appName = 'وهج';
+  static const appName = 'VYFRI';
   static const pageSize = 30;
   static const maxUploadBytes = 50 * 1024 * 1024;
 

@@ -167,7 +167,7 @@ class _FeedTabState extends State<FeedTab> {
                     children: [
                       ShaderMask(
                         shaderCallback: (r) => AppColors.brandGradient.createShader(r),
-                        child: const Text('وهج',
+                        child: const Text('VYFRI',
                             style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Colors.white)),
                       ),
                       const Spacer(),

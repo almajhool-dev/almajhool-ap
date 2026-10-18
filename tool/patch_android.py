@@ -26,11 +26,11 @@ def write(p, s):
 
 def patch_manifest():
     s = read(MANIFEST)
-    s = re.sub(r'android:label="[^"]*"', 'android:label="وهج"', s, count=1)
+    s = re.sub(r'android:label="[^"]*"', 'android:label="VYFRI"', s, count=1)
     # حماية: منع نسخ بيانات الدخول بالنسخ الاحتياطي (حتى ما أحد ينقل جلسة المستخدم لجهاز ثاني)
     if 'android:allowBackup' not in s:
-        s = s.replace('android:label="وهج"',
-                      'android:label="وهج" android:allowBackup="false" android:fullBackupContent="false"'
+        s = s.replace('android:label="VYFRI"',
+                      'android:label="VYFRI" android:allowBackup="false" android:fullBackupContent="false"'
                       ' tools:replace="android:allowBackup"', 1)
     perms = [
         "android.permission.INTERNET",

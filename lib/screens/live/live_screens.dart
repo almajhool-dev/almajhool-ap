@@ -2013,7 +2013,7 @@ class _MyLivesScreenState extends State<MyLivesScreen> {
       await Navigator.push(context, MaterialPageRoute(builder: (_) => _RecordingPlayer(path: r.path)));
     } else if (a == 'save') {
       try {
-        await Gal.putVideo(r.path, album: 'وهج');
+        await Gal.putVideo(r.path, album: 'VYFRI');
         if (mounted) showSnack(context, 'تم الحفظ في المعرض ✅');
       } catch (e) {
         if (mounted) showSnack(context, 'تعذّر الحفظ: اسمح للتطبيق بالوصول للصور', error: true);
