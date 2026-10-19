@@ -9038,5 +9038,15 @@ drop trigger if exists aa_like_keys_lock on public.comment_likes;
 create trigger aa_like_keys_lock before update on public.comment_likes
   for each row execute function public._like_keys_lock();
 
+-- =====================================================================
+--  الإصدار 67: نشر فيديو ‎.mov / ‎.webm چان يفشل دائمًا: التطبيق يرفعه بنوع video/quicktime أو
+--  video/webm (إذا أصغر من 48 ميگا ما ينضغط لـ mp4) بس الـ bucket چان يقبل video/mp4 بس.
+--  نضيف النوعين لـ posts (نفس حد الحجم، والكتابة تبقى بمجلد المستخدم فقط).
+-- =====================================================================
+update storage.buckets set allowed_mime_types = array(
+    select distinct unnest(coalesce(allowed_mime_types, array[]::text[]) || array['video/quicktime','video/webm']))
+  where id = 'posts' and allowed_mime_types is not null
+    and not (allowed_mime_types @> array['video/quicktime','video/webm']);
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
