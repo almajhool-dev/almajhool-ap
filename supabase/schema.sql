@@ -9226,5 +9226,13 @@ begin
 end $$;
 grant execute on function public.finance_manual_process(uuid, boolean, text) to authenticated;
 
+-- أول مرة بس: نفعّل زين كاش برقم المالك حتى يشتغل الشحن فورًا (بعدها المالك يغيّره براحته وما نرجع نلمسه)
+do $$ begin
+  if not exists(select 1 from private_settings where key = 'wm_seeded') then
+    update wallet_methods set destination = '07853348446', enabled = true where id = 'zaincash' and destination = '';
+    insert into private_settings(key, value) values ('wm_seeded', '1');
+  end if;
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
