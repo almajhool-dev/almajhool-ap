@@ -9652,5 +9652,19 @@ exception when others then
 end $$;
 grant execute on function public.finance_rasedi_test() to authenticated;
 
+-- =====================================================================
+--  الإصدار 71: سد ثغرة إرهاق الخادم — دوال حساب Ed25519 الداخلية چانت مفتوحة للزوار
+--  (مثلًا _ed_n2le بطول ضخم أو _ed_pow بأس كبير تستهلك الذاكرة والمعالج لحد المهلة).
+--  تنستخدم بس داخل _rs_call (يشتغل بصلاحية المالك)، فنسدها عن الكل بدون أي تأثير.
+-- =====================================================================
+revoke execute on function public._ed_p() from public, anon, authenticated;
+revoke execute on function public._ed_l() from public, anon, authenticated;
+revoke execute on function public._ed_fe(numeric) from public, anon, authenticated;
+revoke execute on function public._ed_pow(numeric, numeric, numeric) from public, anon, authenticated;
+revoke execute on function public._ed_le2n(bytea) from public, anon, authenticated;
+revoke execute on function public._ed_n2le(numeric, int) from public, anon, authenticated;
+revoke execute on function public._ed_mul(numeric, numeric, numeric) from public, anon, authenticated;
+revoke execute on function public._ed_enc(numeric[]) from public, anon, authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
