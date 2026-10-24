@@ -83,6 +83,10 @@ class WalletService {
   static Future<List<Map<String, dynamic>>> topupMethods() async =>
       [for (final e in (await supa.rpc('topup_methods')) as List) (e as Map).cast<String, dynamic>()];
 
+  /// رقم الاستلام ينكشف بس لحظة الدفع (محمي بالخادم وبحد طلبات)
+  static Future<Map<String, dynamic>> revealMethod(String id) async =>
+      ((await supa.rpc('topup_method_reveal', params: {'p_method': id})) as Map).cast<String, dynamic>();
+
   static Future<void> manualTopup({
     required String package,
     required String method,

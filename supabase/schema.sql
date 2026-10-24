@@ -9226,13 +9226,56 @@ begin
 end $$;
 grant execute on function public.finance_manual_process(uuid, boolean, text) to authenticated;
 
--- أول مرة بس: نفعّل زين كاش برقم المالك حتى يشتغل الشحن فورًا (بعدها المالك يغيّره براحته وما نرجع نلمسه)
+
+-- =====================================================================
+--  الإصدار 69: خصوصية المالك — رقمه الشخصي ما يظهر لأي مستخدم أبدًا
+--  1) نمسح رقم الاستلام اللي انضاف تلقائيًا ونطفي المحفظة (مرة وحدة) — المالك يحط رقم مخصص للتطبيق.
+--  2) ماكو قراءة مباشرة لجدول المحافظ؛ القائمة ترجع بدون أرقام.
+--  3) رقم الاستلام ينكشف بس للمستخدم المسجّل غير المحظور لحظة ما يفتح الدفع، بحد طلبات، وكل كشف ينسجل.
+-- =====================================================================
 do $$ begin
-  if not exists(select 1 from private_settings where key = 'wm_seeded') then
-    update wallet_methods set destination = '07853348446', enabled = true where id = 'zaincash' and destination = '';
-    insert into private_settings(key, value) values ('wm_seeded', '1');
+  if not exists(select 1 from private_settings where key = 'wm_privacy1') then
+    update wallet_methods set destination = '', holder = '', enabled = false where id = 'zaincash';
+    insert into private_settings(key, value) values ('wm_privacy1', '1');
   end if;
 end $$;
+
+drop policy if exists wallet_methods_read on public.wallet_methods;
+revoke all on public.wallet_methods from anon, authenticated;
+
+create table if not exists public.wallet_reveals (
+  id bigint generated always as identity primary key,
+  user_id uuid not null,
+  method text not null,
+  at timestamptz not null default now()
+);
+create index if not exists wallet_reveals_user_idx on public.wallet_reveals(user_id, at desc);
+alter table public.wallet_reveals enable row level security;
+revoke all on public.wallet_reveals from anon, authenticated;
+
+-- القائمة للمستخدم: أسماء المحافظ المفعّلة بس (بدون أي رقم)
+create or replace function public.topup_methods() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', id, 'name', name, 'emoji', emoji, 'note', note) order by sort), '[]'::jsonb)
+  from wallet_methods where enabled and destination <> '' and auth.uid() is not null;
+$$;
+grant execute on function public.topup_methods() to authenticated;
+
+-- كشف رقم الاستلام لحظة الدفع فقط
+create or replace function public.topup_method_reveal(p_method text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := auth.uid(); m wallet_methods;
+begin
+  if uid is null then raise exception 'not_authenticated'; end if;
+  if is_banned() then raise exception 'حسابك محظور'; end if;
+  perform _rate('wallet_reveal', 15, 3600);
+  select * into m from wallet_methods where id = p_method and enabled and destination <> '';
+  if m.id is null then raise exception 'طريقة الدفع غير متاحة'; end if;
+  insert into wallet_reveals(user_id, method) values (uid, m.id);
+  return jsonb_build_object('id', m.id, 'name', m.name, 'destination', m.destination, 'holder', m.holder, 'note', m.note);
+end $$;
+revoke execute on function public.topup_method_reveal(text) from public, anon;
+grant execute on function public.topup_method_reveal(text) to authenticated;
 
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

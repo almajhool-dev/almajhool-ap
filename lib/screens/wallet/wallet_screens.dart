@@ -125,7 +125,14 @@ class _WalletScreenState extends State<WalletScreen> {
 
   /// الشحن بالتحويل: يختار المحفظة، يحوّل لرقم المالك، ويكتب رقم العملية
   Future<void> _manualBuy(TopupPackage p) async {
-    var m = _methods.first;
+    Map<String, dynamic> m;
+    try {
+      m = await WalletService.revealMethod('${_methods.first['id']}');
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+      return;
+    }
+    if (!mounted) return;
     final sender = TextEditingController();
     final ref = TextEditingController();
     var busy = false;
@@ -153,7 +160,14 @@ class _WalletScreenState extends State<WalletScreen> {
                   ChoiceChip(
                     label: Text('${x['emoji'] ?? ''} ${x['name']}'),
                     selected: x['id'] == m['id'],
-                    onSelected: (_) => set(() => m = x),
+                    onSelected: (_) async {
+                      try {
+                        final r = await WalletService.revealMethod('${x['id']}');
+                        set(() => m = r);
+                      } catch (e) {
+                        if (c.mounted) showSnack(c, friendlyError(e), error: true);
+                      }
+                    },
                   ),
               ]),
               const SizedBox(height: 12),
