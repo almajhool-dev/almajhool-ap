@@ -9277,5 +9277,380 @@ end $$;
 revoke execute on function public.topup_method_reveal(text) from public, anon;
 grant execute on function public.topup_method_reveal(text) to authenticated;
 
+-- =====================================================================
+--  الإصدار 70: بوابة Rasedi — الشحن التلقائي بكل المحافظ (زين كاش، FIB، آسيا باي، فاست باي، ناس، البطاقات)
+--  المستخدم يدفع بصفحة الدفع الرسمية وتنضاف العملات تلقائيًا بدون أي تدخل من المالك.
+--  الطلبات تنوقّع بمفتاح Ed25519 داخل الخادم نفسه (مُختبر على متجهات RFC 8032).
+--  المفاتيح تنكتب بس وما ترجع لأي أحد، حتى للمالك.
+-- =====================================================================
+-- ---------- Ed25519 (RFC 8032) داخل الخادم: توقيع طلبات بوابة الدفع بدون أي خدمة خارجية ----------
+create or replace function public._ed_p() returns numeric language sql immutable as $$
+  select 57896044618658097711785492504343953926634992332820282019728792003956564819949::numeric $$;
+create or replace function public._ed_l() returns numeric language sql immutable as $$
+  select 7237005577332262213973186563042994240857116359379907606001950938285454250989::numeric $$;
+create or replace function public._ed_fe(x numeric) returns numeric language sql immutable as $$
+  select mod(mod(x, 57896044618658097711785492504343953926634992332820282019728792003956564819949::numeric)
+             + 57896044618658097711785492504343953926634992332820282019728792003956564819949::numeric,
+             57896044618658097711785492504343953926634992332820282019728792003956564819949::numeric) $$;
+
+create or replace function public._ed_pow(b numeric, e numeric, m numeric) returns numeric
+language plpgsql immutable as $$
+declare r numeric := 1; x numeric := mod(b, m); k numeric := e;
+begin
+  while k > 0 loop
+    if mod(k, 2) = 1 then r := mod(r * x, m); end if;
+    x := mod(x * x, m);
+    k := div(k, 2);
+  end loop;
+  return r;
+end $$;
+
+-- بايتات (little-endian) ↔ رقم
+create or replace function public._ed_le2n(b bytea) returns numeric language plpgsql immutable as $$
+declare n numeric := 0; i int;
+begin
+  for i in reverse length(b) - 1 .. 0 loop n := n * 256 + get_byte(b, i); end loop;
+  return n;
+end $$;
+create or replace function public._ed_n2le(n numeric, len int) returns bytea language plpgsql immutable as $$
+declare b bytea := decode(repeat('00', len), 'hex'); x numeric := n; i int;
+begin
+  for i in 0 .. len - 1 loop b := set_byte(b, i, mod(x, 256)::int); x := div(x, 256); end loop;
+  return b;
+end $$;
+
+-- ضرب نقطة بعدد على المنحنى (إحداثيات ممتدة X:Y:Z:T)
+create or replace function public._ed_mul(s numeric, px numeric, py numeric) returns numeric[]
+language plpgsql immutable as $$
+declare
+  p numeric := _ed_p();
+  d2 numeric := 16295367250680780974490674513165176452449235426866156013048779062215315747161; -- 2*d mod p
+  qx numeric := 0; qy numeric := 1; qz numeric := 1; qt numeric := 0;
+  ux numeric := px; uy numeric := py; uz numeric := 1; ut numeric := mod(px * py, p);
+  k numeric := s; bits int[] := '{}'; i int;
+  a numeric; b numeric; c numeric; dd numeric; e numeric; f numeric; g numeric; h numeric;
+begin
+  while k > 0 loop bits := array_prepend(mod(k, 2)::int, bits); k := div(k, 2); end loop;
+  for i in 1 .. coalesce(array_length(bits, 1), 0) loop
+    -- مضاعفة
+    a := mod((qy - qx + p) * (qy - qx + p), p); b := mod((qy + qx) * (qy + qx), p);
+    c := mod(mod(qt * d2, p) * qt, p); dd := mod(2 * qz * qz, p);
+    e := mod(b - a + p, p); f := mod(dd - c + p, p); g := mod(dd + c, p); h := mod(b + a, p);
+    qx := mod(e * f, p); qy := mod(g * h, p); qt := mod(e * h, p); qz := mod(f * g, p);
+    if bits[i] = 1 then
+      a := mod((qy - qx + p) * (uy - ux + p), p); b := mod((qy + qx) * (uy + ux), p);
+      c := mod(mod(qt * d2, p) * ut, p); dd := mod(2 * qz * uz, p);
+      e := mod(b - a + p, p); f := mod(dd - c + p, p); g := mod(dd + c, p); h := mod(b + a, p);
+      qx := mod(e * f, p); qy := mod(g * h, p); qt := mod(e * h, p); qz := mod(f * g, p);
+    end if;
+  end loop;
+  return array[qx, qy, qz];
+end $$;
+
+-- ترميز النقطة 32 بايت
+create or replace function public._ed_enc(q numeric[]) returns bytea language plpgsql immutable as $$
+declare p numeric := _ed_p(); zi numeric; x numeric; y numeric; b bytea;
+begin
+  zi := _ed_pow(q[3], p - 2, p);
+  x := mod(q[1] * zi, p); y := mod(q[2] * zi, p);
+  b := _ed_n2le(y, 32);
+  if mod(x, 2) = 1 then b := set_byte(b, 31, get_byte(b, 31) | 128); end if;
+  return b;
+end $$;
+
+-- التوقيع: seed (32 بايت) + الرسالة → 64 بايت
+create or replace function public._ed25519_sign(seed bytea, msg bytea) returns bytea
+language plpgsql immutable set search_path = public, extensions as $$
+declare
+  gx numeric := 15112221349535400772501151409588531511454012693041857206046113283949847762202;
+  gy numeric := 46316835694926478169428394003475163141307993866256225615783033603165251855960;
+  l numeric := _ed_l(); h bytea; ab bytea; a numeric; pub bytea; r numeric; rr bytea; k numeric; s numeric;
+begin
+  if length(seed) <> 32 then raise exception 'ed25519: seed must be 32 bytes'; end if;
+  h := digest(seed, 'sha512');
+  ab := substr(h, 1, 32);
+  ab := set_byte(ab, 0, get_byte(ab, 0) & 248);
+  ab := set_byte(ab, 31, (get_byte(ab, 31) & 127) | 64);
+  a := _ed_le2n(ab);
+  pub := _ed_enc(_ed_mul(a, gx, gy));
+  r := mod(_ed_le2n(digest(substr(h, 33, 32) || msg, 'sha512')), l);
+  rr := _ed_enc(_ed_mul(r, gx, gy));
+  k := mod(_ed_le2n(digest(rr || pub || msg, 'sha512')), l);
+  s := mod(r + k * a, l);
+  return rr || _ed_n2le(s, 32);
+end $$;
+revoke execute on function public._ed25519_sign(bytea, bytea) from public, anon, authenticated;
+
+
+create or replace function public._rs_enabled() returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select value from private_settings where key = 'rs_enabled'), '0') = '1'
+     and exists(select 1 from private_settings where key = 'rs_key')
+     and exists(select 1 from private_settings where key = 'rs_id');
+$$;
+revoke execute on function public._rs_enabled() from public, anon, authenticated;
+
+-- المفتاح الخاص (PEM) ← البذرة 32 بايت
+create or replace function public._rs_seed_of(pem text) returns bytea
+language plpgsql immutable as $$
+declare s text := coalesce(pem, ''); der bytea;
+begin
+  s := replace(s, '\n', E'\n');
+  s := regexp_replace(s, '-----[A-Z ]+-----', '', 'g');
+  s := regexp_replace(s, '[^A-Za-z0-9+/=]', '', 'g');
+  begin
+    der := decode(s, 'base64');
+  exception when others then
+    raise exception 'المفتاح الخاص مو صحيح — انسخه كامل من لوحة Rasedi';
+  end;
+  if length(der) = 48 and substr(der, 1, 16) = decode('302e020100300506032b657004220420', 'hex') then
+    return substr(der, 17, 32);
+  end if;
+  raise exception 'المفتاح الخاص مو صحيح — انسخه كامل من لوحة Rasedi (يبدي بـ -----BEGIN PRIVATE KEY-----)';
+end $$;
+revoke execute on function public._rs_seed_of(text) from public, anon, authenticated;
+
+-- طلب موقّع لـ Rasedi
+create or replace function public._rs_call(p_method text, p_path text, p_body text default null) returns extensions.http_response
+language plpgsql security definer set search_path = public, extensions as $$
+declare kid text; rel text; sig text; r extensions.http_response;
+begin
+  select value into kid from private_settings where key = 'rs_id';
+  if kid is null then raise exception 'Rasedi غير مربوط'; end if;
+  rel := '/v1/payment/rest/' || case when kid like '%test%' then 'test' else 'live' end || p_path;
+  sig := replace(encode(_ed25519_sign(_rs_seed_of((select value from private_settings where key = 'rs_key')),
+                        convert_to(upper(p_method) || ' || ' || kid || ' || ' || rel, 'UTF8')), 'base64'), E'\n', '');
+  perform set_config('http.timeout_msec', '20000', true);
+  r := extensions.http((upper(p_method), 'https://api.rasedi.com' || rel,
+        array[extensions.http_header('x-signature', sig), extensions.http_header('x-id', kid)],
+        'application/json', p_body)::extensions.http_request);
+  return r;
+end $$;
+revoke execute on function public._rs_call(text, text, text) from public, anon, authenticated;
+
+-- بدء الدفع ← رابط صفحة الدفع الرسمية (يختار المستخدم أي محفظة)
+create or replace function public._topup_start_rs(pk topup_packages, uid uuid) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare pid uuid; r extensions.http_response; j jsonb; url text; ref text; gw jsonb;
+begin
+  insert into payment_intents(user_id, package_id, coins, amount_iqd, provider)
+    values (uid, pk.id, pk.coins, pk.price_iqd, 'rasedi') returning id into pid;
+  gw := to_jsonb(string_to_array(coalesce((select value from private_settings where key = 'rs_gateways'),
+          'FIB,ZAIN,ASIA_PAY,FAST_PAY,NASS_WALLET,CREDIT_CARD'), ','));
+  r := _rs_call('POST', '/create', jsonb_build_object(
+        'amount', pk.price_iqd::text, 'gateways', gw,
+        'title', 'شحن ' || pk.coins || ' عملة', 'description', 'VYFRI',
+        'redirectUrl', 'https://almajhool.app/pay/done?i=' || pid,
+        'callbackUrl', 'https://almajhool.app/pay/cb?i=' || pid,
+        'collectFeeFromCustomer', false, 'collectCustomerEmail', false, 'collectCustomerPhoneNumber', false)::text);
+  if r.status not between 200 and 209 then
+    update payment_intents set status = 'failed', info = left('create ' || r.status || ' ' || coalesce(r.content, ''), 300) where id = pid;
+    raise exception 'تعذر بدء الدفع، حاول بعد شوية';
+  end if;
+  j := r.content::jsonb;
+  ref := coalesce(j->>'referenceCode', j#>>'{data,referenceCode}', j#>>'{body,referenceCode}');
+  url := coalesce(j->>'redirectUrl', j#>>'{data,redirectUrl}', j#>>'{body,redirectUrl}');
+  if ref is null or url is null or url like 'https://almajhool.app/%' then
+    update payment_intents set status = 'failed', info = left('create-bad ' || r.content, 300) where id = pid;
+    raise exception 'تعذر بدء الدفع، حاول بعد شوية';
+  end if;
+  update payment_intents set provider_tx = ref, pay_url = url, info = left(r.content, 300) where id = pid;
+  return jsonb_build_object('intent', pid, 'url', url, 'coins', pk.coins, 'price', pk.price_iqd);
+end $$;
+revoke execute on function public._topup_start_rs(topup_packages, uuid) from public, anon, authenticated;
+
+-- التأكد من Rasedi نفسها قبل إضافة أي عملة — مرة وحدة بس لكل عملية
+create or replace function public._topup_verify_rs(p_intent uuid) returns text
+language plpgsql security definer set search_path = public, extensions as $$
+declare pi payment_intents; r extensions.http_response; j jsonb; st text; amt numeric; via text;
+begin
+  select * into pi from payment_intents where id = p_intent for update;
+  if pi.id is null then return 'missing'; end if;
+  if pi.status <> 'pending' then return pi.status; end if;
+  if pi.provider_tx is null then return 'pending'; end if;
+  r := _rs_call('GET', '/status/' || pi.provider_tx);
+  if r.status not between 200 and 209 then return 'pending'; end if;
+  j := r.content::jsonb;
+  if j ? 'body' and jsonb_typeof(j->'body') = 'object' then j := j->'body'; end if;
+  if j ? 'data' and jsonb_typeof(j->'data') = 'object' then j := j->'data'; end if;
+  if coalesce(j->>'referenceCode', pi.provider_tx) <> pi.provider_tx then return 'pending'; end if;
+  st := upper(coalesce(j->>'status', ''));
+  amt := nullif(regexp_replace(coalesce(j->>'amount', ''), '[^0-9.]', '', 'g'), '')::numeric;
+  via := coalesce(j->>'paidVia', '');
+  if st in ('PAID', 'SUCCESS') and amt is not null and amt >= pi.amount_iqd then
+    update payment_intents set status = 'paid', paid_at = now(), info = left(r.content, 300) where id = pi.id;
+    insert into wallets(user_id, coins) values (pi.user_id, 0) on conflict do nothing;
+    update wallets set coins = coins + pi.coins, updated_at = now() where user_id = pi.user_id;
+    insert into ledger(user_id, account, delta, kind, ref, note) values
+      (pi.user_id, 'coins', pi.coins, 'topup', pi.id, 'شحن ' || pi.coins || ' عملة'),
+      (pi.user_id, 'cash_in', pi.amount_iqd, 'topup', pi.id, 'Rasedi ' || via || ' ' || pi.provider_tx);
+    insert into notifications(user_id, type, title, body, data)
+      values (pi.user_id, 'wallet', '🪙 تم شحن ' || pi.coins || ' عملة', 'شكرًا لك! رقم العملية: ' || left(pi.id::text, 8),
+              jsonb_build_object('intent', pi.id));
+    return 'paid';
+  elsif st in ('FAILED', 'CANCELED', 'CANCELLED', 'EXPIRED', 'TIMED_OUT') then
+    update payment_intents set status = 'failed', info = left(r.content, 300) where id = pi.id;
+    return 'failed';
+  end if;
+  return 'pending';
+exception when others then return 'pending';
+end $$;
+revoke execute on function public._topup_verify_rs(uuid) from public, anon, authenticated;
+
+create or replace function public.topup_start(p_package text) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare uid uuid := auth.uid(); pk topup_packages; pid uuid; r extensions.http_response; j jsonb; url text; tx text;
+begin
+  if uid is null then raise exception 'not_authenticated'; end if;
+  if is_banned() then raise exception 'حسابك محظور'; end if;
+  if not _rs_enabled() and coalesce((select value from private_settings where key = 'zc_enabled'), '0') <> '1' then
+    raise exception 'الشحن يتفعّل قريبًا';
+  end if;
+  perform _rate('topup', 10, 3600);
+  select * into pk from topup_packages where id = p_package and active;
+  if pk.id is null then raise exception 'باقة غير موجودة'; end if;
+  -- حد يومي للحماية من الاحتيال
+  if (select coalesce(sum(amount_iqd), 0) from payment_intents where user_id = uid and status = 'paid'
+        and paid_at > now() - interval '1 day') + pk.price_iqd > 1000000 then
+    raise exception 'وصلت حد الشحن اليومي';
+  end if;
+  -- بوابة Rasedi (كل المحافظ) إذا مفعّلة، وإلا زين كاش
+  if _rs_enabled() then return _topup_start_rs(pk, uid); end if;
+  insert into payment_intents(user_id, package_id, coins, amount_iqd) values (uid, pk.id, pk.coins, pk.price_iqd) returning id into pid;
+  perform set_config('http.timeout_msec', '20000', true);
+  r := extensions.http(('POST', _zc_base() || '/api/v2/payment-gateway/transaction/init',
+        array[extensions.http_header('Authorization', 'Bearer ' || _zc_token())],
+        'application/json',
+        jsonb_build_object('language', 'ar', 'externalReferenceId', pid::text, 'orderId', 'almajhool_' || pid::text,
+          'amount', jsonb_build_object('value', pk.price_iqd::text, 'currency', 'IQD'),
+          'serviceType', 'شحن عملات المبرمج المجهول',
+          'redirectUrls', jsonb_build_object('successUrl', 'https://almajhool.app/pay/done?i=' || pid,
+                                             'failureUrl', 'https://almajhool.app/pay/fail?i=' || pid))::text)::extensions.http_request);
+  if r.status not between 200 and 299 then
+    update payment_intents set status = 'failed', info = left('init ' || r.status || ' ' || coalesce(r.content, ''), 300) where id = pid;
+    raise exception 'تعذر بدء الدفع، حاول بعد شوية';
+  end if;
+  j := r.content::jsonb;
+  url := coalesce(j->>'redirectUrl', j#>>'{data,redirectUrl}');
+  tx := coalesce(j->>'transactionId', j#>>'{data,transactionId}', j->>'id');
+  update payment_intents set pay_url = url, provider_tx = tx, info = left(r.content, 300) where id = pid;
+  if url is null then raise exception 'تعذر بدء الدفع'; end if;
+  return jsonb_build_object('intent', pid, 'url', url, 'coins', pk.coins, 'price', pk.price_iqd);
+end $$;
+grant execute on function public.topup_start(text) to authenticated;
+
+create or replace function public._topup_verify(p_intent uuid) returns text
+language plpgsql security definer set search_path = public, extensions as $$
+declare pi payment_intents; r extensions.http_response; j jsonb; st text; amt numeric;
+begin
+  select * into pi from payment_intents where id = p_intent for update;
+  if pi.id is null then return 'missing'; end if;
+  if pi.status <> 'pending' then return pi.status; end if;
+  if pi.provider = 'rasedi' then return _topup_verify_rs(p_intent); end if;
+  if pi.provider_tx is null then return 'pending'; end if;
+  perform set_config('http.timeout_msec', '15000', true);
+  r := extensions.http(('GET', _zc_base() || '/api/v2/payment-gateway/transaction/inquiry/' || pi.provider_tx,
+        array[extensions.http_header('Authorization', 'Bearer ' || _zc_token())], null, null)::extensions.http_request);
+  if r.status not between 200 and 299 then return 'pending'; end if;
+  j := r.content::jsonb;
+  st := upper(coalesce(j->>'currentStatus', j#>>'{data,currentStatus}', j->>'status', j#>>'{data,status}', ''));
+  amt := coalesce(j#>>'{amount,value}', j#>>'{data,amount,value}')::numeric;
+  if st in ('SUCCESS', 'COMPLETED', 'PAID') and (amt is null or amt >= pi.amount_iqd) then
+    update payment_intents set status = 'paid', paid_at = now(), info = left(r.content, 300) where id = pi.id;
+    insert into wallets(user_id, coins) values (pi.user_id, 0) on conflict do nothing;
+    update wallets set coins = coins + pi.coins, updated_at = now() where user_id = pi.user_id;
+    insert into ledger(user_id, account, delta, kind, ref, note) values
+      (pi.user_id, 'coins', pi.coins, 'topup', pi.id, 'شحن ' || pi.coins || ' عملة'),
+      (pi.user_id, 'cash_in', pi.amount_iqd, 'topup', pi.id, 'زين كاش ' || coalesce(pi.provider_tx, ''));
+    insert into notifications(user_id, type, title, body, data)
+      values (pi.user_id, 'wallet', '🪙 تم شحن ' || pi.coins || ' عملة', 'شكرًا لك! رقم العملية: ' || left(pi.id::text, 8),
+              jsonb_build_object('intent', pi.id));
+    return 'paid';
+  elsif st in ('FAILED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'DECLINED', 'REJECTED') then
+    update payment_intents set status = 'failed', info = left(r.content, 300) where id = pi.id;
+    return 'failed';
+  end if;
+  return 'pending';
+exception when others then return 'pending';
+end $$;
+revoke execute on function public._topup_verify(uuid) from public, anon, authenticated;
+
+create or replace function public.wallet_me() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare uid uuid := auth.uid(); c bigint; tot bigint; pend bigint; wd bigint; held bigint; gifts bigint;
+begin
+  if uid is null then raise exception 'not_authenticated'; end if;
+  select coalesce((select coins from wallets where user_id = uid), 0) into c;
+  select coalesce(sum(delta), 0) into tot from ledger where user_id = uid and account = 'earnings' and kind = 'gift_recv';
+  select coalesce(sum(delta), 0) into pend from ledger where user_id = uid and account = 'earnings' and kind = 'gift_recv'
+     and at > now() - interval '72 hours';
+  select coalesce(-sum(delta), 0) into wd from ledger where user_id = uid and account = 'earnings' and kind in ('withdraw_req', 'withdraw_back');
+  select coalesce(sum(amount_iqd), 0) into held from withdrawals where user_id = uid and status = 'pending';
+  select count(*) into gifts from gift_events where to_user = uid;
+  return jsonb_build_object(
+    'coins', c, 'coin_iqd', _coin_iqd(),
+    'earn_total', tot, 'earn_pending', pend,
+    'earn_available', greatest(tot - pend - wd, 0),
+    'withdrawn', greatest(wd - held, 0), 'withdraw_pending', held,
+    'gifts_received', gifts,
+    'today', (select coalesce(sum(delta), 0) from ledger where user_id = uid and account = 'earnings' and kind = 'gift_recv'
+               and at > date_trunc('day', now() at time zone 'Asia/Baghdad') at time zone 'Asia/Baghdad'),
+    'month', (select coalesce(sum(delta), 0) from ledger where user_id = uid and account = 'earnings' and kind = 'gift_recv'
+               and at > date_trunc('month', now() at time zone 'Asia/Baghdad') at time zone 'Asia/Baghdad'),
+    'topup_ready', coalesce((select value from private_settings where key = 'zc_enabled'), '0') = '1' or _rs_enabled(),
+    'min_withdraw', 25000);
+end $$;
+grant execute on function public.wallet_me() to authenticated;
+
+-- ---------- للمالك: ربط Rasedi (المفاتيح تنكتب بس وما ترجع أبدًا) ----------
+create or replace function public.finance_rasedi_status() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  return jsonb_build_object(
+    'key_set', exists(select 1 from private_settings where key = 'rs_key'),
+    'id_set', exists(select 1 from private_settings where key = 'rs_id'),
+    'enabled', coalesce((select value from private_settings where key = 'rs_enabled'), '0') = '1',
+    'live', coalesce((select value not like '%test%' from private_settings where key = 'rs_id'), false));
+end $$;
+grant execute on function public.finance_rasedi_status() to authenticated;
+
+create or replace function public.finance_set_rasedi(p_key text default null, p_id text default null,
+  p_enabled boolean default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if nullif(btrim(p_key), '') is not null then
+    perform _rs_seed_of(p_key); -- يرفض المفتاح الغلط قبل الحفظ
+    insert into private_settings(key, value) values ('rs_key', btrim(p_key))
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end if;
+  if nullif(btrim(p_id), '') is not null then
+    insert into private_settings(key, value) values ('rs_id', btrim(p_id))
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end if;
+  if p_enabled is not null then
+    insert into private_settings(key, value) values ('rs_enabled', case when p_enabled then '1' else '0' end)
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end if;
+  return finance_rasedi_status();
+end $$;
+grant execute on function public.finance_set_rasedi(text, text, boolean) to authenticated;
+
+-- للمالك: اختبار الربط (طلب موقّع حقيقي لـ Rasedi)
+create or replace function public.finance_rasedi_test() returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare r extensions.http_response;
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  r := _rs_call('GET', '/get-public-keys');
+  return jsonb_build_object('ok', r.status between 200 and 209, 'status', r.status,
+    'live', coalesce((select value not like '%test%' from private_settings where key = 'rs_id'), false),
+    'message', case when r.status between 200 and 209 then '' else left(coalesce(r.content, ''), 200) end);
+exception when others then
+  return jsonb_build_object('ok', false, 'status', 0, 'message', left(sqlerrm, 200));
+end $$;
+grant execute on function public.finance_rasedi_test() to authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

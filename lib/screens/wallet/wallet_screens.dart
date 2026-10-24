@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../services/core_services.dart';
@@ -413,7 +414,7 @@ class _WalletScreenState extends State<WalletScreen> {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
           child: Text(
-            '${ready ? '• الدفع عن طريق زين كاش الرسمي، والعملات تنضاف بس بعد ما زين كاش يأكد الدفع.' : '• تحوّل المبلغ لرقم التطبيق بأي محفظة، وتكتب رقم العملية، والعملات تنضاف بعد التأكد من الاستلام.'}\n'
+            '${ready ? '• الدفع عن طريق بوابة دفع رسمية (زين كاش، FIB، آسيا، فاست باي، البطاقات...)، والعملات تنضاف تلقائيًا أول ما يتأكد الدفع.' : '• تحوّل المبلغ لرقم التطبيق بأي محفظة، وتكتب رقم العملية، والعملات تنضاف بعد التأكد من الاستلام.'}\n'
             '• العملات تستخدمها لإرسال الهدايا بالبث المباشر.\n'
             '• قيمة الهدية تنقسم: 50% لصانع المحتوى و50% للتطبيق.',
             style: TextStyle(fontSize: 12.5, height: 1.7),
@@ -532,7 +533,7 @@ class _WalletScreenState extends State<WalletScreen> {
   }
 }
 
-/// صفحة الدفع الرسمية من زين كاش داخل التطبيق. ترجع: paid / failed / pending
+/// صفحة الدفع الرسمية (زين كاش أو بوابة كل المحافظ) داخل التطبيق. ترجع: paid / failed / pending
 class _PayScreen extends StatefulWidget {
   final String url;
   final String intent;
@@ -545,10 +546,52 @@ class _PayScreenState extends State<_PayScreen> {
   late final WebViewController _web;
   bool _checking = false;
   int _progress = 0;
+  Timer? _poll;
+  bool _done = false;
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    super.dispose();
+  }
+
+  /// روابط تطبيقات المحافظ (FIB، زين كاش...) تنفتح بالتطبيق نفسه
+  Future<void> _openExternal(String url) async {
+    var u = url;
+    if (u.startsWith('intent://')) {
+      final hash = u.indexOf('#Intent;');
+      final params = hash >= 0 ? u.substring(hash + 8) : '';
+      String? scheme;
+      String? fallback;
+      for (final p in params.split(';')) {
+        if (p.startsWith('scheme=')) scheme = p.substring(7);
+        if (p.startsWith('S.browser_fallback_url=')) fallback = Uri.decodeComponent(p.substring(23));
+      }
+      final rest = (hash >= 0 ? u.substring(0, hash) : u).substring('intent://'.length);
+      u = scheme != null ? '$scheme://$rest' : (fallback ?? u);
+    }
+    try {
+      await launchUrl(Uri.parse(u), mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
+
+  /// نتأكد من الدفع تلقائيًا بالخلفية: أول ما يكتمل تنضاف العملات وتنسد الصفحة وحدها
+  Future<void> _tick() async {
+    if (_done || _checking) return;
+    try {
+      final s = await WalletService.topupCheck(widget.intent);
+      if (s != 'pending' && mounted && !_done) {
+        _done = true;
+        _poll?.cancel();
+        Navigator.pop(context, s);
+      }
+    } catch (_) {}
+  }
 
   @override
   void initState() {
     super.initState();
+    _poll = Timer.periodic(const Duration(seconds: 6), (_) => _tick());
     _web = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(NavigationDelegate(
@@ -561,6 +604,10 @@ class _PayScreenState extends State<_PayScreen> {
             _finish();
             return NavigationDecision.prevent;
           }
+          if (!r.url.startsWith('https://') && !r.url.startsWith('http://')) {
+            _openExternal(r.url);
+            return NavigationDecision.prevent;
+          }
           return NavigationDecision.navigate;
         },
       ))
@@ -568,7 +615,8 @@ class _PayScreenState extends State<_PayScreen> {
   }
 
   Future<void> _finish() async {
-    if (_checking) return;
+    if (_checking || _done) return;
+    _poll?.cancel();
     setState(() => _checking = true);
     var s = 'pending';
     for (var i = 0; i < 12 && s == 'pending'; i++) {
@@ -577,14 +625,17 @@ class _PayScreenState extends State<_PayScreen> {
       } catch (_) {}
       if (s == 'pending') await Future<void>.delayed(const Duration(seconds: 2));
     }
-    if (mounted) Navigator.pop(context, s);
+    if (mounted && !_done) {
+      _done = true;
+      Navigator.pop(context, s);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('الدفع بزين كاش 🔒'),
+        title: const Text('الدفع الآمن 🔒'),
         actions: [TextButton(onPressed: _finish, child: const Text('دفعت'))],
         bottom: _progress < 100
             ? PreferredSize(preferredSize: const Size.fromHeight(2), child: LinearProgressIndicator(value: _progress / 100))
@@ -595,7 +646,7 @@ class _PayScreenState extends State<_PayScreen> {
               child: Column(mainAxisSize: MainAxisSize.min, children: [
               CircularProgressIndicator(),
               SizedBox(height: 12),
-              Text('نتأكد من الدفع ويّا زين كاش...'),
+              Text('نتأكد من الدفع...'),
             ]))
           : WebViewWidget(controller: _web),
     );
@@ -864,6 +915,92 @@ class _FinanceScreenState extends State<FinanceScreen> {
   String _wdFilter = 'pending';
   List<Map<String, dynamic>> _mt = const [];
   List<Map<String, dynamic>> _methods = const [];
+  Map<String, dynamic> _rs = const {};
+
+  Future<void> _loadRasedi() async {
+    try {
+      final r = ((await supa.rpc('finance_rasedi_status')) as Map).cast<String, dynamic>();
+      if (mounted) setState(() => _rs = r);
+    } catch (_) {}
+  }
+
+  Future<void> _testRasedi() async {
+    showSnack(context, 'نختبر الربط...');
+    try {
+      final r = ((await supa.rpc('finance_rasedi_test')) as Map).cast<String, dynamic>();
+      if (!mounted) return;
+      showSnack(
+          context,
+          r['ok'] == true
+              ? '✅ الربط شغال ${r['live'] == true ? '(حقيقي)' : '(تجريبي)'}'
+              : 'الربط ما اشتغل: ${r['message'] ?? r['status']}',
+          error: r['ok'] != true);
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    }
+  }
+
+  /// بوابة كل المحافظ (Rasedi): المالك يلصق المفتاحين مرة وحدة بس
+  Future<void> _rasedi() async {
+    final key = TextEditingController();
+    final id = TextEditingController();
+    var enabled = _rs['enabled'] == true || _rs['key_set'] != true;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => StatefulBuilder(
+        builder: (c, set) => AlertDialog(
+          title: const Text('بوابة كل المحافظ 🔒'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Text(
+                  'زين كاش، FIB، آسيا باي، فاست باي، ناس، والبطاقات — بمفتاح واحد من لوحة Rasedi.\n'
+                  'المفاتيح تنحفظ بالخادم بس وما ترجع تظهر لأي أحد. اترك الخانة فاضية إذا ما تريد تغيّرها.',
+                  style: TextStyle(fontSize: 12)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: key,
+                maxLines: 4,
+                minLines: 2,
+                style: const TextStyle(fontSize: 11),
+                decoration: InputDecoration(
+                    labelText: 'Private Key',
+                    hintText: '-----BEGIN PRIVATE KEY-----',
+                    helperText: _rs['key_set'] == true ? 'محفوظ ✓' : null),
+              ),
+              TextField(
+                controller: id,
+                obscureText: true,
+                decoration: InputDecoration(labelText: 'Secret Key', helperText: _rs['id_set'] == true ? 'محفوظ ✓' : null),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('تفعيل الشحن التلقائي للمستخدمين'),
+                value: enabled,
+                onChanged: (v) => set(() => enabled = v),
+              ),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('إلغاء')),
+            FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('حفظ')),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await supa.rpc('finance_set_rasedi', params: {
+        'p_key': key.text.trim(),
+        'p_id': id.text.trim(),
+        'p_enabled': enabled,
+      });
+      if (mounted) showSnack(context, 'تم الحفظ 🔒');
+      await _loadRasedi();
+      if (mounted && _rs['key_set'] == true && _rs['id_set'] == true) _testRasedi();
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    }
+  }
 
   @override
   void initState() {
@@ -958,6 +1095,7 @@ class _FinanceScreenState extends State<FinanceScreen> {
 
   Future<void> _load() async {
     _loadManual();
+    _loadRasedi();
     try {
       final s = ((await supa.rpc('finance_summary')) as Map).cast<String, dynamic>();
       final w = [
@@ -1122,6 +1260,22 @@ class _FinanceScreenState extends State<FinanceScreen> {
           : RefreshIndicator(
               onRefresh: _load,
               child: ListView(padding: const EdgeInsets.all(12), children: [
+                Card(
+                  color: (_rs['enabled'] == true && _rs['key_set'] == true ? Colors.green : Colors.blue).withValues(alpha: 0.14),
+                  child: ListTile(
+                    leading: const Icon(Icons.bolt_rounded),
+                    title: Text(_rs['enabled'] == true && _rs['key_set'] == true
+                        ? 'الشحن التلقائي بكل المحافظ مفعّل ${_rs['live'] == true ? '(حقيقي)' : '(تجريبي)'}'
+                        : 'الشحن التلقائي بكل المحافظ (Rasedi)'),
+                    subtitle: Text(_rs['key_set'] == true
+                        ? 'Private Key: ✓ · Secret: ${_rs['id_set'] == true ? '✓' : '✗'} — المستخدم يدفع والعملات تنضاف وحدها'
+                        : 'سجّل بـ rasedi.com، والصق المفتاحين هنا مرة وحدة'),
+                    trailing: _rs['key_set'] == true
+                        ? IconButton(tooltip: 'اختبار الربط', icon: const Icon(Icons.wifi_tethering_rounded), onPressed: _testRasedi)
+                        : const Icon(Icons.settings_rounded),
+                    onTap: _rasedi,
+                  ),
+                ),
                 Card(
                   color: (zc['enabled'] == true ? Colors.green : Colors.orange).withValues(alpha: 0.12),
                   child: ListTile(
