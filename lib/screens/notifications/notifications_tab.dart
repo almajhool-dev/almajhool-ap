@@ -69,6 +69,7 @@ class _NotificationsTabState extends State<NotificationsTab> {
         'suggestion' => Icons.lightbulb_rounded,
         'gift' => Icons.card_giftcard_rounded,
         'withdraw' => Icons.account_balance_wallet_rounded,
+        'topup' => Icons.add_card_rounded,
         'wallet' => Icons.toll_rounded,
         'live' => Icons.live_tv_rounded,
         'follow' => Icons.person_add_rounded,
@@ -97,6 +98,10 @@ class _NotificationsTabState extends State<NotificationsTab> {
 
   void _open(AppNotification n) {
     _markOne(n);
+    if (n.type == 'topup') {
+      Navigator.push(context, MaterialPageRoute(builder: (_) => const FinanceScreen()));
+      return;
+    }
     if (n.type == 'gift' || n.type == 'wallet' || n.type == 'withdraw') {
       final owner = context.read<SessionProvider>().profile?.isOwner ?? false;
       Navigator.push(

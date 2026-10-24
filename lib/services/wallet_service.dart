@@ -79,6 +79,22 @@ class WalletService {
     return (r['status'] ?? 'pending') as String;
   }
 
+  // ---- الشحن اليدوي بكل المحافظ ----
+  static Future<List<Map<String, dynamic>>> topupMethods() async =>
+      [for (final e in (await supa.rpc('topup_methods')) as List) (e as Map).cast<String, dynamic>()];
+
+  static Future<void> manualTopup({
+    required String package,
+    required String method,
+    required String sender,
+    required String reference,
+  }) =>
+      supa.rpc('manual_topup_submit',
+          params: {'p_package': package, 'p_method': method, 'p_sender': sender, 'p_reference': reference});
+
+  static Future<List<Map<String, dynamic>>> manualMine() async =>
+      [for (final e in (await supa.rpc('manual_topup_mine')) as List) (e as Map).cast<String, dynamic>()];
+
   static Future<List<Map<String, dynamic>>> history() async =>
       [for (final e in (await supa.rpc('wallet_history', params: {'p_limit': 100})) as List) (e as Map).cast<String, dynamic>()];
 

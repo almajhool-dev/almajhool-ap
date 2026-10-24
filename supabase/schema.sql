@@ -9048,5 +9048,183 @@ update storage.buckets set allowed_mime_types = array(
   where id = 'posts' and allowed_mime_types is not null
     and not (allowed_mime_types @> array['video/quicktime','video/webm']);
 
+-- =====================================================================
+--  الإصدار 68: الشحن اليدوي بكل المحافظ (بدون بوابة دفع ولا اشتراك ولا عمولة)
+--  المستخدم يحوّل لرقم المالك بأي محفظة (زين كاش/آسيا حوالة/كي كارد/FIB/فاست باي)
+--  ويكتب رقم عملية التحويل، والمالك يأكد الاستلام فتنضاف العملات. كلشي محمي بالخادم.
+-- =====================================================================
+
+-- أرقام استلام المالك لكل محفظة (تظهر للمستخدم حتى يحوّل لها — مو سرية)
+create table if not exists public.wallet_methods (
+  id text primary key,
+  name text not null,
+  emoji text not null default '💳',
+  destination text not null default '',
+  holder text not null default '',
+  note text not null default '',
+  enabled boolean not null default false,
+  sort int not null default 0
+);
+alter table public.wallet_methods enable row level security;
+revoke all on public.wallet_methods from anon;
+grant select on public.wallet_methods to authenticated;
+drop policy if exists wallet_methods_read on public.wallet_methods;
+create policy wallet_methods_read on public.wallet_methods for select to authenticated using (enabled);
+insert into public.wallet_methods(id, name, emoji, sort) values
+  ('zaincash', 'زين كاش', '🟣', 1),
+  ('asiahawala', 'آسيا حوالة', '🔵', 2),
+  ('qicard', 'كي كارد / سوبر كي', '🟡', 3),
+  ('fib', 'بنك العراق الأول FIB', '🟢', 4),
+  ('fastpay', 'فاست باي', '🟠', 5)
+on conflict (id) do nothing;
+
+-- طلبات الشحن اليدوي
+create table if not exists public.manual_topups (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  package_id text not null references public.topup_packages(id),
+  coins int not null,
+  amount_iqd int not null,
+  method text not null,
+  sender text not null default '',
+  reference text not null,
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
+  note text not null default '',
+  created_at timestamptz not null default now(),
+  processed_at timestamptz
+);
+create unique index if not exists manual_topups_ref_idx on public.manual_topups(method, lower(reference));
+create index if not exists manual_topups_user_idx on public.manual_topups(user_id, created_at desc);
+create index if not exists manual_topups_status_idx on public.manual_topups(status, created_at desc);
+alter table public.manual_topups enable row level security;
+revoke all on public.manual_topups from anon, authenticated;
+
+-- المحافظ المتاحة للشحن (للمستخدم)
+create or replace function public.topup_methods() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object(
+      'id', id, 'name', name, 'emoji', emoji, 'destination', destination, 'holder', holder, 'note', note)
+      order by sort), '[]'::jsonb)
+  from wallet_methods where enabled and auth.uid() is not null;
+$$;
+grant execute on function public.topup_methods() to authenticated;
+
+-- المستخدم يرسل طلب شحن يدوي (بعد ما يحوّل الفلوس)
+create or replace function public.manual_topup_submit(p_package text, p_method text, p_sender text, p_reference text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := auth.uid(); pk topup_packages; m wallet_methods; ref text; sndr text; rid uuid; nm text;
+begin
+  if uid is null then raise exception 'not_authenticated'; end if;
+  if is_banned() then raise exception 'حسابك محظور'; end if;
+  perform _rate('manual_topup', 8, 3600);
+  select * into pk from topup_packages where id = p_package and active;
+  if pk.id is null then raise exception 'باقة غير موجودة'; end if;
+  select * into m from wallet_methods where id = p_method and enabled;
+  if m.id is null then raise exception 'طريقة الدفع غير متاحة'; end if;
+  ref := btrim(coalesce(p_reference, ''));
+  if length(ref) < 4 then raise exception 'اكتب رقم عملية التحويل بشكل صحيح'; end if;
+  sndr := regexp_replace(coalesce(p_sender, ''), '[^0-9]', '', 'g');
+  if (select count(*) from manual_topups where user_id = uid and status = 'pending') >= 3 then
+    raise exception 'عندك طلبات شحن قيد المراجعة — انتظرها تخلص';
+  end if;
+  begin
+    insert into manual_topups(user_id, package_id, coins, amount_iqd, method, sender, reference)
+      values (uid, pk.id, pk.coins, pk.price_iqd, m.id, left(sndr, 15), left(ref, 40)) returning id into rid;
+  exception when unique_violation then
+    raise exception 'رقم العملية هذا مستخدم من قبل — تأكد منه';
+  end;
+  select display_name into nm from profiles where id = uid;
+  if _owner_id() is not null then
+    insert into notifications(user_id, type, title, body, data)
+      values (_owner_id(), 'topup', '🪙 طلب شحن جديد',
+              coalesce(nm, '') || ' — ' || pk.coins || ' عملة (' || pk.price_iqd || ' د.ع) عبر ' || m.name,
+              jsonb_build_object('manual_id', rid));
+  end if;
+  return jsonb_build_object('ok', true, 'id', rid);
+end $$;
+grant execute on function public.manual_topup_submit(text, text, text, text) to authenticated;
+
+-- طلبات الشحن مالتي (للمستخدم)
+create or replace function public.manual_topup_mine() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object(
+      'id', id, 'coins', coins, 'amount', amount_iqd, 'method', method, 'status', status,
+      'note', note, 'reference', reference, 'created_at', created_at) order by created_at desc), '[]'::jsonb)
+  from manual_topups where user_id = auth.uid();
+$$;
+grant execute on function public.manual_topup_mine() to authenticated;
+
+-- للمالك: كل المحافظ (حتى المطفية) للإعداد
+create or replace function public.finance_methods() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  return (select coalesce(jsonb_agg(jsonb_build_object(
+      'id', id, 'name', name, 'emoji', emoji, 'destination', destination,
+      'holder', holder, 'note', note, 'enabled', enabled) order by sort), '[]'::jsonb)
+    from wallet_methods);
+end $$;
+grant execute on function public.finance_methods() to authenticated;
+
+-- للمالك: تعديل رقم استلام محفظة وتفعيلها
+create or replace function public.finance_set_method(p_id text, p_destination text default null,
+  p_holder text default null, p_note text default null, p_enabled boolean default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if not exists(select 1 from wallet_methods where id = p_id) then raise exception 'محفظة غير معروفة'; end if;
+  update wallet_methods set
+    destination = case when p_destination is null then destination else btrim(p_destination) end,
+    holder = case when p_holder is null then holder else left(btrim(p_holder), 60) end,
+    note = case when p_note is null then note else left(btrim(p_note), 120) end,
+    enabled = coalesce(p_enabled, enabled)
+  where id = p_id;
+  return finance_methods();
+end $$;
+grant execute on function public.finance_set_method(text, text, text, text, boolean) to authenticated;
+
+-- للمالك: قائمة طلبات الشحن اليدوي
+create or replace function public.finance_manual_list(p_status text default 'pending') returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  return (select coalesce(jsonb_agg(jsonb_build_object(
+      'id', t.id, 'coins', t.coins, 'amount', t.amount_iqd, 'method', t.method, 'sender', t.sender,
+      'reference', t.reference, 'status', t.status, 'note', t.note, 'created_at', t.created_at,
+      'user', jsonb_build_object('id', p.id, 'display_name', p.display_name, 'username', p.username, 'avatar_url', p.avatar_url))
+      order by t.created_at desc), '[]'::jsonb)
+    from manual_topups t join profiles p on p.id = t.user_id
+   where p_status is null or t.status = p_status);
+end $$;
+grant execute on function public.finance_manual_list(text) to authenticated;
+
+-- للمالك: يأكد الشحن (تنضاف العملات) أو يرفض
+create or replace function public.finance_manual_process(p_id uuid, p_approve boolean, p_note text default '') returns void
+language plpgsql security definer set search_path = public as $$
+declare t manual_topups;
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  select * into t from manual_topups where id = p_id for update;
+  if t.id is null or t.status <> 'pending' then raise exception 'الطلب مو قيد المراجعة'; end if;
+  update manual_topups set status = case when p_approve then 'approved' else 'rejected' end,
+    note = left(coalesce(p_note, ''), 300), processed_at = now() where id = p_id;
+  if p_approve then
+    insert into wallets(user_id, coins) values (t.user_id, 0) on conflict do nothing;
+    update wallets set coins = coins + t.coins, updated_at = now() where user_id = t.user_id;
+    insert into ledger(user_id, account, delta, kind, ref, note) values
+      (t.user_id, 'coins', t.coins, 'topup', t.id, 'شحن يدوي ' || t.coins || ' عملة'),
+      (t.user_id, 'cash_in', t.amount_iqd, 'topup', t.id, t.method || ' ' || t.reference);
+    insert into notifications(user_id, type, title, body, data)
+      values (t.user_id, 'wallet', '🪙 تم شحن ' || t.coins || ' عملة', 'تمت الموافقة على طلب الشحن مالك',
+              jsonb_build_object('manual_id', t.id));
+  else
+    insert into notifications(user_id, type, title, body, data)
+      values (t.user_id, 'wallet', 'طلب الشحن انرفض',
+              coalesce(nullif(left(p_note, 200), ''), 'تأكد من رقم العملية والمبلغ وحاول مرة ثانية'),
+              jsonb_build_object('manual_id', t.id));
+  end if;
+end $$;
+grant execute on function public.finance_manual_process(uuid, boolean, text) to authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

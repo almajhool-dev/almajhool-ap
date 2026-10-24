@@ -51,6 +51,8 @@ class _WalletScreenState extends State<WalletScreen> {
   List<TopupPackage>? _pk;
   List<Map<String, dynamic>>? _hist;
   List<Map<String, dynamic>>? _wd;
+  List<Map<String, dynamic>> _methods = const [];
+  List<Map<String, dynamic>> _manual = const [];
 
   @override
   void initState() {
@@ -58,7 +60,19 @@ class _WalletScreenState extends State<WalletScreen> {
     _load();
   }
 
+  Future<void> _loadManual() async {
+    try {
+      final r = await Future.wait([WalletService.topupMethods(), WalletService.manualMine()]);
+      if (!mounted) return;
+      setState(() {
+        _methods = r[0];
+        _manual = r[1];
+      });
+    } catch (_) {}
+  }
+
   Future<void> _load() async {
+    _loadManual();
     try {
       final r = await Future.wait([
         WalletService.me(),
@@ -82,7 +96,11 @@ class _WalletScreenState extends State<WalletScreen> {
 
   Future<void> _buy(TopupPackage p) async {
     if (_w?['topup_ready'] != true) {
-      showSnack(context, 'الشحن يتفعّل قريبًا إن شاء الله');
+      if (_methods.isNotEmpty) {
+        await _manualBuy(p);
+      } else {
+        showSnack(context, 'الشحن يتفعّل قريبًا إن شاء الله');
+      }
       return;
     }
     try {
@@ -102,6 +120,113 @@ class _WalletScreenState extends State<WalletScreen> {
       _load();
     } catch (e) {
       if (mounted) showSnack(context, friendlyError(e), error: true);
+    }
+  }
+
+  /// الشحن بالتحويل: يختار المحفظة، يحوّل لرقم المالك، ويكتب رقم العملية
+  Future<void> _manualBuy(TopupPackage p) async {
+    var m = _methods.first;
+    final sender = TextEditingController();
+    final ref = TextEditingController();
+    var busy = false;
+    final done = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (c) => StatefulBuilder(
+        builder: (c, set) => Padding(
+          padding: EdgeInsets.fromLTRB(16, 0, 16, MediaQuery.viewInsetsOf(c).bottom + 16),
+          child: SingleChildScrollView(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+              Row(children: [
+                const CoinIcon(size: 28),
+                const SizedBox(width: 8),
+                Text('${fmtNum(p.coins)} عملة', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                const Spacer(),
+                Text(fmtIqd(p.price), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+              ]),
+              const SizedBox(height: 12),
+              const Text('١. اختار المحفظة اللي تحوّل منها:', style: TextStyle(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 6),
+              Wrap(spacing: 6, runSpacing: 6, children: [
+                for (final x in _methods)
+                  ChoiceChip(
+                    label: Text('${x['emoji'] ?? ''} ${x['name']}'),
+                    selected: x['id'] == m['id'],
+                    onSelected: (_) => set(() => m = x),
+                  ),
+              ]),
+              const SizedBox(height: 12),
+              Text('٢. حوّل ${fmtIqd(p.price)} بالضبط إلى:', style: const TextStyle(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 6),
+              Card(
+                child: ListTile(
+                  title: SelectableText('${m['destination']}',
+                      textDirection: TextDirection.ltr,
+                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, letterSpacing: 1)),
+                  subtitle: Text([
+                    '${m['name']}',
+                    if ('${m['holder'] ?? ''}'.isNotEmpty) 'باسم: ${m['holder']}',
+                    if ('${m['note'] ?? ''}'.isNotEmpty) '${m['note']}',
+                  ].join('\n')),
+                  trailing: IconButton(
+                    tooltip: 'نسخ',
+                    icon: const Icon(Icons.copy_rounded),
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: '${m['destination']}'));
+                      showSnack(c, 'انسخ الرقم ✅');
+                    },
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              const Text('٣. بعد التحويل اكتب:', style: TextStyle(fontWeight: FontWeight.w800)),
+              TextField(
+                controller: sender,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(labelText: 'رقمك اللي حوّلت منه', hintText: '07801234567'),
+              ),
+              TextField(
+                controller: ref,
+                decoration: const InputDecoration(
+                    labelText: 'رقم عملية التحويل', helperText: 'يطلعلك برسالة أو إشعار المحفظة بعد التحويل'),
+              ),
+              const SizedBox(height: 14),
+              FilledButton.icon(
+                onPressed: busy
+                    ? null
+                    : () async {
+                        if (ref.text.trim().length < 4) {
+                          showSnack(c, 'اكتب رقم عملية التحويل', error: true);
+                          return;
+                        }
+                        set(() => busy = true);
+                        try {
+                          await WalletService.manualTopup(
+                              package: p.id, method: '${m['id']}', sender: sender.text.trim(), reference: ref.text.trim());
+                          if (c.mounted) Navigator.pop(c, true);
+                        } catch (e) {
+                          set(() => busy = false);
+                          if (c.mounted) showSnack(c, friendlyError(e), error: true);
+                        }
+                      },
+                icon: busy
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.send_rounded),
+                label: const Text('حوّلت — أرسل الطلب'),
+              ),
+              const SizedBox(height: 8),
+              const Text('🔒 العملات تنضاف بعد ما يتأكد الاستلام. رقم العملية ينستخدم مرة وحدة بس.',
+                  style: TextStyle(fontSize: 12), textAlign: TextAlign.center),
+            ]),
+          ),
+        ),
+      ),
+    );
+    if (done == true && mounted) {
+      HapticFeedback.mediumImpact();
+      showSnack(context, 'وصل طلبك ✅ راح يوصلك إشعار أول ما تنضاف العملات');
+      _loadManual();
     }
   }
 
@@ -192,7 +317,18 @@ class _WalletScreenState extends State<WalletScreen> {
       onRefresh: _load,
       child: ListView(children: [
         _balanceCard(),
-        if (!ready)
+        if (!ready && _methods.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Card(
+              child: ListTile(
+                leading: const Icon(Icons.account_balance_wallet_rounded, color: Colors.green),
+                title: const Text('اشحن بأي محفظة 💳'),
+                subtitle: Text(_methods.map((m) => '${m['emoji'] ?? ''} ${m['name']}').join(' · ')),
+              ),
+            ),
+          ),
+        if (!ready && _methods.isEmpty)
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 16),
             child: Card(
@@ -235,10 +371,35 @@ class _WalletScreenState extends State<WalletScreen> {
             ],
           ),
         ),
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 0, 16, 24),
+        if (_manual.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 4, 16, 0),
+            child: Text('طلبات الشحن مالتك', style: TextStyle(fontWeight: FontWeight.w800)),
+          ),
+          for (final x in _manual.take(10))
+            ListTile(
+              dense: true,
+              leading: Icon(
+                x['status'] == 'approved'
+                    ? Icons.check_circle_rounded
+                    : x['status'] == 'rejected'
+                        ? Icons.cancel_rounded
+                        : Icons.hourglass_top_rounded,
+                color: x['status'] == 'approved'
+                    ? Colors.green
+                    : x['status'] == 'rejected'
+                        ? Colors.red
+                        : Colors.orange,
+              ),
+              title: Text('${fmtNum((x['coins'] as num?) ?? 0)} عملة · ${fmtIqd((x['amount'] as num?) ?? 0)}'),
+              subtitle: Text('${x['status'] == 'approved' ? 'انضافت ✅' : x['status'] == 'rejected' ? 'مرفوض' : 'قيد التأكيد'}'
+                  ' · رقم العملية ${x['reference']}${'${x['note'] ?? ''}'.isNotEmpty ? '\n${x['note']}' : ''}'),
+            ),
+        ],
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
           child: Text(
-            '• الدفع عن طريق زين كاش الرسمي، والعملات تنضاف بس بعد ما زين كاش يأكد الدفع.\n'
+            '${ready ? '• الدفع عن طريق زين كاش الرسمي، والعملات تنضاف بس بعد ما زين كاش يأكد الدفع.' : '• تحوّل المبلغ لرقم التطبيق بأي محفظة، وتكتب رقم العملية، والعملات تنضاف بعد التأكد من الاستلام.'}\n'
             '• العملات تستخدمها لإرسال الهدايا بالبث المباشر.\n'
             '• قيمة الهدية تنقسم: 50% لصانع المحتوى و50% للتطبيق.',
             style: TextStyle(fontSize: 12.5, height: 1.7),
@@ -687,6 +848,8 @@ class _FinanceScreenState extends State<FinanceScreen> {
   Map<String, dynamic>? _s;
   List<Map<String, dynamic>>? _wd;
   String _wdFilter = 'pending';
+  List<Map<String, dynamic>> _mt = const [];
+  List<Map<String, dynamic>> _methods = const [];
 
   @override
   void initState() {
@@ -694,7 +857,93 @@ class _FinanceScreenState extends State<FinanceScreen> {
     _load();
   }
 
+  Future<void> _loadManual() async {
+    try {
+      final r = await Future.wait([supa.rpc('finance_manual_list', params: {'p_status': 'pending'}), supa.rpc('finance_methods')]);
+      if (!mounted) return;
+      setState(() {
+        _mt = [for (final e in r[0] as List) (e as Map).cast<String, dynamic>()];
+        _methods = [for (final e in r[1] as List) (e as Map).cast<String, dynamic>()];
+      });
+    } catch (_) {}
+  }
+
+  /// أرقام استلام المحافظ: المالك يكتب رقمه بكل محفظة ويفعّلها
+  Future<void> _editMethods() async {
+    final ctl = {for (final m in _methods) '${m['id']}': TextEditingController(text: '${m['destination'] ?? ''}')};
+    final holder = {for (final m in _methods) '${m['id']}': TextEditingController(text: '${m['holder'] ?? ''}')};
+    final on = {for (final m in _methods) '${m['id']}': m['enabled'] == true};
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => StatefulBuilder(
+        builder: (c, set) => AlertDialog(
+          title: const Text('محافظ الاستلام 💳'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              const Text('اكتب رقمك بكل محفظة عندك وفعّلها. المستخدمين يشوفون الرقم ويحوّلون عليه.',
+                  style: TextStyle(fontSize: 12)),
+              for (final m in _methods) ...[
+                const Divider(),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('${m['emoji'] ?? ''} ${m['name']}', style: const TextStyle(fontWeight: FontWeight.w800)),
+                  value: on['${m['id']}']!,
+                  onChanged: (v) => set(() => on['${m['id']}'] = v),
+                ),
+                TextField(
+                  controller: ctl['${m['id']}'],
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(labelText: 'رقم/حساب الاستلام', isDense: true),
+                ),
+                TextField(
+                  controller: holder['${m['id']}'],
+                  decoration: const InputDecoration(labelText: 'الاسم اللي يطلع للمحوّل (اختياري)', isDense: true),
+                ),
+              ],
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('إلغاء')),
+            FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('حفظ')),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    try {
+      for (final m in _methods) {
+        final id = '${m['id']}';
+        final dest = ctl[id]!.text.trim();
+        if (on[id]! && dest.isEmpty) throw Exception('اكتب رقم ${m['name']} قبل لا تفعّلها');
+        await supa.rpc('finance_set_method',
+            params: {'p_id': id, 'p_destination': dest, 'p_holder': holder[id]!.text.trim(), 'p_enabled': on[id]});
+      }
+      if (mounted) showSnack(context, 'تم الحفظ ✅');
+      _loadManual();
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    }
+  }
+
+  Future<void> _processManual(Map<String, dynamic> x, bool ok) async {
+    String note = '';
+    if (!ok) {
+      final r = await promptText(context, 'سبب الرفض', hint: 'مثلاً: ما وصلني التحويل', ok: 'رفض');
+      if (r == null) return;
+      note = r;
+    }
+    try {
+      await supa.rpc('finance_manual_process', params: {'p_id': x['id'], 'p_approve': ok, 'p_note': note});
+      if (mounted) showSnack(context, ok ? 'انضافت العملات ✅' : 'انرفض الطلب');
+      _loadManual();
+      _load();
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    }
+  }
+
   Future<void> _load() async {
+    _loadManual();
     try {
       final s = ((await supa.rpc('finance_summary')) as Map).cast<String, dynamic>();
       final w = [
@@ -872,6 +1121,61 @@ class _FinanceScreenState extends State<FinanceScreen> {
                     onTap: _zaincash,
                   ),
                 ),
+                Card(
+                  color: (_methods.any((m) => m['enabled'] == true) ? Colors.green : Colors.orange).withValues(alpha: 0.12),
+                  child: ListTile(
+                    leading: const Icon(Icons.account_balance_wallet_rounded),
+                    title: Text(_methods.any((m) => m['enabled'] == true)
+                        ? 'الشحن بالتحويل مفعّل: ${_methods.where((m) => m['enabled'] == true).map((m) => m['name']).join('، ')}'
+                        : 'الشحن بالتحويل (كل المحافظ) غير مفعّل'),
+                    subtitle: const Text('اضغط حتى تكتب أرقامك وتفعّل المحافظ'),
+                    trailing: const Icon(Icons.settings_rounded),
+                    onTap: _methods.isEmpty ? null : _editMethods,
+                  ),
+                ),
+                if (_mt.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text('طلبات شحن تنتظر تأكيدك (${_mt.length})',
+                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                  const Text('افتح تطبيق المحفظة وتأكد إن المبلغ وصلك برقم العملية قبل لا توافق.',
+                      style: TextStyle(fontSize: 12)),
+                  for (final x in _mt)
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Row(children: [
+                            Avatar(
+                                url: (x['user'] as Map?)?['avatar_url'] as String?,
+                                name: '${(x['user'] as Map?)?['display_name'] ?? ''}',
+                                size: 34),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text('${(x['user'] as Map?)?['display_name'] ?? ''} @${(x['user'] as Map?)?['username'] ?? ''}',
+                                  style: const TextStyle(fontWeight: FontWeight.w700)),
+                            ),
+                            Text(fmtIqd((x['amount'] as num?) ?? 0), style: const TextStyle(fontWeight: FontWeight.w900)),
+                          ]),
+                          const SizedBox(height: 6),
+                          Text('${_methods.firstWhere((m) => m['id'] == x['method'], orElse: () => {'name': x['method']})['name']}'
+                              ' · ${fmtNum((x['coins'] as num?) ?? 0)} عملة'),
+                          SelectableText('رقم العملية: ${x['reference']}', textDirection: TextDirection.ltr),
+                          if ('${x['sender'] ?? ''}'.isNotEmpty)
+                            SelectableText('من الرقم: ${x['sender']}', textDirection: TextDirection.ltr),
+                          const SizedBox(height: 6),
+                          Row(children: [
+                            FilledButton.icon(
+                                onPressed: () => _processManual(x, true),
+                                icon: const Icon(Icons.check_rounded),
+                                label: const Text('وصلني — أضف العملات')),
+                            const SizedBox(width: 8),
+                            TextButton(onPressed: () => _processManual(x, false), child: const Text('رفض')),
+                          ]),
+                        ]),
+                      ),
+                    ),
+                  const SizedBox(height: 6),
+                ],
                 _card('حصتك (50% من الهدايا)', fmtIqd(_i('platform_iqd')), Colors.green, Icons.savings_rounded),
                 _card('إجمالي الشحن المدفوع (${fmtNum(_i('topups_count'))} عملية)', fmtIqd(_i('topups_iqd')), Colors.blue,
                     Icons.payments_rounded),
