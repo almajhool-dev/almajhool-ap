@@ -9677,5 +9677,16 @@ revoke execute on function public._news_words(text) from public, anon, authentic
 revoke execute on function public._autopost_part(text, text) from public, anon, authenticated;
 revoke execute on function public._autopost_clean(text) from public, anon, authenticated;
 
+-- =====================================================================
+--  الإصدار 73: سد ثغرة إرهاق الخادم — دالة تنظيف النص _clean_text چانت مفتوحة للزوار
+--  (نص 20 ألف حرف ياخذ ~1 ثانية معالج بطلب واحد بالمفتاح العام، وتكبر مع طول النص).
+--  تنستخدم بس داخل triggers تنظيف المنشورات والرسائل (المستخدم المسجّل) وداخل دوال المالك،
+--  فنسدها عن الزوار فقط ونخليها للمستخدم المسجّل حتى ما يتأثر النشر والمراسلة.
+-- =====================================================================
+revoke execute on function public._clean_text(text) from public, anon;
+revoke execute on function public._clean_name(text) from public, anon;
+grant execute on function public._clean_text(text) to authenticated, service_role;
+grant execute on function public._clean_name(text) to authenticated, service_role;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
