@@ -10443,5 +10443,107 @@ do $$ begin
   insert into private_settings(key, value) values ('aip_fast1', '1');
 end $$;
 
+-- =====================================================================
+--  الإصدار 80: إيقاف الحلقة اللي ما تنتهي بين ذكاء حساب المالك والحسابات الذكية.
+--  چان ذكاء المالك يعلّق على منشور الحساب الذكي، والحساب الذكي يرد، وذكاء المالك يرد عليه... بلا نهاية.
+--  هسه:
+--   1) ذكاء المالك ما يعلّق على منشورات الحسابات الذكية، وما يرد على تعليقاتها.
+--   2) الحساب الذكي يرد بس على تعليق كتبه إنسان بنفسه من التطبيق (مو تعليق ينكتب من الخادم).
+--   3) مكطوعة ثابتة: الحساب الذكي يرد مرتين كحد أقصى بكل نقاش، وذكاء المالك 3 مرات، و6 ردود بالساعة لنفس الشخص.
+--   4) الحسابات الذكية ما توصلها إشعارات (ماكو أحد يقراها، وتثقّل القاعدة).
+--   5) تنظيف مرة وحدة: نشيل ذيل الحلقة القديمة ونخلي أول تعليق ورد بس بكل نقاش.
+-- =====================================================================
+create or replace function public._ai_on_post() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.deleted or new.author_id = _owner_id() or _is_ai_profile(new.author_id) then return new; end if;
+  if not coalesce((select enabled_comments from ai_config where id = 1), false) then return new; end if;
+  insert into ai_jobs(kind, ref_id) values ('post', new.id);
+  return new;
+exception when others then return new;
+end $$;
+
+create or replace function public._ai_on_comment() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare own uuid := _owner_id(); root uuid;
+begin
+  if new.author_id = own or _is_ai_profile(new.author_id)
+     or not coalesce((select reply_comments from ai_config where id = 1), false) then return null; end if;
+  -- مكطوعة: بكل نقاش (التعليق وردوده) ذكاء المالك يرد 3 مرات كحد أقصى
+  root := coalesce(new.parent_id, new.id);
+  if (select count(*) from post_comments where author_id = own and (id = root or parent_id = root)) >= 3 then return null; end if;
+  if exists(select 1 from posts where id = new.post_id and author_id = own)
+     or (new.parent_id is not null and exists(select 1 from post_comments where id = new.parent_id and author_id = own)) then
+    insert into ai_jobs(kind, ref_id) values ('comment', new.id);
+  end if;
+  return null;
+exception when others then return null;
+end $$;
+
+create or replace function public._ai_persona_on_comment() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare pid uuid; root uuid;
+begin
+  if _is_ai_profile(new.author_id) then return null; end if;
+  -- بس تعليق كتبه إنسان بنفسه من التطبيق؛ أي تعليق ينكتب من الخادم (ذكاء المالك أو غيره) ما ينرد عليه
+  if auth.uid() is null or auth.uid() <> new.author_id then return null; end if;
+  select a.id into pid from posts po join ai_personas a on a.id = po.author_id where po.id = new.post_id;
+  if pid is null and new.parent_id is not null then
+    select a.id into pid from post_comments c join ai_personas a on a.id = c.author_id where c.id = new.parent_id;
+  end if;
+  if pid is null then return null; end if;
+  -- مكطوعة: الحساب الذكي يرد مرتين كحد أقصى بنفس النقاش
+  root := coalesce(new.parent_id, new.id);
+  if (select count(*) from post_comments where author_id = pid and parent_id = root) >= 2 then return null; end if;
+  -- ونفس الشخص: 6 ردود بالساعة كحد أقصى من نفس الحساب الذكي
+  if (select count(*) from ai_persona_jobs j join post_comments c on c.id = j.comment_id
+       where j.persona_id = pid and c.author_id = new.author_id and j.created_at > now() - interval '1 hour') >= 6 then
+    return null;
+  end if;
+  if exists(select 1 from ai_personas where id = pid and enabled) then
+    insert into ai_persona_jobs(persona_id, comment_id) values (pid, new.id) on conflict do nothing;
+  end if;
+  return null;
+exception when others then return null;
+end $$;
+
+-- الحسابات الذكية ما توصلها إشعارات
+create or replace function public._no_notify_ai() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if _is_ai_profile(new.user_id) then return null; end if;
+  return new;
+end $$;
+drop trigger if exists aa_no_notify_ai on public.notifications;
+create trigger aa_no_notify_ai before insert on public.notifications
+  for each row execute function public._no_notify_ai();
+
+-- تنظيف الحلقة القديمة (مرة وحدة بس)
+do $$
+declare own uuid := _owner_id();
+begin
+  if exists(select 1 from private_settings where key = 'ai_loop_fix1') then return; end if;
+  -- وقف الطوابير المعلّقة من الحلقة
+  update ai_persona_jobs set status = 'skipped' where status in ('pending', 'working')
+    and comment_id in (select id from post_comments where author_id = own or _is_ai_profile(author_id));
+  delete from ai_jobs where status = 'pending' and (
+       (kind = 'post' and ref_id in (select id from posts where _is_ai_profile(author_id)))
+    or (kind = 'comment' and ref_id in (select c.id from post_comments c where _is_ai_profile(c.author_id)
+                                         or c.post_id in (select id from posts where _is_ai_profile(author_id)))));
+  -- ذيل الحلقة: بمنشورات الحسابات الذكية، بكل نقاش نخلي أول تعليقين (من المالك أو الحسابات الذكية) ونشيل الباقي
+  delete from post_comments where id in (
+    select x.id from (
+      select c.id, row_number() over (partition by coalesce(c.parent_id, c.id) order by c.created_at, c.id) rn
+        from post_comments c join posts p on p.id = c.post_id
+       where _is_ai_profile(p.author_id) and (c.author_id = own or _is_ai_profile(c.author_id))
+    ) x where x.rn > 2);
+  -- إشعارات الحلقة اللي وصلت للمالك من منشورات الحسابات الذكية
+  delete from notifications where user_id = own and type in ('comment_reply', 'post_comment', 'comment_like')
+    and (data->>'post_id') in (select id::text from posts where _is_ai_profile(author_id));
+  -- إشعارات قديمة للحسابات الذكية نفسها
+  delete from notifications where _is_ai_profile(user_id);
+  insert into private_settings(key, value) values ('ai_loop_fix1', '1');
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
