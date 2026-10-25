@@ -9764,5 +9764,65 @@ begin
 end $$;
 revoke execute on function public._gh_verify(text) from public, anon, authenticated;
 
+
+-- =====================================================================
+--  الإصدار 75: إصلاح عاجل — إشعارات Google وقفت بعد الإصدار 74
+--  رموز GitHub Actions الجديدة (ghs_APPID_JWT) طولها ~520 حرف وبيها نقاط وشَرطات،
+--  وفحص الشكل بالإصدار 74 (أقصى 255 وحروف/أرقام/_ بس) چان يرفض الرمز الصحيح بدون اتصال،
+--  فتجديد مفتاح الإشعارات والتوقيع وعامل الذكاء كلهم فشلوا ("GitHub verification FAILED").
+--  الحل: نقبل الطول لحد 4096 والنقطة والشَرطة. باقي التحقق (المستودع + صلاحية الكتابة + الحد) نفسه.
+-- =====================================================================
+create or replace function public._gh_verify(p_token text) returns boolean
+language plpgsql security definer set search_path = public, extensions as $$
+declare r extensions.http_response; j jsonb; hdr extensions.http_header[]; v_h text;
+  base text := 'https://api.github.com/repos/almajhool-dev/almajhool-ap';
+begin
+  if p_token is null or char_length(p_token) < 20 or char_length(p_token) > 4096
+     or p_token !~ '^[A-Za-z0-9_.-]+$' then
+    return false;
+  end if;
+  v_h := encode(digest(p_token, 'sha256'), 'hex');
+  -- رمز اتحقق منه قبل شوية: فوري بدون اتصال
+  if exists(select 1 from gh_verify_cache c where c.h = v_h and c.ok_until > now()) then
+    return true;
+  end if;
+  -- حد للمحاولات الفاشلة حتى ما ينستغل الخادم لإغراق GitHub
+  if (select count(*) from gh_verify_fail where at > now() - interval '1 minute') >= 20 then
+    return false;
+  end if;
+  begin
+    hdr := array[extensions.http_header('Authorization', 'Bearer ' || p_token),
+                 extensions.http_header('User-Agent', 'almajhool-db'),
+                 extensions.http_header('Accept', 'application/vnd.github+json')];
+    -- 1) الرمز تابع لهذا المستودع فقط
+    select * into r from extensions.http(('GET', 'https://api.github.com/installation/repositories', hdr, null, null)::extensions.http_request);
+    if r.status = 200 then
+      j := r.content::jsonb;
+      if (j->>'total_count')::int = 1 and j->'repositories'->0->>'full_name' = 'almajhool-dev/almajhool-ap' then
+        -- 2) وعنده صلاحية كتابة: نحدّث فرع ci-verify الثابت لنفس مكانه (عملية كتابة بدون أي أثر)
+        select * into r from extensions.http(('PATCH', base || '/git/refs/heads/ci-verify', hdr, 'application/json',
+            jsonb_build_object('sha', 'a14b8e28ba74a884f1113e0ef2c8d4c8350f381b', 'force', true)::text)::extensions.http_request);
+        if r.status = 200 then
+          begin
+            insert into gh_verify_cache(h, ok_until) values (v_h, now() + interval '30 minutes')
+              on conflict on constraint gh_verify_cache_pkey do update set ok_until = excluded.ok_until;
+            delete from gh_verify_cache where ok_until < now();
+          exception when others then null;
+          end;
+          return true;
+        end if;
+      end if;
+    end if;
+  exception when others then null;
+  end;
+  begin
+    insert into gh_verify_fail default values;
+    delete from gh_verify_fail where at < now() - interval '10 minutes';
+  exception when others then null;
+  end;
+  return false;
+end $$;
+revoke execute on function public._gh_verify(text) from public, anon, authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
