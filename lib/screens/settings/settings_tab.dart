@@ -19,6 +19,7 @@ import '../../services/fx_settings.dart';
 import 'about_screen.dart';
 import 'themes_screen.dart';
 import '../admin/admin_screen.dart';
+import '../admin/ai_personas_screen.dart';
 import '../../services/couple_service.dart';
 import '../../services/core_services.dart';
 import '../../services/privacy_service.dart';
@@ -240,6 +241,14 @@ class _SettingsTabState extends State<SettingsTab> {
             trailing: const Icon(Icons.chevron_left),
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletScreen())),
           ),
+          if (p?.isOwner ?? false)
+            ListTile(
+              leading: const Icon(Icons.smart_toy_rounded, color: Colors.deepPurple),
+              title: const Text('الحسابات الذكية 🤖'),
+              subtitle: const Text('شخصيات ذكاء اصطناعي بكل التخصصات: نشر وردود وتحكم كامل'),
+              trailing: const Icon(Icons.chevron_left),
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AiPersonasScreen())),
+            ),
           if (p?.isOwner ?? false)
             ListTile(
               leading: const Icon(Icons.account_balance_rounded, color: Colors.green),

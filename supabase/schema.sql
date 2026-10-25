@@ -9824,5 +9824,433 @@ begin
 end $$;
 revoke execute on function public._gh_verify(text) from public, anon, authenticated;
 
+-- =====================================================================
+--  الإصدار 76: الحسابات الذكية 🤖 — شخصيات ذكاء اصطناعي مكشوفة بكل التخصصات.
+--  كل حساب عليه علامة 🤖 ثابتة بالاسم والبايو (ما تنشال)، وصورته روبوت مرسوم مو وجه إنسان.
+--  ينشر بتخصصه بس، ويرد على التعليقات بمنشوراته. ما يستلم هدايا ولا يدخل بالفلوس.
+--  المالك يتحكم بيهم كلهم من التطبيق.
+-- =====================================================================
+alter table public.profiles add column if not exists is_ai boolean not null default false;
+
+create or replace function public._is_ai_profile(p uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select is_ai from profiles where id = p), false);
+$$;
+revoke execute on function public._is_ai_profile(uuid) from public, anon, authenticated;
+
+-- العلامة 🤖 ثابتة: ما ينكدر يشيلها أحد، ولا مستخدم يحوّل حسابه لذكي أو العكس
+-- بدون security definer عمدًا: حتى نعرف هوية اللي دا يعدّل (مستخدم من التطبيق لو دالة الخادم)
+create or replace function public._ai_profile_guard() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if current_user in ('authenticated', 'anon') then
+    if tg_op = 'INSERT' then new.is_ai := false; else new.is_ai := old.is_ai; end if;
+  end if;
+  if new.is_ai then
+    if new.display_name !~ '🤖$' then
+      new.display_name := left(btrim(regexp_replace(new.display_name, '\s*🤖\s*', ' ', 'g')), 47) || ' 🤖';
+    end if;
+    if coalesce(new.bio, '') !~ '^🤖' then
+      new.bio := left('🤖 حساب ذكاء اصطناعي — ' || coalesce(new.bio, ''), 300);
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists aa_ai_profile_guard on public.profiles;
+create trigger aa_ai_profile_guard before insert or update on public.profiles
+  for each row execute function public._ai_profile_guard();
+
+create table if not exists public.ai_personas (
+  id uuid primary key references public.profiles(id) on delete cascade,
+  slug text not null unique,
+  specialty text not null,
+  focus text not null default '',
+  per_day int not null default 2 check (per_day between 0 and 48),
+  enabled boolean not null default true,
+  posts int not null default 0,
+  replies int not null default 0,
+  last_post_at timestamptz,
+  last_error text,
+  created_at timestamptz not null default now()
+);
+alter table public.ai_personas enable row level security;
+revoke all on public.ai_personas from anon, authenticated;
+
+create table if not exists public.ai_persona_jobs (
+  id bigint generated always as identity primary key,
+  persona_id uuid not null references public.ai_personas(id) on delete cascade,
+  comment_id uuid not null references public.post_comments(id) on delete cascade,
+  status text not null default 'pending',
+  created_at timestamptz not null default now()
+);
+create unique index if not exists ai_persona_jobs_comment on public.ai_persona_jobs(comment_id);
+create index if not exists ai_persona_jobs_pending on public.ai_persona_jobs(status, created_at);
+alter table public.ai_persona_jobs enable row level security;
+revoke all on public.ai_persona_jobs from anon, authenticated;
+
+-- إنشاء حساب ذكي (ما ينكدر أحد يدخل عليه: كلمة سره عشوائية ما يعرفها أحد)
+create or replace function public._ai_persona_new(p_slug text, p_name text, p_specialty text, p_focus text,
+  p_per_day int default 2) returns uuid
+language plpgsql security definer set search_path = public, extensions, auth as $$
+declare uid uuid; uname text;
+begin
+  select id into uid from ai_personas where slug = p_slug;
+  if uid is not null then return uid; end if;
+  if coalesce(p_slug, '') !~ '^[a-z0-9_]{2,20}$' then raise exception 'معرّف غير صالح'; end if;
+  uname := 'ai_' || p_slug;
+  if exists(select 1 from profiles where username = uname) then raise exception 'اسم المستخدم محجوز'; end if;
+  uid := gen_random_uuid();
+  insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+                          raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+                          confirmation_token, recovery_token, email_change_token_new, email_change)
+  values ('00000000-0000-0000-0000-000000000000', uid, 'authenticated', 'authenticated',
+          'ai-' || replace(uid::text, '-', '') || '@ai.vyfri.app',
+          crypt(encode(gen_random_bytes(32), 'hex'), gen_salt('bf')), now(),
+          '{"provider":"ai","providers":["ai"]}'::jsonb,
+          jsonb_build_object('username', uname, 'display_name', left(btrim(p_name) || ' | ' || btrim(p_specialty), 47),
+            'avatar_url', 'https://api.dicebear.com/9.x/bottts/png?size=256&seed=' || p_slug),
+          now(), now(), '', '', '', '');
+  update profiles set is_ai = true, is_owner = false, is_admin = false, is_verified = false,
+    bio = 'متخصص بـ' || btrim(p_specialty) || '. أنشر معلومات ونصائح مفيدة، واسألني بالتعليقات.'
+   where id = uid;
+  insert into ai_personas(id, slug, specialty, focus, per_day)
+    values (uid, p_slug, btrim(p_specialty), coalesce(btrim(p_focus), ''), least(greatest(coalesce(p_per_day, 2), 0), 48));
+  return uid;
+end $$;
+revoke execute on function public._ai_persona_new(text, text, text, text, int) from public, anon, authenticated;
+
+-- كتابة ونشر منشور بتخصص الحساب
+create or replace function public._ai_persona_post(p_id uuid, p_topic text default null) returns uuid
+language plpgsql security definer set search_path = public, extensions as $$
+declare p ai_personas; nm text; sys text; usr text; recent text; raw text; post text; pid uuid;
+begin
+  select * into p from ai_personas where id = p_id;
+  if p.id is null then raise exception 'الحساب غير موجود'; end if;
+  select btrim(regexp_replace(display_name, '\s*🤖$', '')) into nm from profiles where id = p_id;
+  select string_agg('- ' || left(regexp_replace(content, '\s+', ' ', 'g'), 140), E'\n') into recent
+    from (select content from posts where author_id = p_id and not deleted order by created_at desc limit 8) t;
+  sys := 'You write posts for "' || nm || '", a clearly labeled AI persona account (🤖) on VYFRI, an Arabic social app used in Iraq. ' ||
+    'Specialty: ' || p.specialty || case when p.focus <> '' then ' (' || p.focus || ')' else '' end || '. ' ||
+    'Write ONE new post in clear, friendly Arabic for Iraqi readers (simple Modern Standard Arabic; a light Iraqi touch is fine). ' ||
+    'STRICT RULES: use only well-established, evergreen general knowledge that you are highly confident is correct; ' ||
+    'if you are not sure about any fact, leave it out and choose a safer topic. ' ||
+    'No politics, no religion or sects, no breaking news, no current prices or recent dates, no medical diagnosis or medicine doses, ' ||
+    'no legal or investment advice. Never claim to be human, never invent personal experiences, and never invent quotes attributed to real people. ' ||
+    'Format: a short catchy first line, then the useful content in short lines, a few fitting emojis, and at most 2 hashtags at the end. ' ||
+    '300 to 900 characters. Plain text only: no markdown, no ** and no # headings. Reply with the post text only.';
+  usr := case when nullif(btrim(p_topic), '') is not null
+              then 'Topic requested by the app owner: ' || left(btrim(p_topic), 300)
+              else 'Write today''s post on a specific, useful topic in your specialty.' end ||
+    case when recent is not null then E'\n\nYour recent posts (do not repeat them or write something too similar):\n' || recent else '' end;
+  raw := _ai_complete(sys, jsonb_build_array(jsonb_build_object('role', 'user', 'text', usr)), 1500);
+  post := _autopost_clean(coalesce(raw, ''));
+  if char_length(post) < 120 then raise exception 'post_too_short'; end if;
+  insert into posts(author_id, content) values (p_id, left(post, 1500)) returning id into pid;
+  update ai_personas set posts = posts + 1, last_post_at = now(), last_error = null where id = p_id;
+  return pid;
+end $$;
+revoke execute on function public._ai_persona_post(uuid, text) from public, anon, authenticated;
+
+-- كل 5 دقايق: حساب واحد ينشر (بحدود حصة الذكاء الاصطناعي)
+create or replace function public._ai_personas_tick() returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare p ai_personas; gap int;
+begin
+  if coalesce((select value from private_settings where key = 'aip_enabled'), '1') <> '1' then return; end if;
+  if coalesce((select value from private_settings where key = 'aip_backoff')::timestamptz, now() - interval '1 day') > now() then return; end if;
+  gap := least(greatest(coalesce((select value::int from private_settings where key = 'aip_gap_min'), 30), 5), 1440);
+  if exists(select 1 from posts po join ai_personas a on a.id = po.author_id
+             where po.created_at > now() - make_interval(mins => gap)) then return; end if;
+  select a.* into p from ai_personas a join profiles pf on pf.id = a.id
+   where a.enabled and a.per_day > 0 and not pf.is_banned
+     and (a.last_post_at is null or a.last_post_at < now() - make_interval(mins => 1440 / a.per_day))
+   order by a.last_post_at nulls first, random() limit 1;
+  if p.id is null then return; end if;
+  begin
+    perform _ai_persona_post(p.id, null);
+  exception when others then
+    update ai_personas set last_error = left(sqlerrm, 200), last_post_at = now() where id = p.id;
+    insert into private_settings(key, value) values ('aip_backoff', (now() + interval '15 minutes')::text)
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end;
+end $$;
+revoke execute on function public._ai_personas_tick() from public, anon, authenticated;
+
+-- أي تعليق على منشور حساب ذكي (أو رد على تعليقه) يدخل بطابور الردود
+create or replace function public._ai_persona_on_comment() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare pid uuid;
+begin
+  if _is_ai_profile(new.author_id) then return null; end if;
+  select a.id into pid from posts po join ai_personas a on a.id = po.author_id where po.id = new.post_id;
+  if pid is null and new.parent_id is not null then
+    select a.id into pid from post_comments c join ai_personas a on a.id = c.author_id where c.id = new.parent_id;
+  end if;
+  if pid is not null and exists(select 1 from ai_personas where id = pid and enabled) then
+    insert into ai_persona_jobs(persona_id, comment_id) values (pid, new.id) on conflict do nothing;
+  end if;
+  return null;
+exception when others then return null;
+end $$;
+drop trigger if exists zz_ai_persona_on_comment on public.post_comments;
+create trigger zz_ai_persona_on_comment after insert on public.post_comments
+  for each row execute function public._ai_persona_on_comment();
+
+-- كل دقيقتين: ردود الحسابات الذكية (3 بالمرة كحد أقصى)
+create or replace function public._ai_personas_replies() returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare j ai_persona_jobs; p ai_personas; c post_comments; nm text; post text; sys text; raw text; reply text; n int := 0;
+begin
+  if coalesce((select value from private_settings where key = 'aip_enabled'), '1') <> '1' then return; end if;
+  update ai_persona_jobs set status = 'expired' where status = 'pending' and created_at < now() - interval '6 hours';
+  if (select count(*) from ai_persona_jobs where status = 'done' and created_at > now() - interval '1 hour') >= 40 then return; end if;
+  for j in select * from ai_persona_jobs where status = 'pending' order by created_at limit 3 loop
+    update ai_persona_jobs set status = 'working' where id = j.id;
+    begin
+      select * into p from ai_personas where id = j.persona_id;
+      select * into c from post_comments where id = j.comment_id;
+      if c.id is null or coalesce(c.hidden, false) then
+        update ai_persona_jobs set status = 'skipped' where id = j.id; continue;
+      end if;
+      select btrim(regexp_replace(display_name, '\s*🤖$', '')) into nm from profiles where id = p.id;
+      select left(content, 1200) into post from posts where id = c.post_id;
+      sys := 'You are "' || nm || '", a clearly labeled AI persona account (🤖) specialized in ' || p.specialty ||
+        ' on VYFRI, an Arabic social app used in Iraq. Reply to a user''s comment briefly and kindly in the same language and dialect the user wrote in. ' ||
+        'Use only well-established facts; if you are not sure, say so honestly. No politics, religion or sects, no medical diagnosis or doses, no legal or investment advice. ' ||
+        'If asked whether you are human, say you are an AI account. Never insult anyone. 1 to 3 short sentences, plain text, at most one emoji. Reply with the reply text only.';
+      raw := _ai_complete(sys, jsonb_build_array(jsonb_build_object('role', 'user', 'text',
+               'YOUR POST:' || E'\n' || coalesce(post, '') || E'\n\nUSER COMMENT:\n' || left(c.content, 600))), 400);
+      reply := left(_autopost_clean(coalesce(raw, '')), 600);
+      if char_length(reply) < 2 then raise exception 'empty'; end if;
+      insert into post_comments(post_id, author_id, content, parent_id) values (c.post_id, p.id, reply, c.id);
+      update ai_persona_jobs set status = 'done' where id = j.id;
+      update ai_personas set replies = replies + 1 where id = p.id;
+      n := n + 1;
+    exception when others then
+      update ai_persona_jobs set status = 'error' where id = j.id;
+    end;
+  end loop;
+end $$;
+revoke execute on function public._ai_personas_replies() from public, anon, authenticated;
+
+-- الحسابات الذكية ما تستلم هدايا (الفلوس الحقيقية بس للبشر)
+create or replace function public._no_gift_to_ai() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if _is_ai_profile(new.to_user) then raise exception 'ما تكدر ترسل هدية لحساب ذكاء اصطناعي 🤖'; end if;
+  return new;
+end $$;
+drop trigger if exists aa_no_gift_to_ai on public.gift_events;
+create trigger aa_no_gift_to_ai before insert on public.gift_events
+  for each row execute function public._no_gift_to_ai();
+
+-- المحتوى الذكي ما يمر على فحص المخالفات (يوفر حصة الذكاء الاصطناعي)
+create or replace function public._mod_enqueue() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_table_name = 'posts' then
+    if new.deleted or new.author_id = _owner_id() or _is_ai_profile(new.author_id) then return null; end if;
+    if tg_op = 'UPDATE' and new.content is not distinct from old.content and new.image_url is not distinct from old.image_url
+       and new.video_url is not distinct from old.video_url then return null; end if;
+    insert into mod_jobs(kind, ref_id) values ('post', new.id);
+  else
+    if new.hidden or new.author_id = _owner_id() or _is_ai_profile(new.author_id) then return null; end if;
+    if tg_op = 'UPDATE' and new.content is not distinct from old.content then return null; end if;
+    insert into mod_jobs(kind, ref_id) values ('comment', new.id);
+  end if;
+  return null;
+exception when others then return null;
+end $$;
+
+-- ---------- لوحة المالك ----------
+create or replace function public.ai_personas_admin() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  return jsonb_build_object(
+    'enabled', coalesce((select value from private_settings where key = 'aip_enabled'), '1') = '1',
+    'gap_min', coalesce((select value::int from private_settings where key = 'aip_gap_min'), 30),
+    'list', (select coalesce(jsonb_agg(jsonb_build_object(
+        'id', a.id, 'slug', a.slug, 'name', pf.display_name, 'username', pf.username, 'avatar_url', pf.avatar_url,
+        'specialty', a.specialty, 'focus', a.focus, 'per_day', a.per_day, 'enabled', a.enabled,
+        'posts', a.posts, 'replies', a.replies, 'last_post_at', a.last_post_at, 'last_error', a.last_error)
+        order by a.created_at), '[]'::jsonb)
+      from ai_personas a join profiles pf on pf.id = a.id));
+end $$;
+grant execute on function public.ai_personas_admin() to authenticated;
+
+create or replace function public.ai_personas_config(p_enabled boolean default null, p_gap_min int default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if p_enabled is not null then
+    insert into private_settings(key, value) values ('aip_enabled', case when p_enabled then '1' else '0' end)
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end if;
+  if p_gap_min is not null then
+    insert into private_settings(key, value) values ('aip_gap_min', least(greatest(p_gap_min, 5), 1440)::text)
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end if;
+  delete from private_settings where key = 'aip_backoff';
+  return ai_personas_admin();
+end $$;
+grant execute on function public.ai_personas_config(boolean, int) to authenticated;
+
+-- إضافة حساب ذكي جديد أو تعديله
+create or replace function public.ai_persona_save(p_id uuid, p_name text, p_specialty text, p_focus text default '',
+  p_per_day int default 2, p_enabled boolean default true) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := p_id;
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if char_length(btrim(coalesce(p_name, ''))) < 2 or char_length(btrim(coalesce(p_specialty, ''))) < 2 then
+    raise exception 'اكتب الاسم والتخصص';
+  end if;
+  if uid is null then
+    uid := _ai_persona_new('x' || substr(md5(gen_random_uuid()::text), 1, 10), p_name, p_specialty, p_focus, p_per_day);
+  else
+    if not exists(select 1 from ai_personas where id = uid) then raise exception 'الحساب غير موجود'; end if;
+    update profiles set display_name = left(btrim(p_name) || ' | ' || btrim(p_specialty), 47) where id = uid;
+  end if;
+  update ai_personas set specialty = left(btrim(p_specialty), 60), focus = left(btrim(coalesce(p_focus, '')), 300),
+    per_day = least(greatest(coalesce(p_per_day, 2), 0), 48), enabled = coalesce(p_enabled, true) where id = uid;
+  return ai_personas_admin();
+end $$;
+grant execute on function public.ai_persona_save(uuid, text, text, text, int, boolean) to authenticated;
+
+-- انشر هسه (مع موضوع يحدده المالك)
+create or replace function public.ai_persona_post_now(p_id uuid, p_topic text default null) returns uuid
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  return _ai_persona_post(p_id, p_topic);
+end $$;
+grant execute on function public.ai_persona_post_now(uuid, text) to authenticated;
+
+-- حذف حساب ذكي (ويا منشوراته)
+create or replace function public.ai_persona_delete(p_id uuid) returns jsonb
+language plpgsql security definer set search_path = public, auth as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if not exists(select 1 from ai_personas where id = p_id) then raise exception 'الحساب غير موجود'; end if;
+  delete from auth.users where id = p_id;
+  return ai_personas_admin();
+end $$;
+grant execute on function public.ai_persona_delete(uuid) to authenticated;
+
+-- الدفعة الأولى: 100 تخصص (مرة وحدة بس)
+do $$
+declare r record;
+begin
+  if exists(select 1 from private_settings where key = 'aip_seeded') then return; end if;
+  for r in select * from (values
+    ('cyber', 'سيف', 'أمن سيبراني', 'personal cybersecurity awareness and protecting accounts'),
+    ('code', 'علي', 'برمجة', 'programming concepts, Python and beginner coding tips'),
+    ('aitech', 'زهراء', 'ذكاء اصطناعي', 'how AI tools work and using them well'),
+    ('phones', 'حيدر', 'موبايلات وتطبيقات', 'smartphone tips, settings and useful apps'),
+    ('internet', 'نور', 'نصائح الإنترنت', 'using the internet, browsers and online services smartly'),
+    ('gaming', 'كرار', 'ألعاب فيديو', 'video game genres, gaming history and healthy gaming habits'),
+    ('football', 'مصطفى', 'كرة قدم عالمية', 'football rules, tactics, famous historic matches and legends'),
+    ('iraqfoot', 'حسين', 'كرة القدم العراقية', 'history of Iraqi football and its well-known milestones'),
+    ('fitness', 'ياسر', 'لياقة وتمارين', 'safe home and gym exercises and general fitness habits'),
+    ('running', 'سارة', 'مشي وجري', 'walking and running for beginners'),
+    ('bodybuild', 'عباس', 'كمال أجسام', 'general strength training principles'),
+    ('martial', 'منتظر', 'فنون قتالية', 'history and principles of martial arts and self-discipline'),
+    ('swim', 'رنا', 'سباحة', 'learning to swim and water safety'),
+    ('chess', 'يوسف', 'شطرنج', 'chess rules, openings basics and famous historic games'),
+    ('nutrition', 'مريم', 'تغذية صحية', 'balanced eating habits and food groups (general info only)'),
+    ('sleep', 'دعاء', 'نوم صحي', 'healthy sleep habits (general info only)'),
+    ('cooking', 'فاطمة', 'طبخ عراقي', 'traditional Iraqi dishes and cooking tips'),
+    ('sweets', 'شهد', 'حلويات', 'home desserts and baking sweets'),
+    ('worldfood', 'زينب', 'مطابخ العالم', 'famous dishes from world cuisines'),
+    ('baking', 'هدى', 'مخبوزات', 'bread, pastries and baking basics'),
+    ('grill', 'حسن', 'مشاوي', 'grilling and barbecue tips'),
+    ('coffee', 'آيات', 'قهوة وشاي', 'coffee and tea types, history and preparation'),
+    ('iraqtravel', 'مرتضى', 'سياحة بالعراق', 'famous Iraqi cities, landmarks and historic sites'),
+    ('worldtravel', 'ملاك', 'سفر حول العالم', 'famous world destinations and travel planning tips'),
+    ('camping', 'سجاد', 'تخييم ورحلات برية', 'camping, hiking and outdoor safety'),
+    ('mesopotamia', 'محمد', 'تاريخ بلاد الرافدين', 'ancient Mesopotamia: Sumer, Akkad, Babylon and Assyria'),
+    ('worldhist', 'أحمد', 'تاريخ العالم', 'major world history events and civilizations'),
+    ('inventions', 'عمر', 'اختراعات غيّرت العالم', 'history of important inventions and inventors'),
+    ('heritage', 'رقية', 'تراث عراقي', 'Iraqi folklore, traditions and crafts'),
+    ('cities', 'تبارك', 'مدن العراق', 'facts about Iraqi cities and provinces'),
+    ('geography', 'جعفر', 'جغرافيا العالم', 'countries, capitals, rivers, mountains and maps'),
+    ('arabic', 'إسراء', 'اللغة العربية', 'Arabic grammar, spelling and vocabulary tips'),
+    ('english', 'أمير', 'تعلّم الإنجليزية', 'learning English words, phrases and grammar'),
+    ('languages', 'سلمى', 'لغات العالم', 'interesting facts about world languages'),
+    ('writing', 'غدير', 'الكتابة والأدب', 'writing skills, storytelling and literature appreciation'),
+    ('books', 'أسامة', 'كتب وقراءة', 'reading habits and famous classic books'),
+    ('math', 'زيد', 'رياضيات', 'math tricks, concepts and puzzles explained simply'),
+    ('physics', 'كاظم', 'فيزياء', 'physics concepts explained simply'),
+    ('chemistry', 'هبة', 'كيمياء', 'chemistry concepts and everyday chemistry'),
+    ('biology', 'ليلى', 'أحياء', 'biology, the human body and living things'),
+    ('space', 'باقر', 'فلك وفضاء', 'astronomy, planets, stars and space exploration history'),
+    ('spacetech', 'رامي', 'تكنولوجيا الفضاء', 'rockets, satellites and space missions history'),
+    ('earth', 'نادية', 'جيولوجيا وطبيعة', 'earth science, volcanoes, rocks and natural phenomena'),
+    ('weather', 'وسام', 'الطقس والظواهر الجوية', 'how weather phenomena work (no forecasts)'),
+    ('environment', 'بتول', 'بيئة ومناخ', 'protecting the environment, recycling and saving water'),
+    ('oceans', 'سامر', 'البحار والمحيطات', 'oceans and marine life facts'),
+    ('animals', 'فرح', 'عالم الحيوان', 'amazing animal facts'),
+    ('birds', 'ضياء', 'طيور', 'bird species and bird watching'),
+    ('pets', 'ريم', 'حيوانات أليفة', 'caring for pets like cats and birds'),
+    ('plants', 'سرى', 'نباتات منزلية', 'indoor plants and home gardening'),
+    ('farming', 'قاسم', 'زراعة', 'farming basics, crops and irrigation'),
+    ('fishing', 'مهند', 'صيد السمك', 'fishing techniques and river fishing'),
+    ('cars', 'علاء', 'سيارات', 'car technology, history and buying tips'),
+    ('carcare', 'ستار', 'صيانة سيارات', 'basic car maintenance and safe driving'),
+    ('electric', 'رعد', 'كهرباء منزلية', 'home electrical safety and saving electricity'),
+    ('diy', 'سعد', 'تصليح وأعمال يدوية', 'simple home repairs and DIY tips'),
+    ('interior', 'دانة', 'ديكور منزلي', 'home decoration ideas'),
+    ('homeorg', 'وفاء', 'ترتيب البيت', 'home organization and cleaning tips'),
+    ('architecture', 'طه', 'عمارة وتصميم', 'architecture styles and famous buildings'),
+    ('civileng', 'هاشم', 'هندسة مدنية', 'civil engineering concepts and famous structures'),
+    ('mecheng', 'فراس', 'هندسة ميكانيكية', 'mechanical engineering concepts and machines'),
+    ('electronics', 'نبيل', 'إلكترونيات', 'electronics basics and components'),
+    ('robotics', 'لؤي', 'روبوتات', 'robotics basics and famous robots'),
+    ('photo', 'نوران', 'تصوير', 'photography basics and composition'),
+    ('mobilephoto', 'أنس', 'تصوير بالموبايل', 'taking great photos with a phone'),
+    ('editing', 'حمزة', 'مونتاج فيديو', 'video editing tips and storytelling with video'),
+    ('design', 'ياسمين', 'تصميم جرافيك', 'graphic design principles, colors and fonts'),
+    ('drawing', 'رؤى', 'رسم وفنون', 'drawing techniques and art history'),
+    ('calligraphy', 'عدنان', 'خط عربي', 'Arabic calligraphy styles and history'),
+    ('music', 'مازن', 'موسيقى', 'music theory basics and maqamat'),
+    ('movies', 'لمى', 'أفلام ومسلسلات', 'famous classic films and cinema history (no spoilers)'),
+    ('anime', 'تيم', 'أنمي', 'anime genres and history'),
+    ('fashionm', 'حارث', 'موضة رجالية', 'men''s style and outfit tips'),
+    ('fashionw', 'ديما', 'موضة نسائية', 'women''s style and outfit tips'),
+    ('skincare', 'جنى', 'عناية بالبشرة', 'general skincare routines (no medical advice)'),
+    ('hair', 'لينا', 'عناية بالشعر', 'general hair care tips'),
+    ('parenting', 'أم علي', 'تربية أطفال', 'positive parenting and child development basics'),
+    ('relations', 'رائد', 'تواصل وعلاقات', 'communication skills and healthy relationships'),
+    ('psychology', 'آلاء', 'علم النفس', 'everyday psychology and wellbeing (no diagnosis)'),
+    ('selfdev', 'مؤمل', 'تطوير الذات', 'self-improvement, habits and motivation'),
+    ('productivity', 'حنين', 'إنتاجية وتنظيم الوقت', 'time management and productivity methods'),
+    ('study', 'سيف الدين', 'نصائح دراسة', 'study techniques and exam preparation'),
+    ('uni', 'زهراء ح', 'حياة الجامعة', 'university life tips for students'),
+    ('careers', 'أيمن', 'وظائف وسيرة ذاتية', 'job hunting, CVs and interviews'),
+    ('freelance', 'مجتبى', 'العمل الحر', 'freelancing basics and finding clients online'),
+    ('business', 'وليد', 'ريادة أعمال', 'starting a small business and entrepreneurship basics'),
+    ('marketing', 'ريام', 'تسويق إلكتروني', 'digital marketing and social media marketing'),
+    ('ecommerce', 'صادق', 'تجارة إلكترونية', 'running an online store'),
+    ('money', 'ماجد', 'إدارة المال الشخصي', 'budgeting and saving habits (general info, not investment advice)'),
+    ('economy', 'جواد', 'اقتصاد مبسّط', 'basic economics concepts explained simply'),
+    ('puzzles', 'عذراء', 'ألغاز وتحديات', 'logic puzzles and brain teasers with answers'),
+    ('jokes', 'كرار ع', 'نكت وضحك', 'clean, kind Iraqi-style jokes and light humor'),
+    ('proverbs', 'جاسم', 'أمثال شعبية', 'well-known Arabic and Iraqi proverbs and their meanings'),
+    ('quotes', 'نورا', 'حكمة وإلهام', 'original short wisdom and inspiring thoughts (no attributed quotes)'),
+    ('cycling', 'علي ر', 'دراجات', 'cycling tips and bike care'),
+    ('smarthome', 'يحيى', 'البيت الذكي', 'smart home devices and tips')
+  ) v(slug, nm, spec, focus) loop
+    perform _ai_persona_new(r.slug, r.nm, r.spec, r.focus, 2);
+  end loop;
+  insert into private_settings(key, value) values ('aip_seeded', '1');
+end $$;
+
+do $$ begin
+  perform cron.schedule('almajhool-ai-personas', '*/5 * * * *', 'select public._ai_personas_tick()');
+  perform cron.schedule('almajhool-ai-persona-replies', '*/2 * * * *', 'select public._ai_personas_replies()');
+exception when others then raise notice 'ai personas cron: %', sqlerrm;
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
