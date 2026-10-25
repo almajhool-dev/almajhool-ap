@@ -9920,6 +9920,7 @@ end $$;
 revoke execute on function public._ai_persona_new(text, text, text, text, int) from public, anon, authenticated;
 
 -- كتابة ونشر منشور بتخصص الحساب
+drop function if exists public._ai_persona_post(uuid, text);
 create or replace function public._ai_persona_post(p_id uuid, p_topic text default null) returns uuid
 language plpgsql security definer set search_path = public, extensions as $$
 declare p ai_personas; nm text; sys text; usr text; recent text; raw text; post text; pid uuid;
@@ -10119,6 +10120,7 @@ end $$;
 grant execute on function public.ai_persona_save(uuid, text, text, text, int, boolean) to authenticated;
 
 -- انشر هسه (مع موضوع يحدده المالك)
+drop function if exists public.ai_persona_post_now(uuid, text);
 create or replace function public.ai_persona_post_now(p_id uuid, p_topic text default null) returns uuid
 language plpgsql security definer set search_path = public, extensions as $$
 begin
@@ -10341,6 +10343,90 @@ begin
   end loop;
   insert into private_settings(key, value) values ('aip_tech', '1');
 end $$;
+
+-- =====================================================================
+--  الإصدار 78: صور للحسابات الذكية — منشوراتها تمر على نفس خط صور النشر التلقائي.
+--  كل منشور يكتبه الحساب يطلع معاه وصف صورة، وتتولد صورة احترافية بموضوعه (إذا مفتاح الصور مضاف).
+--  بدون مفتاح الصور تطلع نص بس. الفيديو مو متاح (ماكو توليد فيديو مجاني، وجلب مقاطع جاهزة سرقة).
+-- =====================================================================
+alter table public.ai_autoposts add column if not exists author_id uuid references public.profiles(id) on delete cascade;
+create index if not exists ai_autoposts_author_idx on public.ai_autoposts(author_id) where author_id is not null;
+
+create or replace function public._autopost_publish(p_id bigint, p_img text) returns void
+language plpgsql security definer set search_path = public as $$
+declare a ai_autoposts; own uuid := _owner_id(); poster uuid; pid uuid;
+begin
+  select * into a from ai_autoposts where id = p_id for update;
+  poster := coalesce(a.author_id, own);
+  if a.id is null or a.status in ('published', 'error') or coalesce(a.content, '') = '' or poster is null then return; end if;
+  insert into posts(author_id, content, image_url) values (poster, left(a.content, 3000), p_img) returning id into pid;
+  update ai_autoposts set status = 'published', post_id = pid, published_at = now(), updated_at = now(),
+    info = case when p_img is null and a.info is null then 'بدون صورة' else a.info end
+  where id = p_id;
+  if a.author_id is not null then update ai_personas set posts = posts + 1 where id = a.author_id; end if;
+  delete from ai_upload_tickets where name = a.img_name;
+end $$;
+revoke execute on function public._autopost_publish(bigint, text) from public, anon, authenticated;
+
+drop function if exists public._ai_persona_post(uuid, text);
+create or replace function public._ai_persona_post(p_id uuid, p_topic text default null) returns bigint
+language plpgsql security definer set search_path = public, extensions as $$
+declare p ai_personas; nm text; sys text; usr text; recent text; raw text; post text; imgp text; apid bigint; haskey boolean;
+begin
+  select * into p from ai_personas where id = p_id;
+  if p.id is null then raise exception 'الحساب غير موجود'; end if;
+  select btrim(regexp_replace(display_name, '\s*🤖$', '')) into nm from profiles where id = p_id;
+  select string_agg('- ' || left(regexp_replace(content, '\s+', ' ', 'g'), 140), E'\n') into recent
+    from (select content from posts where author_id = p_id and not deleted order by created_at desc limit 8) t;
+  sys := 'You write posts for "' || nm || '", a clearly labeled AI persona account (🤖) on VYFRI, an Arabic social app used in Iraq. ' ||
+    'Specialty: ' || p.specialty || case when p.focus <> '' then ' (' || p.focus || ')' else '' end || '. ' ||
+    'Write ONE new post in clear, friendly Arabic for Iraqi readers (simple Modern Standard Arabic; a light Iraqi touch is fine). ' ||
+    'STRICT RULES: use only well-established, evergreen general knowledge that you are highly confident is correct; ' ||
+    'if you are not sure about any fact, leave it out and choose a safer topic. ' ||
+    'No politics, no religion or sects, no breaking news, no current prices or recent dates, no medical diagnosis or medicine doses, ' ||
+    'no legal or investment advice. For any security/hacking/reverse-engineering topic, stay strictly DEFENSIVE and educational ' ||
+    '("how to protect yourself", "how to recognize and avoid") and never explain how to actually hack, break protections or attack anyone. ' ||
+    'Never claim to be human, never invent personal experiences, and never invent quotes attributed to real people. ' ||
+    'Format: a short catchy first line, then the useful content in short lines, a few fitting emojis, and at most 2 hashtags at the end. ' ||
+    '300 to 900 characters. Plain text only: no markdown, no ** and no # headings.' ||
+    E'\n\nALSO write an English IMAGE PROMPT for an AI image generator: a modern, clean, professional illustration about this exact topic, ' ||
+    'tech aesthetic, cinematic lighting, deep navy with neon cyan and purple accents, square composition, highly detailed. ' ||
+    'Absolutely NO text, letters, numbers, logos, brand marks, or real people''s faces in the image.' ||
+    E'\n\nREPLY WITH EXACTLY THIS AND NOTHING ELSE:\n[POST]\n(the post)\n[/POST]\n[IMAGE]\n(the image prompt)\n[/IMAGE]';
+  usr := case when nullif(btrim(p_topic), '') is not null
+              then 'Topic requested by the app owner: ' || left(btrim(p_topic), 300)
+              else 'Write today''s post on a specific, useful topic in your specialty.' end ||
+    case when recent is not null then E'\n\nYour recent posts (do not repeat them or write something too similar):\n' || recent else '' end;
+  raw := _ai_complete(sys, jsonb_build_array(jsonb_build_object('role', 'user', 'text', usr)), 1500);
+  post := _autopost_part(raw, 'POST');
+  imgp := _autopost_part(raw, 'IMAGE');
+  if post is null then post := regexp_replace(raw, '\[IMAGE\].*$', '', 'i'); else post := regexp_replace(post, '\[IMAGE\].*$', '', 'i'); end if;
+  post := _autopost_clean(coalesce(post, ''));
+  if char_length(post) < 120 then raise exception 'post_too_short'; end if;
+  imgp := coalesce(nullif(btrim(imgp), ''),
+    'A modern clean professional digital illustration about ' || p.specialty ||
+    ', tech aesthetic, deep navy with neon cyan and purple, square composition, highly detailed, no text, no logos, no faces.');
+  insert into ai_autoposts(kind, topic, content, image_prompt, status, author_id)
+    values ('persona', left(coalesce(nullif(btrim(p_topic), ''), p.specialty), 300), left(post, 1500), left(imgp, 3000), 'need_image', p_id)
+    returning id into apid;
+  update ai_personas set last_post_at = now(), last_error = null where id = p_id;
+  -- بدون مفتاح صور (أو الصور مطفية) ينشر النص فورًا، وإلا ينتظر عامل الصور
+  haskey := exists(select 1 from private_settings where key in ('ai_key_openai', 'ai_key_cloudflare'));
+  if not haskey or not coalesce((select autopost_image from ai_config where id = 1), true) then
+    perform _autopost_publish(apid, null);
+  end if;
+  return apid;
+end $$;
+revoke execute on function public._ai_persona_post(uuid, text) from public, anon, authenticated;
+
+drop function if exists public.ai_persona_post_now(uuid, text);
+create or replace function public.ai_persona_post_now(p_id uuid, p_topic text default null) returns bigint
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  return _ai_persona_post(p_id, p_topic);
+end $$;
+grant execute on function public.ai_persona_post_now(uuid, text) to authenticated;
 
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

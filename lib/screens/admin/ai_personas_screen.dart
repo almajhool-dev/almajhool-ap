@@ -128,10 +128,10 @@ class _AiPersonasScreenState extends State<AiPersonasScreen> {
         hint: 'موضوع معيّن (اختياري) — اتركه فارغ حتى يختار بنفسه', ok: 'انشر');
     if (topic == null) return;
     if (!mounted) return;
-    showSnack(context, 'دا يكتب المنشور... ⏳');
+    showSnack(context, 'دا يجهّز المنشور وصورته... ⏳');
     try {
       await supa.rpc('ai_persona_post_now', params: {'p_id': p['id'], 'p_topic': topic});
-      if (mounted) showSnack(context, 'انتشر ✅');
+      if (mounted) showSnack(context, 'تم ✅ راح يظهر المنشور خلال دقيقة');
       _load();
     } catch (e) {
       if (mounted) showSnack(context, friendlyError(e), error: true);
