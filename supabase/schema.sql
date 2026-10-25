@@ -9666,5 +9666,16 @@ revoke execute on function public._ed_n2le(numeric, int) from public, anon, auth
 revoke execute on function public._ed_mul(numeric, numeric, numeric) from public, anon, authenticated;
 revoke execute on function public._ed_enc(numeric[]) from public, anon, authenticated;
 
+-- =====================================================================
+--  الإصدار 72: سد ثغرة إرهاق الخادم — دوال النشر التلقائي الداخلية چانت مفتوحة للزوار
+--  (_news_dup بعنوان بيه آلاف الكلمات ياخذ ~11 ثانية معالج بطلب واحد بالمفتاح العام،
+--  و _autopost_part تقبل نمط regex من الزائر). تنستخدم بس داخل _autopost_tick
+--  (يشتغل بصلاحية المالك من cron)، فنسدها عن الكل بدون أي تأثير على التطبيق.
+-- =====================================================================
+revoke execute on function public._news_dup(text, text) from public, anon, authenticated;
+revoke execute on function public._news_words(text) from public, anon, authenticated;
+revoke execute on function public._autopost_part(text, text) from public, anon, authenticated;
+revoke execute on function public._autopost_clean(text) from public, anon, authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
