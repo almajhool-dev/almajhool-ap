@@ -83,8 +83,8 @@ class _AiPersonasScreenState extends State<AiPersonasScreen> {
                     child: Slider(
                       value: perDay.toDouble(),
                       min: 0,
-                      max: 12,
-                      divisions: 12,
+                      max: 48,
+                      divisions: 48,
                       label: '$perDay',
                       onChanged: (v) => set(() => perDay = v.round()),
                     ),
@@ -200,7 +200,7 @@ class _AiPersonasScreenState extends State<AiPersonasScreen> {
         .where((p) => _q.isEmpty || '${p['name']} ${p['specialty']}'.toLowerCase().contains(_q.toLowerCase()))
         .toList();
     final gap = ((d?['gap_min'] ?? 30) as num).toInt();
-    const gaps = [10, 20, 30, 60, 120, 240];
+    const gaps = [1, 2, 5, 10, 20, 30, 60, 120, 240];
     return Scaffold(
       appBar: AppBar(title: Text('الحسابات الذكية 🤖 ${d == null ? '' : '(${_list.length})'}')),
       floatingActionButton: FloatingActionButton.extended(

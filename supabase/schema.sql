@@ -9959,7 +9959,7 @@ declare p ai_personas; gap int;
 begin
   if coalesce((select value from private_settings where key = 'aip_enabled'), '1') <> '1' then return; end if;
   if coalesce((select value from private_settings where key = 'aip_backoff')::timestamptz, now() - interval '1 day') > now() then return; end if;
-  gap := least(greatest(coalesce((select value::int from private_settings where key = 'aip_gap_min'), 30), 5), 1440);
+  gap := least(greatest(coalesce((select value::int from private_settings where key = 'aip_gap_min'), 30), 1), 1440);
   if exists(select 1 from posts po join ai_personas a on a.id = po.author_id
              where po.created_at > now() - make_interval(mins => gap)) then return; end if;
   select a.* into p from ai_personas a join profiles pf on pf.id = a.id
@@ -10089,7 +10089,7 @@ begin
       on conflict (key) do update set value = excluded.value, updated_at = now();
   end if;
   if p_gap_min is not null then
-    insert into private_settings(key, value) values ('aip_gap_min', least(greatest(p_gap_min, 5), 1440)::text)
+    insert into private_settings(key, value) values ('aip_gap_min', least(greatest(p_gap_min, 1), 1440)::text)
       on conflict (key) do update set value = excluded.value, updated_at = now();
   end if;
   delete from private_settings where key = 'aip_backoff';
@@ -10249,7 +10249,7 @@ begin
 end $$;
 
 do $$ begin
-  perform cron.schedule('almajhool-ai-personas', '*/5 * * * *', 'select public._ai_personas_tick()');
+  perform cron.schedule('almajhool-ai-personas', '* * * * *', 'select public._ai_personas_tick()');
   perform cron.schedule('almajhool-ai-persona-replies', '*/2 * * * *', 'select public._ai_personas_replies()');
 exception when others then raise notice 'ai personas cron: %', sqlerrm;
 end $$;
@@ -10427,6 +10427,21 @@ begin
   return _ai_persona_post(p_id, p_topic);
 end $$;
 grant execute on function public.ai_persona_post_now(uuid, text) to authenticated;
+
+-- =====================================================================
+--  الإصدار 79: منشور كل دقيقة من حساب ذكي مختلف (بالتناوب) — طلب المالك.
+--  الفحص صار كل دقيقة، وأقل فاصل دقيقة وحدة، وكل حساب يرجع دوره تقريبًا كل ساعة.
+--  إذا خلصت حصة الذكاء الاصطناعي يتوقف 15 دقيقة تلقائيًا ويرجع (حتى ما يوكف حساب المالك والردود).
+--  التغيير يصير مرة وحدة بس، وبعدها المالك يغيّره من اللوحة براحته.
+-- =====================================================================
+do $$ begin
+  if exists(select 1 from private_settings where key = 'aip_fast1') then return; end if;
+  insert into private_settings(key, value) values ('aip_gap_min', '1')
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  update ai_personas set per_day = 24 where per_day < 24;
+  delete from private_settings where key = 'aip_backoff';
+  insert into private_settings(key, value) values ('aip_fast1', '1');
+end $$;
 
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
