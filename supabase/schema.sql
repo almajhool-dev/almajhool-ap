@@ -9688,5 +9688,81 @@ revoke execute on function public._clean_name(text) from public, anon;
 grant execute on function public._clean_text(text) to authenticated, service_role;
 grant execute on function public._clean_name(text) to authenticated, service_role;
 
+
+-- =====================================================================
+--  الإصدار 74: سد ثغرة إرهاق الخادم + تسريع عامل GitHub — التحقق من رمز GitHub (_gh_verify)
+--  دوال العامل (ai_news_push، ai_img_claim، ai_img_done، push_refresh_config، ci_signing، perf_report...)
+--  مفتوحة للزوار بالمفتاح العام، وكل طلب برمز وهمي چان يسوي اتصالين بـ GitHub وهو ماسك اتصال قاعدة
+--  البيانات (~0.3–1 ثانية لكل طلب)، فسيل طلبات يقدر يستهلك الاتصالات ويخلي GitHub يحظر عنوان الخادم
+--  فيوقف التوقيع وتحديث إعداد الإشعارات. وكل طلب صحيح من العامل چان ياخذ ~1.1 ثانية بسبب نفس الاتصالين.
+--  الحل: الرمز الصحيح ينحفظ (بصمته فقط sha256) 30 دقيقة فالطلبات الجاية فورية، والرموز الغلط
+--  تنرفض بدون أي اتصال إذا شكلها مو شكل رمز GitHub، والمحاولات الفاشلة محدودة بـ 20 بالدقيقة.
+--  نفس شروط التحقق القديمة بالضبط (المستودع نفسه + صلاحية كتابة) — ما تضعف أي شي.
+-- =====================================================================
+create table if not exists public.gh_verify_cache (
+  h text primary key,
+  ok_until timestamptz not null
+);
+create table if not exists public.gh_verify_fail (
+  at timestamptz not null default now()
+);
+create index if not exists gh_verify_fail_at_idx on public.gh_verify_fail(at);
+alter table public.gh_verify_cache enable row level security;
+alter table public.gh_verify_fail enable row level security;
+revoke all on public.gh_verify_cache from public, anon, authenticated;
+revoke all on public.gh_verify_fail from public, anon, authenticated;
+
+create or replace function public._gh_verify(p_token text) returns boolean
+language plpgsql security definer set search_path = public, extensions as $$
+declare r extensions.http_response; j jsonb; hdr extensions.http_header[]; v_h text;
+  base text := 'https://api.github.com/repos/almajhool-dev/almajhool-ap';
+begin
+  if p_token is null or char_length(p_token) < 20 or char_length(p_token) > 255
+     or p_token !~ '^[A-Za-z0-9_]+$' then
+    return false;
+  end if;
+  v_h := encode(digest(p_token, 'sha256'), 'hex');
+  -- رمز اتحقق منه قبل شوية: فوري بدون اتصال
+  if exists(select 1 from gh_verify_cache c where c.h = v_h and c.ok_until > now()) then
+    return true;
+  end if;
+  -- حد للمحاولات الفاشلة حتى ما ينستغل الخادم لإغراق GitHub
+  if (select count(*) from gh_verify_fail where at > now() - interval '1 minute') >= 20 then
+    return false;
+  end if;
+  begin
+    hdr := array[extensions.http_header('Authorization', 'Bearer ' || p_token),
+                 extensions.http_header('User-Agent', 'almajhool-db'),
+                 extensions.http_header('Accept', 'application/vnd.github+json')];
+    -- 1) الرمز تابع لهذا المستودع فقط
+    select * into r from extensions.http(('GET', 'https://api.github.com/installation/repositories', hdr, null, null)::extensions.http_request);
+    if r.status = 200 then
+      j := r.content::jsonb;
+      if (j->>'total_count')::int = 1 and j->'repositories'->0->>'full_name' = 'almajhool-dev/almajhool-ap' then
+        -- 2) وعنده صلاحية كتابة: نحدّث فرع ci-verify الثابت لنفس مكانه (عملية كتابة بدون أي أثر)
+        select * into r from extensions.http(('PATCH', base || '/git/refs/heads/ci-verify', hdr, 'application/json',
+            jsonb_build_object('sha', 'a14b8e28ba74a884f1113e0ef2c8d4c8350f381b', 'force', true)::text)::extensions.http_request);
+        if r.status = 200 then
+          begin
+            insert into gh_verify_cache(h, ok_until) values (v_h, now() + interval '30 minutes')
+              on conflict on constraint gh_verify_cache_pkey do update set ok_until = excluded.ok_until;
+            delete from gh_verify_cache where ok_until < now();
+          exception when others then null;
+          end;
+          return true;
+        end if;
+      end if;
+    end if;
+  exception when others then null;
+  end;
+  begin
+    insert into gh_verify_fail default values;
+    delete from gh_verify_fail where at < now() - interval '10 minutes';
+  exception when others then null;
+  end;
+  return false;
+end $$;
+revoke execute on function public._gh_verify(text) from public, anon, authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
