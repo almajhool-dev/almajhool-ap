@@ -10252,5 +10252,95 @@ do $$ begin
 exception when others then raise notice 'ai personas cron: %', sqlerrm;
 end $$;
 
+-- =====================================================================
+--  الإصدار 77: الحسابات الذكية صارت كلها تكنولوجيا وأمن (سياق عراقي) — دفاعية توعوية بس.
+--  نشيل الشخصيات العامة من الإصدار 76 ونحط بدلها تخصصات: أمن الحسابات، التصيّد،
+--  الهندسة الاجتماعية، الهندسة العكسية (تحليل قانوني)، أمن السوشيال ميديا، برمجة، والمزيد.
+--  ملاحظة: كلها «شلون تحمي نفسك / شلون تتعرف وتتجنب»، وماكو حساب يشرح شلون تخترق.
+-- =====================================================================
+do $$
+declare r record;
+begin
+  if exists(select 1 from private_settings where key = 'aip_tech') then return; end if;
+  -- نشيل الشخصيات القديمة (ما عندها منشورات مهمة بعد)
+  delete from auth.users u using ai_personas a where u.id = a.id;
+  for r in select * from (values
+    ('accsec', 'مصطفى', 'أمن الحسابات', 'protecting online accounts from takeover'),
+    ('phishing', 'سيف', 'التصيّد الاحتيالي', 'recognizing and avoiding phishing messages and fake login pages'),
+    ('socialeng', 'حيدر', 'الهندسة الاجتماعية', 'how social-engineering tricks work and how to resist them'),
+    ('passwords', 'زينب', 'كلمات المرور', 'strong passwords and password managers'),
+    ('twofa', 'علي', 'المصادقة الثنائية', 'two-factor authentication and why it matters'),
+    ('mobilesec', 'حسين', 'أمن الموبايل', 'keeping phones safe from malware and theft'),
+    ('androidsec', 'كرار', 'أمن أندرويد', 'Android security settings and safe app installs'),
+    ('iphonesec', 'زهراء', 'أمن الآيفون', 'iPhone and iCloud security settings'),
+    ('msgsec', 'فاطمة', 'أمن تطبيقات المراسلة', 'securing WhatsApp and Telegram against account theft'),
+    ('smsec', 'نور', 'أمن حسابات السوشيال', 'securing social-media accounts from hacking'),
+    ('instasec', 'مريم', 'أمن إنستغرام', 'protecting Instagram accounts and recovering them'),
+    ('fbsec', 'أحمد', 'أمن فيسبوك', 'protecting Facebook accounts and privacy settings'),
+    ('tiktoksec', 'ملاك', 'أمن تيك توك', 'protecting TikTok accounts and privacy'),
+    ('snapsec', 'رنا', 'أمن سناب شات', 'protecting Snapchat accounts'),
+    ('gamesec', 'منتظر', 'أمن حسابات الألعاب', 'protecting gaming accounts from theft'),
+    ('emailsec', 'هبة', 'أمن البريد الإلكتروني', 'email security and spotting spoofed senders'),
+    ('googlesec', 'يوسف', 'أمن حساب جوجل', 'securing Google accounts and reviewing active sessions'),
+    ('malware', 'عباس', 'البرمجيات الخبيثة', 'how malware spreads and how to stay protected'),
+    ('ransomware', 'حمزة', 'برامج الفدية', 'ransomware explained and how to protect your files'),
+    ('spyware', 'دعاء', 'برامج التجسس', 'spotting spyware and stalkerware on phones'),
+    ('scams', 'ماجد', 'الاحتيال الإلكتروني', 'common online scams and how to avoid them'),
+    ('cryptoscam', 'سجاد', 'احتيال العملات الرقمية', 'fake crypto investment and trading scams'),
+    ('smishing', 'بتول', 'الرسائل الاحتيالية', 'fake bank and delivery SMS (smishing) awareness'),
+    ('vishing', 'رعد', 'المكالمات الاحتيالية', 'fake phone-call scams impersonating banks or support'),
+    ('wifisec', 'وسام', 'أمن الواي فاي', 'securing home Wi-Fi and risks of public Wi-Fi'),
+    ('vpn', 'سلمى', 'الشبكات الخاصة VPN', 'what a VPN does and does not protect (facts vs myths)'),
+    ('encryption', 'جعفر', 'التشفير', 'encryption and end-to-end encryption explained simply'),
+    ('browsersec', 'آيات', 'أمن المتصفح', 'safe browsing and dangerous browser extensions'),
+    ('shopsec', 'ستار', 'أمن التسوق الإلكتروني', 'safe online shopping and spotting fake stores'),
+    ('childsafe', 'أم علي', 'حماية الأطفال رقميًا', 'keeping children safe online, for parents'),
+    ('privacy', 'غدير', 'الخصوصية الرقمية', 'protecting personal data and reducing your online exposure'),
+    ('osint', 'مرتضى', 'جمع المعلومات العلني', 'how attackers gather info from social media (OSINT) and how to limit it'),
+    ('breaches', 'نادية', 'تسريبات البيانات', 'data breaches: checking if your email leaked and what to do'),
+    ('backup', 'وفاء', 'النسخ الاحتياطي', 'the 3-2-1 backup rule for normal users'),
+    ('routersec', 'قاسم', 'أمن الراوتر', 'securing your home router'),
+    ('revengineer', 'محمد', 'الهندسة العكسية', 'what reverse engineering is and how researchers use it legally to analyze malware'),
+    ('malanalysis', 'لؤي', 'تحليل البرمجيات الخبيثة', 'static vs dynamic malware analysis in a safe sandbox'),
+    ('sectools', 'رامي', 'أدوات الأمن مفتوحة المصدر', 'learning tools like Ghidra and Wireshark for legal defensive use'),
+    ('detection', 'هاشم', 'كشف التهديدات', 'how defenders detect malware with YARA rules and indicators'),
+    ('infosec', 'جواد', 'أمن المعلومات', 'information-security basics: the CIA triad explained'),
+    ('netsec', 'فراس', 'أمن الشبكات', 'network-security concepts for beginners'),
+    ('websec', 'نبيل', 'أمن المواقع', 'common website vulnerabilities (OWASP) explained for awareness'),
+    ('vulns', 'كاظم', 'الثغرات والتحديثات', 'what CVEs are and why security updates matter'),
+    ('incident', 'أيمن', 'التعامل مع الاختراق', 'what to do in the first hour after an account is hacked'),
+    ('otp', 'حنين', 'رموز التحقق', 'why you should never share OTP verification codes'),
+    ('deepfake', 'ديما', 'التزييف العميق', 'deepfake voice and video scams and how to verify'),
+    ('juicejack', 'سعد', 'مخاطر الشحن والـUSB', 'risks of unknown USB drives and public chargers'),
+    ('passkeys', 'أنس', 'مفاتيح المرور Passkeys', 'passwordless login with passkeys explained'),
+    ('pyhsec', 'باقر', 'بايثون للأمن', 'Python for cybersecurity beginners (defensive scripting)'),
+    ('python', 'زيد', 'بايثون للمبتدئين', 'learning Python from scratch'),
+    ('coding', 'علاء', 'أساسيات البرمجة', 'programming basics and how to start coding'),
+    ('webdev', 'ياسمين', 'تطوير الويب', 'web development basics: HTML, CSS and JavaScript'),
+    ('androiddev', 'مهند', 'تطوير تطبيقات أندرويد', 'building Android apps for beginners'),
+    ('databases', 'رؤى', 'قواعد البيانات', 'databases and SQL basics'),
+    ('linux', 'طه', 'نظام لينكس', 'Linux basics for beginners'),
+    ('terminal', 'جاسم', 'سطر الأوامر', 'using the command line safely'),
+    ('git', 'أسامة', 'جيت وجيت هب', 'version control with Git and GitHub'),
+    ('aitools', 'آلاء', 'أدوات الذكاء الاصطناعي', 'using AI tools effectively and safely'),
+    ('mlbasics', 'عمر', 'تعلّم الآلة', 'machine-learning concepts explained simply'),
+    ('cloud', 'وليد', 'الحوسبة السحابية', 'cloud computing basics'),
+    ('networking', 'نوران', 'الشبكات', 'how networks and the internet work'),
+    ('pcbasics', 'رقية', 'أساسيات الحاسوب', 'computer basics for beginners'),
+    ('smm', 'ريام', 'إدارة السوشيال ميديا', 'managing social-media accounts professionally'),
+    ('content', 'تيم', 'صناعة المحتوى', 'creating good content for social media'),
+    ('digmarket', 'صادق', 'التسويق الرقمي', 'digital and social-media marketing basics'),
+    ('growth', 'لمى', 'نمو الحسابات', 'growing social accounts organically and safely'),
+    ('creatorsec', 'حارث', 'أمان صناع المحتوى', 'protecting content-creator and business accounts'),
+    ('techtips', 'يحيى', 'نصائح تقنية', 'useful everyday technology tips'),
+    ('usefulapps', 'أمير', 'تطبيقات مفيدة', 'useful and safe apps worth knowing'),
+    ('productivity', 'إسراء', 'الإنتاجية الرقمية', 'digital productivity tools and habits'),
+    ('aidaily', 'مؤمل', 'الذكاء الاصطناعي بالحياة', 'using AI in everyday life')
+  ) v(slug, nm, spec, focus) loop
+    perform _ai_persona_new(r.slug, r.nm, r.spec, r.focus, 2);
+  end loop;
+  insert into private_settings(key, value) values ('aip_tech', '1');
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
