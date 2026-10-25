@@ -10545,5 +10545,31 @@ begin
   insert into private_settings(key, value) values ('ai_loop_fix1', '1');
 end $$;
 
+-- =====================================================================
+--  الإصدار 81: سجل مهام الجدولة (cron.job_run_details) چان يكبر بلا حد — ~14 مهمة بعضها
+--  كل ثانيتين/5 ثواني يعني مئات الآلاف من الأسطر، وصارت sys_diag تاخذ ~4-10 ثواني وتنقطع،
+--  وكل إدخال للمجدول أثقل. هسه ننظف الأسطر الأقدم من 6 ساعات على دفعات صغيرة كل 5 دقائق.
+--  (ما نمس جدول المهام نفسه ولا أي مهمة — بس سجل التشغيل القديم)
+-- =====================================================================
+create or replace function public._cron_log_prune() returns int
+language plpgsql security definer set search_path = public, extensions as $$
+declare n int := 0;
+begin
+  perform set_config('lock_timeout', '2s', true);
+  perform set_config('statement_timeout', '50s', true);
+  delete from cron.job_run_details where runid in (
+    select runid from cron.job_run_details
+     where start_time < now() - interval '6 hours'
+     order by runid limit 50000);
+  get diagnostics n = row_count;
+  return n;
+exception when others then return -1;
+end $$;
+revoke execute on function public._cron_log_prune() from public, anon, authenticated;
+do $$ begin
+  perform cron.schedule('almajhool-cron-log-prune', '*/5 * * * *', 'select public._cron_log_prune()');
+exception when others then raise notice 'cron log prune not scheduled: %', sqlerrm;
+end $$;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
