@@ -10571,5 +10571,30 @@ do $$ begin
 exception when others then raise notice 'cron log prune not scheduled: %', sqlerrm;
 end $$;
 
+-- =====================================================================
+--  الإصدار 82: تسريع فحص النظام (sys_diag) — چان يقرا سجل مهام الجدولة كله (بدون فهرس على
+--  start_time) فياخذ ~4-7 ثواني بكل طلب، وهو مفتوح بالمفتاح العام. هسه يقرا بس آخر الأسطر عن
+--  طريق المفتاح الأساسي runid (متزايد مع الوقت) وبعدين نفس شرط آخر 30 دقيقة — نفس النتيجة.
+-- =====================================================================
+create or replace function public.sys_diag() returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare r jsonb := '{}'; mx bigint;
+begin
+  perform set_config('statement_timeout', '8s', true);
+  begin r := r || jsonb_build_object('queued', (select count(*) from net.http_request_queue), 'qmin', (select min(id) from net.http_request_queue), 'resp_max_id', (select max(id) from net._http_response),
+      'last_resp', (select max(created) from net._http_response)); exception when others then r := r || jsonb_build_object('net_err', sqlerrm); end;
+  begin r := r || jsonb_build_object('workers', (select jsonb_agg(jsonb_build_object('t', backend_type, 'a', application_name, 's', state)) from pg_stat_activity where backend_type not in ('client backend')),
+      'max_workers', current_setting('max_worker_processes'), 'cron_bgw', current_setting('cron.use_background_workers', true), 'conns', (select count(*) from pg_stat_activity)); exception when others then null; end;
+  begin
+    select max(runid) into mx from cron.job_run_details;
+    r := r || jsonb_build_object('cron', (select jsonb_agg(x) from (select j.jobname, d.status, count(*) n, max(left(d.return_message, 120)) msg
+        from cron.job_run_details d join cron.job j using (jobid)
+       where d.runid > coalesce(mx, 0) - 50000 and d.start_time > now() - interval '30 minutes' group by 1, 2) x));
+  exception when others then null; end;
+  begin r := r || jsonb_build_object('watchdog', (select value from private_settings where key = 'push_watchdog'), 'wd_state', (select value from private_settings where key = 'push_wd_state')); exception when others then null; end;
+  return r;
+end $$;
+grant execute on function public.sys_diag() to anon;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
