@@ -21,6 +21,7 @@ import '../../widgets/fx.dart';
 import '../feed/community.dart';
 import '../live/live_screens.dart';
 import '../profile/profile_screens.dart';
+import 'ai_memory_screen.dart';
 
 /// لوحة تحكم المدير داخل التطبيق.
 class AdminScreen extends StatelessWidget {
@@ -1460,7 +1461,7 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
                   ]),
                   if (st['error'] != null) Text(st['error'] as String, style: const TextStyle(color: Colors.red)),
                   const Text(
-                      'يرد باسمك وبنفس لغة الشخص (كل لغات العالم). تكدر تحط أكثر من مفتاح: الأساسي يرد أول، وإذا خلص حده أو تعطل يرد الثاني تلقائيًا. يشتغل بالسيرفر حتى لو التطبيق مسدود.',
+                      'يرد باسمك وبنفس لغة الشخص (كل لغات العالم). يقرا حساب الشخص ويتذكر محادثاته القديمة، وللتعليقات حد (3 ردود بكل نقاش) حتى ما تصير مناوشات. تكدر تحط أكثر من مفتاح: الأساسي يرد أول، وإذا خلص حده أو تعطل يرد الثاني تلقائيًا. يشتغل بالسيرفر حتى لو التطبيق مسدود.',
                       style: TextStyle(fontSize: 12.5)),
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 8),
@@ -1527,6 +1528,12 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
                   ),
                   const SizedBox(height: 8),
                   Text('اليوم: ${st['today'] ?? 0} رد · بالانتظار: ${st['pending'] ?? 0}', style: const TextStyle(fontSize: 12.5)),
+                  const SizedBox(height: 6),
+                  OutlinedButton.icon(
+                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AiMemoryScreen())),
+                    icon: const Icon(Icons.psychology_rounded),
+                    label: const Text('ذاكرة المساعد 🧠 (الناس اللي يتذكرهم)'),
+                  ),
                   if (st['last_error'] != null)
                     Text('آخر خطأ: ${st['last_error']}', style: const TextStyle(fontSize: 12, color: Colors.orange)),
                   const SizedBox(height: 8),

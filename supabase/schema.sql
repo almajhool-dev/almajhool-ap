@@ -3243,10 +3243,14 @@ language sql stable security definer set search_path = public as $$
 $$;
 grant execute on function public.is_verified_me() to authenticated;
 
+-- (الإصدار 84 ضاف نوع «location» لمشاركة الموقع؛ القيد يتبدّل بس إذا ناقص حتى ما ينقفل جدول الرسائل كل تحديث)
 do $$ begin
-  alter table public.messages drop constraint if exists messages_type_check;
-  alter table public.messages add constraint messages_type_check
-    check (type in ('text','image','video','file','audio','system','sticker'));
+  if not exists(select 1 from pg_constraint where conname = 'messages_type_check' and conrelid = 'public.messages'::regclass
+                and pg_get_constraintdef(oid) like '%location%') then
+    alter table public.messages drop constraint if exists messages_type_check;
+    alter table public.messages add constraint messages_type_check
+      check (type in ('text','image','video','file','audio','system','sticker','location'));
+  end if;
 exception when others then raise notice 'messages type: %', sqlerrm;
 end $$;
 
@@ -4732,9 +4736,13 @@ update ai_jobs set status = 'pending', attempts = 1, next_at = now()
 alter table public.ai_config add column if not exists auto_accept boolean not null default true;
 alter table public.ai_config add column if not exists welcome_followers boolean not null default true;
 alter table public.ai_config add column if not exists reply_comments boolean not null default true;
+-- (الإصدار 83 ضاف «memo» لذاكرة المساعد؛ القيد يتبدّل بس إذا ناقص)
 do $$ begin
-  alter table public.ai_jobs drop constraint if exists ai_jobs_kind_check;
-  alter table public.ai_jobs add constraint ai_jobs_kind_check check (kind in ('post', 'dm', 'comment', 'welcome'));
+  if not exists(select 1 from pg_constraint where conname = 'ai_jobs_kind_check' and conrelid = 'public.ai_jobs'::regclass
+                and pg_get_constraintdef(oid) like '%memo%') then
+    alter table public.ai_jobs drop constraint if exists ai_jobs_kind_check;
+    alter table public.ai_jobs add constraint ai_jobs_kind_check check (kind in ('post', 'dm', 'comment', 'welcome', 'memo'));
+  end if;
 exception when others then raise notice 'ai kinds: %', sqlerrm;
 end $$;
 
@@ -10595,6 +10603,602 @@ begin
   return r;
 end $$;
 grant execute on function public.sys_diag() to anon;
+
+-- =====================================================================
+--  الإصدار 83: ذكاء حساب المالك صار أذكى + يتذكر الناس + حدود واضحة للنقاشات (طلب المالك).
+--   1) يرجع يعلّق على المنشورات الجديدة مثل قبل — حتى منشورات الحسابات الذكية، بس بهدوء:
+--      تعليق واحد كل ربع ساعة كحد أقصى عليها، وبأولوية أقل من رسائل الناس وتعليقاتهم.
+--   2) نقاش ويا حساب ذكي: تعليق المالك ← رد الحساب الذكي (مرة وحدة) ← رد ختامي من المالك (مرة وحدة) — وينتهي.
+--   3) نقاش ويا إنسان: 3 ردود كحد أقصى بكل نقاش، و10 ردود باليوم لنفس الشخص،
+--      وإذا صار جدال أو إهانة ما يجادل: يرد مرة بهدوء ويسكّر الموضوع، أو يسكت.
+--   4) يقرأ حساب الشخص (البايو ومنشوراته العامة وتعليقاته) حتى يعرفه ويرد عليه بدقة.
+--   5) ذاكرة خاصة لكل شخص يراسل المالك: ملاحظات قصيرة تنكتب تلقائيًا بعد ما تهدأ المحادثة
+--      (بدون أرقام هواتف ولا كلمات سر ولا بيانات حساسة)، ويرجع لها كل ما راسله الشخص.
+--      الملاحظات الخاصة ما تنستخدم أبدًا بالتعليقات العامة. المالك يشوفها ويعدّلها ويمسحها من لوحته.
+--   6) الرسائل المتتالية: ينتظر ثواني لحد ما الشخص يكمل كلامه ويرد على الكل مرة وحدة.
+--  (الأعمدة والفهارس تنضاف بس إذا ناقصة — حتى التحديث التلقائي ما يقفل الجداول كل مرة)
+-- =====================================================================
+do $$ begin
+  if not exists(select 1 from pg_attribute where attrelid = 'public.ai_jobs'::regclass and attname = 'low' and not attisdropped) then
+    alter table public.ai_jobs add column low boolean not null default false;
+  end if;
+  if not exists(select 1 from pg_attribute where attrelid = 'public.ai_jobs'::regclass and attname = 'out_id' and not attisdropped) then
+    alter table public.ai_jobs add column out_id uuid;
+  end if;
+  if to_regclass('public.ai_jobs_low_post_idx') is null then
+    create index ai_jobs_low_post_idx on public.ai_jobs(created_at) where kind = 'post' and low;
+  end if;
+  if to_regclass('public.ai_jobs_out_idx') is null then
+    create index ai_jobs_out_idx on public.ai_jobs(out_id) where out_id is not null;
+  end if;
+  if to_regclass('public.ai_jobs_ref_idx') is null then
+    create index ai_jobs_ref_idx on public.ai_jobs(ref_id, kind);
+  end if;
+  if to_regclass('public.ai_people') is null then
+    create table public.ai_people (
+      user_id uuid primary key references public.profiles(id) on delete cascade,
+      notes text not null default '' check (char_length(notes) <= 1500),
+      owner_note text not null default '' check (char_length(owner_note) <= 600),
+      chats int not null default 0,
+      last_chat_at timestamptz,
+      memo_at timestamptz,
+      updated_at timestamptz not null default now()
+    );
+    alter table public.ai_people enable row level security;
+    revoke all on public.ai_people from anon, authenticated;
+  end if;
+end $$;
+
+-- ---------- بطاقة الشخص: يقرأ حسابه حتى يعرفه ----------
+-- p_private = true بس بالرسائل الخاصة (تضيف ملاحظات الذاكرة)؛ التعليقات العامة تاخذ المعلومات العامة بس
+create or replace function public._ai_person_card(p_user uuid, p_private boolean) returns text
+language plpgsql stable security definer set search_path = public as $$
+declare pr profiles; own uuid := _owner_id(); t text; x record; mem ai_people; nf int; hdr boolean;
+begin
+  select * into pr from profiles where id = p_user;
+  if pr.id is null then return ''; end if;
+  select count(*) into nf from follows where followee_id = p_user;
+  t := 'ABOUT THIS PERSON (their public profile in the app):' ||
+    E'\n- Name: ' || pr.display_name || ' (@' || pr.username || ')' ||
+    case when pr.is_verified then ' — verified' else '' end ||
+    case when pr.is_ai then ' — a clearly labeled AI account (🤖), not a human' else '' end ||
+    case when coalesce(btrim(pr.bio), '') <> '' then E'\n- Bio: ' || left(regexp_replace(pr.bio, '\s+', ' ', 'g'), 300) else '' end ||
+    E'\n- Member since ' || to_char(pr.created_at, 'YYYY-MM-DD') || ', ' || nf || ' followers' ||
+    case when exists(select 1 from follows where follower_id = p_user and followee_id = own) then ', follows the owner' else '' end;
+  hdr := false;
+  for x in select po.content, po.image_url, po.video_url, po.created_at from posts po
+           where po.author_id = p_user and not po.deleted and po.visibility = 'public' and not coalesce(po.removed_by_mod, false)
+           order by po.created_at desc limit 4 loop
+    if not hdr then t := t || E'\n- Their recent public posts (newest first):'; hdr := true; end if;
+    t := t || E'\n  • [' || to_char(x.created_at, 'YYYY-MM-DD') || '] ' ||
+      coalesce(nullif(left(regexp_replace(btrim(x.content), '\s+', ' ', 'g'), 220), ''), '(no text)') ||
+      case when x.video_url is not null then ' [video]' when x.image_url is not null then ' [photo]' else '' end;
+  end loop;
+  hdr := false;
+  for x in select c.content, left(regexp_replace(coalesce(po.content, ''), '\s+', ' ', 'g'), 80) pc
+           from post_comments c join posts po on po.id = c.post_id
+           where c.author_id = p_user and po.author_id = own and not coalesce(c.hidden, false)
+           order by c.created_at desc limit 3 loop
+    if not hdr then t := t || E'\n- Their recent comments on the owner''s posts:'; hdr := true; end if;
+    t := t || E'\n  • on "' || coalesce(nullif(x.pc, ''), 'a photo') || '": ' || left(regexp_replace(x.content, '\s+', ' ', 'g'), 200);
+  end loop;
+  hdr := false;
+  for x in select c.content, left(regexp_replace(coalesce(po.content, ''), '\s+', ' ', 'g'), 80) pc
+           from post_comments c join posts po on po.id = c.post_id
+           where c.author_id = own and po.author_id = p_user and c.parent_id is null and not coalesce(c.hidden, false)
+           order by c.created_at desc limit 2 loop
+    if not hdr then t := t || E'\n- What you (the owner''s account) already commented on their posts:'; hdr := true; end if;
+    t := t || E'\n  • on "' || coalesce(nullif(x.pc, ''), 'a photo') || '": ' || left(regexp_replace(x.content, '\s+', ' ', 'g'), 200);
+  end loop;
+  if p_private then
+    select * into mem from ai_people where user_id = p_user;
+    if coalesce(btrim(mem.owner_note), '') <> '' then
+      t := t || E'\n- The owner told you about this person: ' || mem.owner_note;
+    end if;
+    if coalesce(btrim(mem.notes), '') <> '' then
+      t := t || E'\n\nWHAT YOU REMEMBER FROM EARLIER PRIVATE CHATS WITH THEM (use it naturally to continue; never read this list back to them):\n' || mem.notes;
+    end if;
+  end if;
+  return t;
+end $$;
+revoke execute on function public._ai_person_card(uuid, boolean) from public, anon, authenticated;
+
+-- نص النقاش (التعليق وردوده) بالترتيب
+create or replace function public._ai_thread_text(p_root uuid) returns text
+language sql stable security definer set search_path = public as $$
+  select string_agg(case when c.author_id = _owner_id() then 'YOU (owner)' else coalesce(pr.display_name, '?') end || ': ' ||
+           left(regexp_replace(c.content, '\s+', ' ', 'g'), 400), E'\n' order by c.created_at, c.id)
+  from (select * from post_comments where (id = p_root or parent_id = p_root) and not coalesce(hidden, false)
+        order by created_at desc limit 14) c
+  left join profiles pr on pr.id = c.author_id;
+$$;
+revoke execute on function public._ai_thread_text(uuid) from public, anon, authenticated;
+
+-- وصف الرسالة للذكاء (الصور والصوت والموقع...)
+create or replace function public._ai_msg_text(p_type text, p_content text, p_file text) returns text
+language sql immutable as $$
+  select case p_type
+    when 'text' then coalesce(p_content, '')
+    when 'image' then '[sent a photo]' || coalesce(' ' || nullif(btrim(p_content), ''), '')
+    when 'video' then '[sent a video]'
+    when 'audio' then '[sent a voice message — you cannot listen to voice notes; if it matters, kindly ask them to write it]'
+    when 'file' then '[sent a file: ' || coalesce(p_file, 'file') || ']'
+    when 'sticker' then '[sent a sticker ' || coalesce(p_content, '') || ']'
+    when 'location' then '[shared a location on the map: ' ||
+      coalesce(nullif(btrim(regexp_replace(coalesce(p_content, ''), '^\s*📍\s*', '')), ''), 'a place') || ']'
+    else '[' || coalesce(p_type, 'message') || ']' end;
+$$;
+revoke execute on function public._ai_msg_text(text, text, text) from public, anon, authenticated;
+
+-- تنظيف الرد: [SKIP] = ما يرد، ويشيل رموز التنسيق
+create or replace function public._ai_clean_reply(t text) returns text
+language plpgsql immutable as $$
+begin
+  t := btrim(coalesce(t, ''));
+  if t = '' or t ~* '\[\s*skip\s*\]' then return null; end if;
+  t := regexp_replace(t, '^\s*(🤖\s*)+', '');
+  t := regexp_replace(t, '\*\*|__', '', 'g');
+  t := regexp_replace(t, '^#+\s*', '', 'gn');
+  t := btrim(t, E' \n\t"');
+  if t = '' then return null; end if;
+  return t;
+end $$;
+revoke execute on function public._ai_clean_reply(text) from public, anon, authenticated;
+
+-- حماية الذاكرة: يشيل أي إيميل أو رقم طويل (هواتف وحسابات) حتى لو النموذج كتبه بالغلط
+create or replace function public._ai_scrub(t text) returns text
+language sql immutable as $$
+  select regexp_replace(regexp_replace(coalesce(t, ''),
+    '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', '[…]', 'g'),
+    '\+?[0-9٠-٩][0-9٠-٩ \-]{6,}[0-9٠-٩]', '[…]', 'g');
+$$;
+revoke execute on function public._ai_scrub(text) from public, anon, authenticated;
+
+-- ---------- إنشاء المهام ----------
+create or replace function public._ai_on_post() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare gap int;
+begin
+  if new.deleted or new.author_id = _owner_id() then return new; end if;
+  if not coalesce((select enabled_comments from ai_config where id = 1), false) then return new; end if;
+  if _is_ai_profile(new.author_id) then
+    -- منشورات الحسابات الذكية: تعليق واحد كل ربع ساعة كحد أقصى، وبأولوية أقل من الناس
+    gap := coalesce((select value::int from private_settings where key = 'ai_owner_bot_gap_min'), 15);
+    if gap <= 0 or exists(select 1 from ai_jobs where kind = 'post' and low and created_at > now() - make_interval(mins => gap)) then
+      return new;
+    end if;
+    insert into ai_jobs(kind, ref_id, low, next_at) values ('post', new.id, true, now() + interval '20 seconds');
+    return new;
+  end if;
+  insert into ai_jobs(kind, ref_id) values ('post', new.id);
+  return new;
+exception when others then return new;
+end $$;
+
+create or replace function public._ai_on_comment() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare own uuid := _owner_id(); root uuid; mine int; jid bigint;
+begin
+  if new.author_id = own or coalesce(new.hidden, false)
+     or not coalesce((select reply_comments from ai_config where id = 1), false) then return null; end if;
+  root := coalesce(new.parent_id, new.id);
+  select count(*) into mine from post_comments where author_id = own and (id = root or parent_id = root);
+  if _is_ai_profile(new.author_id) then
+    -- حساب ذكي رد على تعليق كتبه ذكاء المالك: رد ختامي واحد بس، وبعدها ينتهي النقاش
+    if new.parent_id is null or mine <> 1
+       or not exists(select 1 from post_comments where id = new.parent_id and author_id = own)
+       or not exists(select 1 from ai_jobs where out_id = new.parent_id) then
+      return null;
+    end if;
+    if exists(select 1 from ai_jobs a join post_comments c on c.id = a.ref_id
+               where a.kind = 'comment' and a.low and c.parent_id = root) then return null; end if;
+    insert into ai_jobs(kind, ref_id, low, next_at) values ('comment', new.id, true, now() + interval '20 seconds');
+    return null;
+  end if;
+  -- إنسان: 3 ردود كحد أقصى بكل نقاش
+  if mine >= 3 then return null; end if;
+  if not (exists(select 1 from posts where id = new.post_id and author_id = own)
+          or (new.parent_id is not null and exists(select 1 from post_comments where id = new.parent_id and author_id = own))) then
+    return null;
+  end if;
+  -- ونفس الشخص: 10 ردود باليوم كحد أقصى
+  if (select count(*) from ai_jobs a join post_comments c on c.id = a.ref_id
+       where a.kind = 'comment' and not a.low and c.author_id = new.author_id and a.created_at > now() - interval '1 day') >= 10 then
+    return null;
+  end if;
+  -- إذا عنده رد بالانتظار بنفس النقاش: ننتظر شوية ونرد على آخر تعليق مرة وحدة
+  select a.id into jid from ai_jobs a join post_comments c on c.id = a.ref_id
+   where a.kind = 'comment' and a.status = 'pending' and coalesce(c.parent_id, c.id) = root
+   limit 1 for update of a skip locked;
+  if jid is not null then
+    update ai_jobs set next_at = greatest(next_at, now() + interval '4 seconds') where id = jid;
+    return null;
+  end if;
+  insert into ai_jobs(kind, ref_id, next_at) values ('comment', new.id, now() + interval '6 seconds');
+  return null;
+exception when others then return null;
+end $$;
+
+create or replace function public._ai_on_message() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare own uuid := _owner_id(); jid bigint;
+begin
+  if new.sender_id is null or new.sender_id = own or new.type = 'system' then return new; end if;
+  if not coalesce((select enabled_dms from ai_config where id = 1), false) then return new; end if;
+  if (select type from conversations where id = new.conversation_id) <> 'direct' then return new; end if;
+  if not exists(select 1 from conversation_members where conversation_id = new.conversation_id and user_id = own) then
+    return new;
+  end if;
+  if _is_ai_profile(new.sender_id) then return new; end if;
+  -- رسالة ورا رسالة: ننتظر لحد ما يكمل كلامه ونرد على الكل مرة وحدة
+  select id into jid from ai_jobs where kind = 'dm' and ref_id = new.conversation_id and status = 'pending'
+   order by id desc limit 1 for update skip locked;
+  if jid is not null then
+    update ai_jobs set next_at = greatest(next_at, now() + interval '4 seconds') where id = jid;
+  else
+    insert into ai_jobs(kind, ref_id, next_at) values ('dm', new.conversation_id, now() + interval '5 seconds');
+  end if;
+  return new;
+exception when others then return new;
+end $$;
+
+-- الحساب الذكي يرد على: إنسان كتب بنفسه من التطبيق (مرتين بالنقاش)،
+-- أو تعليق ذكاء المالك على منشوره (مرة وحدة بس، وما يرد على الرد الختامي)
+create or replace function public._ai_persona_on_comment() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare pid uuid; root uuid; own uuid := _owner_id(); from_owner_ai boolean; cap int;
+begin
+  if _is_ai_profile(new.author_id) or coalesce(new.hidden, false) then return null; end if;
+  from_owner_ai := new.author_id = own and auth.uid() is null;
+  if from_owner_ai then
+    if new.parent_id is not null then return null; end if;
+  elsif auth.uid() is null or auth.uid() <> new.author_id then
+    return null;
+  end if;
+  select a.id into pid from posts po join ai_personas a on a.id = po.author_id where po.id = new.post_id;
+  if pid is null and new.parent_id is not null and not from_owner_ai then
+    select a.id into pid from post_comments c join ai_personas a on a.id = c.author_id where c.id = new.parent_id;
+  end if;
+  if pid is null then return null; end if;
+  root := coalesce(new.parent_id, new.id);
+  cap := case when from_owner_ai then 1 else 2 end;
+  if (select count(*) from post_comments where author_id = pid and parent_id = root) >= cap then
+    return null;
+  end if;
+  if not from_owner_ai and (select count(*) from ai_persona_jobs j join post_comments c on c.id = j.comment_id
+       where j.persona_id = pid and c.author_id = new.author_id and j.created_at > now() - interval '1 hour') >= 6 then
+    return null;
+  end if;
+  if exists(select 1 from ai_personas where id = pid and enabled) then
+    insert into ai_persona_jobs(persona_id, comment_id) values (pid, new.id) on conflict do nothing;
+  end if;
+  return null;
+exception when others then return null;
+end $$;
+
+-- الحسابات الذكية ما توصلها إشعارات، ونقاشات ذكاء المالك وياها ما تزعج المالك
+create or replace function public._no_notify_ai() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if _is_ai_profile(new.user_id) then return null; end if;
+  if new.type = 'comment_reply' and new.user_id = _owner_id()
+     and exists(select 1 from posts where id = (new.data->>'post_id')::uuid and _is_ai_profile(author_id))
+     and exists(select 1 from ai_jobs where out_id = (new.data->>'comment_id')::uuid) then
+    return null;
+  end if;
+  return new;
+exception when others then return new;
+end $$;
+
+-- ردود الحسابات الذكية: الرد ينحط تحت نفس التعليق الأصلي (حتى يبين بالتطبيق)
+create or replace function public._ai_personas_replies() returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare j ai_persona_jobs; p ai_personas; c post_comments; nm text; post text; sys text; raw text; reply text; n int := 0;
+  own uuid := _owner_id(); from_owner boolean;
+begin
+  if coalesce((select value from private_settings where key = 'aip_enabled'), '1') <> '1' then return; end if;
+  update ai_persona_jobs set status = 'expired' where status = 'pending' and created_at < now() - interval '6 hours';
+  if (select count(*) from ai_persona_jobs where status = 'done' and created_at > now() - interval '1 hour') >= 40 then return; end if;
+  for j in select * from ai_persona_jobs where status = 'pending' order by created_at limit 3 loop
+    update ai_persona_jobs set status = 'working' where id = j.id;
+    begin
+      select * into p from ai_personas where id = j.persona_id;
+      select * into c from post_comments where id = j.comment_id;
+      if c.id is null or coalesce(c.hidden, false) then
+        update ai_persona_jobs set status = 'skipped' where id = j.id; continue;
+      end if;
+      from_owner := c.author_id = own;
+      select btrim(regexp_replace(display_name, '\s*🤖$', '')) into nm from profiles where id = p.id;
+      select left(content, 1200) into post from posts where id = c.post_id;
+      sys := 'You are "' || nm || '", a clearly labeled AI persona account (🤖) specialized in ' || p.specialty ||
+        ' on VYFRI, an Arabic social app used in Iraq. Reply to a comment briefly and kindly in the same language and dialect it was written in. ' ||
+        'Use only well-established facts; if you are not sure, say so honestly. No politics, religion or sects, no medical diagnosis or doses, no legal or investment advice. ' ||
+        'If asked whether you are human, say you are an AI account. Never insult anyone. 1 to 3 short sentences, plain text, at most one emoji. Reply with the reply text only.' ||
+        case when from_owner then ' This comment is from the assistant of the app owner''s account: thank it warmly in one or two sentences and do not ask any question.' else '' end;
+      raw := _ai_complete(sys, jsonb_build_array(jsonb_build_object('role', 'user', 'text',
+               'YOUR POST:' || E'\n' || coalesce(post, '') || E'\n\n' ||
+               case when from_owner then 'COMMENT FROM THE APP OWNER''S ASSISTANT:' else 'USER COMMENT:' end || E'\n' ||
+               left(c.content, 600))), 400);
+      reply := left(_autopost_clean(coalesce(raw, '')), 600);
+      if char_length(reply) < 2 then raise exception 'empty'; end if;
+      insert into post_comments(post_id, author_id, content, parent_id) values (c.post_id, p.id, reply, coalesce(c.parent_id, c.id));
+      update ai_persona_jobs set status = 'done' where id = j.id;
+      update ai_personas set replies = replies + 1 where id = p.id;
+      n := n + 1;
+    exception when others then
+      update ai_persona_jobs set status = 'error' where id = j.id;
+    end;
+  end loop;
+end $$;
+revoke execute on function public._ai_personas_replies() from public, anon, authenticated;
+
+-- ---------- تنفيذ المهام ----------
+create or replace function public._ai_process() returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare cfg ai_config; j ai_jobs; own uuid := _owner_id(); txt text; msgs jsonb; pst posts; cm post_comments; an text; conv uuid;
+  pref text; done_today int; root uuid; other uuid; card text; thread text; task text; mem ai_people; outid uuid; cap int;
+  seen timestamptz; tries int;
+begin
+  if not pg_try_advisory_xact_lock(778899) then return; end if;
+  select * into cfg from ai_config where id = 1;
+  pref := case when cfg.mark_ai then '🤖 ' else '' end;
+  -- المهام الثانوية (منشورات الحسابات الذكية والذاكرة) تنتهي إذا تأخرت ساعتين
+  update ai_jobs set status = 'skipped', info = 'stale', done_at = now()
+   where status = 'pending' and low and created_at < now() - interval '2 hours';
+  -- الرسائل الخاصة أولًا، بعدها تعليقات الناس والترحيب ومنشوراتهم، وآخر شي المهام الثانوية
+  for j in select * from ai_jobs where status = 'pending' and next_at <= now()
+           order by case when kind = 'dm' then 0 when low then 5 when kind = 'comment' then 1 when kind = 'welcome' then 2 else 3 end, id
+           limit 2 for update skip locked loop
+    begin
+      select count(*) into done_today from ai_jobs where status = 'done' and done_at > now() - interval '1 day';
+      if done_today >= cfg.daily_limit then
+        update ai_jobs set status = 'skipped', info = 'daily_limit', done_at = now() where id = j.id; continue;
+      end if;
+      -- الثانوية ما تاكل من حصة الناس: تشتغل بس إذا باقي أكثر من 40% من حد اليوم
+      if j.low and done_today >= cfg.daily_limit * 0.6 then
+        update ai_jobs set status = 'skipped', info = 'budget', done_at = now() where id = j.id; continue;
+      end if;
+      outid := null;
+      if j.kind = 'post' then
+        if not cfg.enabled_comments then update ai_jobs set status = 'skipped', info = 'off', done_at = now() where id = j.id; continue; end if;
+        select * into pst from posts where id = j.ref_id;
+        if pst.id is null or pst.deleted or coalesce(pst.removed_by_mod, false)
+           or exists(select 1 from post_comments where post_id = pst.id and author_id = own and parent_id is null) then
+          update ai_jobs set status = 'skipped', info = 'n/a', done_at = now() where id = j.id; continue;
+        end if;
+        select btrim(regexp_replace(display_name, '\s*🤖$', '')) into an from profiles where id = pst.author_id;
+        if j.low then
+          task := 'Write ONE short friendly public comment (one or two sentences) on this post by the AI account "' || coalesce(an, '') ||
+            '". React to the actual topic with one useful thought or a short appreciation. Do not ask any question. No hashtags.';
+          card := '';
+        else
+          task := 'Write ONE short, warm public comment (one or two sentences) on this new post by "' || coalesce(an, '') ||
+            '". React to what the post is actually about and thank them for sharing when it fits. If their earlier public posts or comments below relate to it, you may connect to them naturally, but never mention anything private. No hashtags.';
+          card := _ai_person_card(pst.author_id, false);
+        end if;
+        txt := _ai_clean_reply(_ai_complete(_ai_system(task || case when card <> '' then E'\n\n' || card else '' end),
+          jsonb_build_array(jsonb_build_object('role', 'user', 'text',
+            'THE POST:' || E'\n' || coalesce(nullif(left(btrim(pst.content), 1500), ''), '(photo or video without text)') ||
+            case when pst.video_url is not null then E'\n[the post has a video]' when pst.image_url is not null then E'\n[the post has a photo]' else '' end)), 600));
+        if txt is null then update ai_jobs set status = 'skipped', info = 'ai_skip', done_at = now() where id = j.id; continue; end if;
+        insert into post_comments(post_id, author_id, content) values (pst.id, own, left(pref || txt, 1000)) returning id into outid;
+      elsif j.kind = 'comment' then
+        if not cfg.reply_comments then update ai_jobs set status = 'skipped', info = 'off', done_at = now() where id = j.id; continue; end if;
+        select * into cm from post_comments where id = j.ref_id;
+        if cm.id is null then update ai_jobs set status = 'skipped', info = 'n/a', done_at = now() where id = j.id; continue; end if;
+        root := coalesce(cm.parent_id, cm.id);
+        if not j.low then
+          -- نرد على آخر تعليق كتبه إنسان بهذا النقاش (مرة وحدة حتى لو كتب كم تعليق ورا بعض)
+          select * into cm from post_comments
+           where (id = root or parent_id = root) and author_id <> own and not coalesce(hidden, false) and not _is_ai_profile(author_id)
+           order by created_at desc, id desc limit 1;
+        end if;
+        if cm.id is null or coalesce(cm.hidden, false)
+           or exists(select 1 from post_comments where (id = root or parent_id = root) and author_id = own and created_at > cm.created_at) then
+          update ai_jobs set status = 'skipped', info = 'already', done_at = now() where id = j.id; continue;
+        end if;
+        cap := case when j.low then 2 else 3 end;
+        if (select count(*) from post_comments where author_id = own and (id = root or parent_id = root)) >= cap then
+          update ai_jobs set status = 'skipped', info = 'cap', done_at = now() where id = j.id; continue;
+        end if;
+        select * into pst from posts where id = cm.post_id;
+        select btrim(regexp_replace(display_name, '\s*🤖$', '')) into an from profiles where id = cm.author_id;
+        thread := _ai_thread_text(root);
+        if j.low then
+          task := 'The AI account "' || coalesce(an, '') || '" replied to your comment on its post. Write ONE short friendly closing reply (one sentence): thank it or add one final thought. Do not ask any question, so the conversation ends naturally.';
+          card := '';
+        else
+          task := '"' || coalesce(an, '') || '" wrote the latest comment in this discussion' ||
+            case when pst.author_id = own then ' on the owner''s post' else '' end ||
+            '. Write ONE short reply (one or two sentences) to their latest comment, using the discussion for context, and do not repeat what you already said. ' ||
+            'If they are arguing, insulting, provoking or going in circles, never argue back: answer once calmly and close the topic politely, or reply with exactly [SKIP]. ' ||
+            'If their comment is only thanks, an emoji or a closing word and nothing more is needed, reply with exactly [SKIP]. Never mention anything from private chats.';
+          card := _ai_person_card(cm.author_id, false);
+        end if;
+        txt := _ai_clean_reply(_ai_complete(_ai_system(task || case when card <> '' then E'\n\n' || card else '' end),
+          jsonb_build_array(jsonb_build_object('role', 'user', 'text',
+            'THE POST' || case when pst.author_id = own then ' (by the owner)' else '' end || E':\n' ||
+            coalesce(nullif(left(btrim(pst.content), 1200), ''), '(photo or video)') ||
+            E'\n\nTHE DISCUSSION (oldest first):\n' || coalesce(thread, '') ||
+            E'\n\nNow reply to the latest comment by ' || coalesce(an, '') || '.')), 600));
+        if txt is null then update ai_jobs set status = 'skipped', info = 'ai_skip', done_at = now() where id = j.id; continue; end if;
+        insert into post_comments(post_id, author_id, content, parent_id)
+          values (cm.post_id, own, left(pref || txt, 1000), root) returning id into outid;
+      elsif j.kind = 'welcome' then
+        if not cfg.welcome_followers then update ai_jobs set status = 'skipped', info = 'off', done_at = now() where id = j.id; continue; end if;
+        select display_name into an from profiles where id = j.ref_id;
+        if an is null or is_blocked_between(own, j.ref_id) or _is_ai_profile(j.ref_id) then
+          update ai_jobs set status = 'skipped', info = 'n/a', done_at = now() where id = j.id; continue;
+        end if;
+        conv := _owner_direct(j.ref_id);
+        if exists(select 1 from messages where conversation_id = conv and sender_id = own) then
+          update ai_jobs set status = 'skipped', info = 'already_talked', done_at = now() where id = j.id; continue;
+        end if;
+        txt := _ai_clean_reply(_ai_complete(_ai_system('"' || an || '" just followed the owner. Write ONE short warm welcome message thanking them for the follow. You may mention something from their public profile below if it fits naturally. Write it in Arabic unless their name and bio are clearly not Arabic.' ||
+            E'\n\n' || _ai_person_card(j.ref_id, false)),
+          jsonb_build_array(jsonb_build_object('role', 'user', 'text', 'New follower: ' || an)), 500));
+        if txt is null then update ai_jobs set status = 'skipped', info = 'ai_skip', done_at = now() where id = j.id; continue; end if;
+        insert into messages(conversation_id, sender_id, type, content, client_id)
+          values (conv, own, 'text', left(pref || txt, 4000), 'ai-' || gen_random_uuid()::text);
+      elsif j.kind = 'memo' then
+        -- تحديث ذاكرة الشخص من آخر محادثة
+        other := j.ref_id;
+        select id into conv from conversations
+         where direct_key = least(own::text, other::text) || '_' || greatest(own::text, other::text);
+        select coalesce(string_agg(case when x.sender_id = own then 'YOU' else 'THEM' end || ': ' ||
+                 left(_ai_msg_text(x.type, x.content, x.file_name), 500), E'\n' order by x.created_at), '')
+          into thread
+          from (select * from messages where conversation_id = conv and not deleted and type <> 'system'
+                order by created_at desc limit 40) x;
+        if conv is null or coalesce(thread, '') = '' then
+          update ai_jobs set status = 'skipped', info = 'n/a', done_at = now() where id = j.id; continue;
+        end if;
+        select * into mem from ai_people where user_id = other;
+        select display_name into an from profiles where id = other;
+        txt := _ai_complete(
+          'You keep short private memory notes that help the owner''s assistant on the social app VYFRI remember a person across conversations. ' ||
+          'Rewrite the notes using the current notes plus the latest conversation. Keep only stable, useful things: what they like to be called, interests, work or study, projects, what they asked for or are still waiting for, promises the assistant made, their language or dialect, and the tone that works with them. Drop things that are no longer true. ' ||
+          'Never store passwords, codes, phone numbers, emails, exact addresses or live locations, ID, card or bank numbers, money amounts, health, religion, sexual life, or anything they asked to keep secret. Do not guess about their personality. ' ||
+          'Write at most 8 short lines in Arabic, each starting with "- ". Output only the notes.',
+          jsonb_build_array(jsonb_build_object('role', 'user', 'text',
+            'PERSON: ' || coalesce(an, '') || E'\n\nCURRENT NOTES:\n' || coalesce(nullif(btrim(mem.notes), ''), '(none yet)') ||
+            E'\n\nLATEST CONVERSATION (oldest first):\n' || thread)), 700);
+        txt := left(btrim(_ai_scrub(regexp_replace(coalesce(txt, ''), '\*\*|__', '', 'g'))), 1400);
+        if txt = '' then update ai_jobs set status = 'skipped', info = 'ai_skip', done_at = now() where id = j.id; continue; end if;
+        insert into ai_people(user_id, notes, memo_at) values (other, txt, now())
+          on conflict (user_id) do update set notes = excluded.notes, memo_at = now(), updated_at = now();
+      else
+        if not cfg.enabled_dms then update ai_jobs set status = 'skipped', info = 'off', done_at = now() where id = j.id; continue; end if;
+        if exists(select 1 from messages where conversation_id = j.ref_id and sender_id = own
+                    and coalesce(client_id, '') not like 'ai-%' and created_at > now() - interval '10 minutes') then
+          update ai_jobs set status = 'skipped', info = 'owner_active', done_at = now() where id = j.id; continue;
+        end if;
+        if (select sender_id from messages where conversation_id = j.ref_id and not deleted and type <> 'system'
+              order by created_at desc limit 1) = own then
+          update ai_jobs set status = 'skipped', info = 'already', done_at = now() where id = j.id; continue;
+        end if;
+        select user_id into other from conversation_members where conversation_id = j.ref_id and user_id <> own limit 1;
+        if other is null or _is_ai_profile(other) then
+          update ai_jobs set status = 'skipped', info = 'n/a', done_at = now() where id = j.id; continue;
+        end if;
+        -- نفس الشخص: 60 رد باليوم كحد أقصى (يحمي الحصة من الإزعاج)
+        if (select count(*) from messages where conversation_id = j.ref_id and sender_id = own and client_id like 'ai-%'
+              and created_at > now() - interval '1 day') >= 60 then
+          update ai_jobs set status = 'skipped', info = 'person_cap', done_at = now() where id = j.id; continue;
+        end if;
+        select display_name into an from profiles where id = other;
+        task := 'You are chatting privately (direct messages) with "' || coalesce(an, '') || '" on behalf of the owner. ' ||
+          'Read the whole conversation and what you know about them below: recognize who they are and continue naturally from where you left off. Remember what was already said and never ask again for something they already told you. ' ||
+          'Be accurate, professional and genuinely helpful; call them by name when it feels natural. Never invent facts about them — if you do not know something, do not pretend. ' ||
+          'If their last message is only a closing word (like ok, thanks or 👍) and nothing more is needed, reply with exactly [SKIP].';
+        card := _ai_person_card(other, true);
+        -- إذا وصلته رسالة جديدة وهو يكتب الرد، يعيد مرة وحدة حتى يرد على كلشي
+        tries := 0;
+        loop
+          tries := tries + 1;
+          select max(created_at) into seen from messages where conversation_id = j.ref_id and sender_id is distinct from own and not deleted;
+          select coalesce(jsonb_agg(jsonb_build_object('role', case when x.sender_id = own then 'assistant' else 'user' end,
+                   'text', _ai_msg_text(x.type, x.content, x.file_name)) order by x.created_at), '[]')
+            into msgs
+            from (select * from messages where conversation_id = j.ref_id and not deleted and type <> 'system'
+                  order by created_at desc limit 30) x;
+          txt := _ai_clean_reply(_ai_complete(_ai_system(task || E'\n\n' || card), msgs, 1200));
+          exit when tries >= 2 or not exists(select 1 from messages where conversation_id = j.ref_id
+                    and sender_id is distinct from own and not deleted and created_at > seen);
+        end loop;
+        if txt is null then update ai_jobs set status = 'skipped', info = 'ai_skip', done_at = now() where id = j.id; continue; end if;
+        insert into messages(conversation_id, sender_id, type, content, client_id)
+          values (j.ref_id, own, 'text', left(pref || txt, 4000), 'ai-' || gen_random_uuid()::text);
+        insert into ai_people(user_id, chats, last_chat_at) values (other, 1, now())
+          on conflict (user_id) do update set chats = ai_people.chats + 1, last_chat_at = now(), updated_at = now();
+        -- تحديث الذاكرة بعد ما تهدأ المحادثة (مرة كل نص ساعة كحد أقصى)
+        if not exists(select 1 from ai_jobs where kind = 'memo' and ref_id = other and status = 'pending')
+           and coalesce((select memo_at from ai_people where user_id = other), '-infinity'::timestamptz) < now() - interval '30 minutes' then
+          insert into ai_jobs(kind, ref_id, low, next_at) values ('memo', other, true, now() + interval '8 minutes');
+        end if;
+      end if;
+      update ai_jobs set status = 'done', done_at = now(), out_id = coalesce(outid, out_id) where id = j.id;
+    exception when others then
+      if sqlerrm like 'rate_limited%' then
+        null;
+      elsif j.attempts < 6 and sqlerrm ~* '(busy|503|429|500|502|504|timed out|unavailable|overloaded|empty|demand)' then
+        update ai_jobs set attempts = attempts + 1, next_at = now() + make_interval(secs => 20 * (j.attempts + 1)),
+          info = left(sqlerrm, 300) where id = j.id;
+      else
+        update ai_jobs set status = 'error', info = left(sqlerrm, 300), done_at = now() where id = j.id;
+      end if;
+    end;
+  end loop;
+  delete from ai_jobs where created_at < now() - interval '7 days';
+end $$;
+revoke execute on function public._ai_process() from public, anon, authenticated;
+
+-- ---------- لوحة المالك: ذاكرة المساعد ----------
+create or replace function public.ai_people_list(p_q text default '') returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  return coalesce((select jsonb_agg(to_jsonb(x) order by x.last_chat_at desc nulls last) from (
+    select a.user_id, p.display_name, p.username, p.avatar_url, a.notes, a.owner_note, a.chats, a.last_chat_at, a.memo_at
+      from ai_people a join profiles p on p.id = a.user_id
+     where coalesce(btrim(p_q), '') = '' or p.display_name ilike '%' || btrim(p_q) || '%' or p.username ilike '%' || btrim(p_q) || '%'
+     order by a.last_chat_at desc nulls last limit 200) x), '[]'::jsonb);
+end $$;
+revoke execute on function public.ai_people_list(text) from public, anon;
+grant execute on function public.ai_people_list(text) to authenticated;
+
+create or replace function public.ai_person_set(p_user uuid, p_owner_note text, p_notes text default null) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if not exists(select 1 from profiles where id = p_user) then raise exception 'الحساب غير موجود'; end if;
+  insert into ai_people(user_id, owner_note, notes)
+    values (p_user, left(coalesce(btrim(p_owner_note), ''), 600), left(_ai_scrub(coalesce(btrim(p_notes), '')), 1400))
+  on conflict (user_id) do update set owner_note = excluded.owner_note,
+    notes = case when p_notes is null then ai_people.notes else excluded.notes end, updated_at = now();
+end $$;
+revoke execute on function public.ai_person_set(uuid, text, text) from public, anon;
+grant execute on function public.ai_person_set(uuid, text, text) to authenticated;
+
+create or replace function public.ai_person_forget(p_user uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  delete from ai_people where user_id = p_user;
+  delete from ai_jobs where kind = 'memo' and ref_id = p_user and status = 'pending';
+end $$;
+revoke execute on function public.ai_person_forget(uuid) from public, anon;
+grant execute on function public.ai_person_forget(uuid) to authenticated;
+
+-- =====================================================================
+--  الإصدار 84: مشاركة الموقع بالمحادثات 📍
+--  الرسالة نوعها location: الإحداثيات بحقل file_name («lat,lng») والنص «📍 اسم المكان».
+--  الخادم يتأكد من صحة الإحداثيات وينظّف الاسم. (القيد الجديد لنوع الرسالة بالإصدار القديم فوق)
+-- =====================================================================
+create or replace function public._msg_location_check() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare lat numeric; lng numeric; lbl text;
+begin
+  if new.type <> 'location' then return new; end if;
+  if coalesce(new.file_name, '') !~ '^-?\d{1,2}(\.\d{1,8})?,-?\d{1,3}(\.\d{1,8})?$' then
+    raise exception 'موقع غير صالح';
+  end if;
+  lat := split_part(new.file_name, ',', 1)::numeric;
+  lng := split_part(new.file_name, ',', 2)::numeric;
+  if abs(lat) > 90 or abs(lng) > 180 then raise exception 'موقع غير صالح'; end if;
+  lbl := btrim(regexp_replace(coalesce(_clean_text(regexp_replace(coalesce(new.content, ''), '^\s*📍\s*', '')), ''), '\s+', ' ', 'g'));
+  new.content := '📍 ' || left(coalesce(nullif(lbl, ''), 'موقع'), 120);
+  new.media_path := null;
+  new.file_size := null;
+  return new;
+end $$;
+revoke execute on function public._msg_location_check() from public, anon, authenticated;
+do $$ begin
+  if not exists(select 1 from pg_trigger where tgname = 'trg_msg_location_check' and tgrelid = 'public.messages'::regclass) then
+    create trigger trg_msg_location_check before insert or update of content, type, file_name on public.messages
+      for each row execute function public._msg_location_check();
+  end if;
+end $$;
 
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';

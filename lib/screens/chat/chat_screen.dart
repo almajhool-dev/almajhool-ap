@@ -24,6 +24,7 @@ import '../../widgets/message_bubble.dart';
 import '../../widgets/sticker_sheet.dart';
 import '../groups/group_screens.dart';
 import '../profile/profile_screens.dart';
+import 'location_screens.dart';
 
 class ChatScreen extends StatefulWidget {
   final String conversationId;
@@ -386,7 +387,7 @@ class _ChatScreenState extends State<ChatScreen> {
         clientId: local.clientId!,
         type: local.type,
         content: local.content,
-        fileName: local.type == 'sticker' ? local.fileName : null,
+        fileName: (local.type == 'sticker' || local.type == 'location') ? local.fileName : null,
         replyTo: local.replyTo,
       );
       await Outbox.remove(local.clientId!);
@@ -452,6 +453,47 @@ class _ChatScreenState extends State<ChatScreen> {
         type: 'sticker',
         content: s.emoji,
         fileName: s.url,
+        replyTo: reply?.id,
+      );
+      SoundService.messageSent();
+      _upsert(sent);
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+      _replace(local.copyWith(state: SendState.failed));
+    }
+  }
+
+  /// مشاركة الموقع: موقعي الحالي أو أي مكان أختاره بالخريطة
+  Future<void> _shareLocation() async {
+    FocusScope.of(context).unfocus();
+    final place = await Navigator.push<SharedPlace>(context, MaterialPageRoute(builder: (_) => const LocationPickerScreen()));
+    if (place == null || !mounted) return;
+    final clientId = _repo.newClientId();
+    final reply = _replyTo;
+    final local = Message(
+      id: 'local-$clientId',
+      clientId: clientId,
+      conversationId: _id,
+      senderId: myId,
+      type: 'location',
+      content: '📍 ${place.label}',
+      fileName: place.coords,
+      replyTo: reply?.id,
+      createdAt: DateTime.now(),
+      state: SendState.pending,
+    );
+    setState(() {
+      _replyTo = null;
+      _messages.insert(0, local);
+    });
+    _jumpToBottom();
+    try {
+      final sent = await _repo.send(
+        conversationId: _id,
+        clientId: clientId,
+        type: 'location',
+        content: local.content,
+        fileName: place.coords,
         replyTo: reply?.id,
       );
       SoundService.messageSent();
@@ -555,6 +597,24 @@ class _ChatScreenState extends State<ChatScreen> {
               }),
               _attachItem(c, Icons.attach_file_rounded, 'ملف', AppColors.cyan, MediaService.pickFile),
               _attachItem(c, Icons.hd_rounded, 'صورة/فيديو\nبأعلى دقة', Colors.teal, MediaService.pickMediaAsFile),
+              InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () {
+                  Navigator.pop(c);
+                  _shareLocation();
+                },
+                child: SizedBox(
+                  width: 72,
+                  child: Column(children: [
+                    CircleAvatar(
+                        radius: 28,
+                        backgroundColor: Colors.red.withValues(alpha: 0.15),
+                        child: const Icon(Icons.location_on_rounded, color: Colors.red)),
+                    const SizedBox(height: 6),
+                    const Text('الموقع', textAlign: TextAlign.center, style: TextStyle(fontSize: 12.5)),
+                  ]),
+                ),
+              ),
             ],
           ),
         ),
@@ -613,6 +673,16 @@ class _ChatScreenState extends State<ChatScreen> {
                   onTap: () {
                     Navigator.pop(c);
                     Clipboard.setData(ClipboardData(text: m.content ?? ''));
+                    showSnack(context, 'تم النسخ');
+                  },
+                ),
+              if (m.type == 'location' && SharedPlace.fromMessage(m) != null)
+                ListTile(
+                  leading: const Icon(Icons.copy_rounded),
+                  title: const Text('نسخ رابط الموقع'),
+                  onTap: () {
+                    Navigator.pop(c);
+                    Clipboard.setData(ClipboardData(text: SharedPlace.fromMessage(m)!.mapsUrl));
                     showSnack(context, 'تم النسخ');
                   },
                 ),

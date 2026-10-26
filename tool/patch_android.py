@@ -48,6 +48,9 @@ def patch_manifest():
         "android.permission.USE_FULL_SCREEN_INTENT",
         "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
         "android.permission.REQUEST_INSTALL_PACKAGES",
+        # مشاركة الموقع بالمحادثة (بس لما المستخدم يختار يدز موقعه)
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
     ]
     block = ""
     for p in perms:
@@ -55,6 +58,8 @@ def patch_manifest():
             block += f'    <uses-permission android:name="{p}"/>\n'
     if "android.hardware.camera" not in s:
         block += '    <uses-feature android:name="android.hardware.camera" android:required="false"/>\n'
+    if "android.hardware.location.gps" not in s:
+        block += '    <uses-feature android:name="android.hardware.location.gps" android:required="false"/>\n'
     if block:
         s = s.replace("<application", block + "    <application", 1)
     # خدمة الخلفية لاستقبال المكالمات والرسائل والتطبيق مغلق

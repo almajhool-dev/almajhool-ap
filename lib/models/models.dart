@@ -200,6 +200,8 @@ class Message {
         return '📎 ${fileName ?? 'ملف'}';
       case 'sticker':
         return '${content ?? ''} ملصق';
+      case 'location':
+        return content ?? '📍 موقع';
       default:
         return content ?? '';
     }

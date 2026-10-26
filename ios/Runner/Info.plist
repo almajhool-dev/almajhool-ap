@@ -68,6 +68,8 @@
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>VYFRI يحتاج الكاميرا للمكالمات المرئية والبث وتصوير الصور والقصص</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>VYFRI يستخدم موقعك بس لما تختار تدز موقعك لصديق بالمحادثة</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>VYFRI يحتاج المايكروفون للمكالمات والرسائل الصوتية والبث</string>
 	<key>NSPhotoLibraryUsageDescription</key>

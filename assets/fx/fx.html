@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>VYFRI FX</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#000;color:#fff;overflow:hidden;font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;user-select:none;-webkit-user-select:none}
+#out{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
+video{position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none}
+button{font-family:inherit;cursor:pointer}
+.bar{position:fixed;left:0;right:0;display:flex;align-items:center;gap:8px;padding:10px 12px;z-index:5}
+#top{top:0;padding-top:max(10px,env(safe-area-inset-top));background:linear-gradient(#000b,#0000)}
+#bottom{bottom:0;padding-bottom:max(16px,env(safe-area-inset-bottom));justify-content:center;gap:20px;background:linear-gradient(#0000,#000c)}
+.chip{border:1px solid #ffffff40;background:#ffffff18;color:#fff;border-radius:999px;padding:8px 14px;font-size:14px;font-weight:800}
+.chip.on{background:#fff;color:#000}
+.icon{width:50px;height:50px;border-radius:50%;border:1px solid #ffffff40;background:#ffffff1f;color:#fff;font-size:22px;display:grid;place-items:center;padding:0}
+.icon[hidden]{display:none}
+#rec{width:74px;height:74px;border-radius:50%;border:4px solid #fff;background:transparent;display:grid;place-items:center;padding:0}
+#rec i{display:block;width:56px;height:56px;border-radius:50%;background:#ff2d55;transition:all .2s}
+#rec.on i{width:28px;height:28px;border-radius:8px}
+#rtime{position:fixed;top:calc(70px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);background:#ff2d55;color:#fff;font-weight:800;border-radius:999px;padding:4px 12px;font-size:14px;display:none;z-index:6;direction:ltr}
+#hint{position:fixed;left:14px;right:14px;bottom:calc(118px + env(safe-area-inset-bottom));text-align:center;font-size:13px;line-height:1.6;color:#fffffff0;text-shadow:0 1px 4px #000;z-index:4}
+.overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:#000d;z-index:10;padding:24px}
+.overlay.show{display:flex}
+.card{background:#0f1530;border:1px solid #ffffff26;border-radius:22px;padding:22px;max-width:420px;width:100%;text-align:center;line-height:1.8}
+.card h3{margin:0 0 6px;font-size:20px}
+.card p{margin:6px 0;color:#d6dbe6;font-size:15px}
+.btn{display:block;width:100%;margin-top:10px;padding:13px;border-radius:14px;border:0;font-size:16px;font-weight:800;background:linear-gradient(135deg,#22d3ee,#7c4dff);color:#04121a}
+.btn.alt{background:#ffffff1a;color:#fff;border:1px solid #ffffff33}
+#count{position:fixed;inset:0;display:none;align-items:center;justify-content:center;font-size:150px;font-weight:900;color:#fff;text-shadow:0 0 40px #000;z-index:9;pointer-events:none}
+#spin{width:44px;height:44px;border:4px solid #ffffff30;border-top-color:#22d3ee;border-radius:50%;animation:s 1s linear infinite;margin:0 auto 14px}
+@keyframes s{to{transform:rotate(360deg)}}
+#toast{position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);background:#000c;border:1px solid #ffffff30;border-radius:16px;padding:12px 18px;font-weight:800;display:none;z-index:12}
+</style>
+</head>
+<body>
+<canvas id="out"></canvas>
+<video id="cam" playsinline muted autoplay></video>
+<div id="top" class="bar">
+  <button class="icon" id="close" aria-label="رجوع">✕</button>
+  <div style="flex:1"></div>
+  <button class="chip" data-mode="ghost">👻 الشبح</button>
+  <button class="chip" data-mode="neon">🧬 الوجه النيون</button>
+</div>
+<div id="rtime">● 00:00</div>
+<div id="hint"></div>
+<div id="bottom" class="bar">
+  <button class="icon" id="flip" aria-label="قلب الكاميرا">🔄</button>
+  <button class="icon" id="bgbtn" aria-label="تصوير الخلفية">🖼️</button>
+  <button id="rec" aria-label="تسجيل فيديو"><i></i></button>
+  <button class="icon" id="shot" aria-label="التقاط صورة">📸</button>
+</div>
+<div id="count"></div>
+<div id="toast"></div>
+<div class="overlay show" id="loading"><div class="card"><div id="spin"></div><h3>دا نجهّز ذكاء الكاميرا...</h3><p id="ltext">أول مرة ياخذ ثواني (يتحمّل مرة وحدة وبعدها يفتح بسرعة)</p></div></div>
+<div class="overlay" id="bgcard"><div class="card">
+  <h3>👻 وضع الشبح</h3>
+  <p>حتى تختفي بشكل صحيح، نحتاج صورة للمكان اللي وراك بدونك:</p>
+  <p>ثبّت الهاتف بمكانه، اضغط «صوّر الخلفية» واطلع من قدام الكاميرا ٣ ثواني.</p>
+  <button class="btn" id="bgnow">📸 صوّر الخلفية</button>
+  <button class="btn alt" id="bgskip">كمّل بدونها</button>
+</div></div>
+<div class="overlay" id="err"><div class="card"><h3>ما اشتغلت الكاميرا</h3><p id="etext"></p><button class="btn" id="retry">جرّب مرة ثانية</button><button class="btn alt" id="eclose">رجوع</button></div></div>
+<script type="module">
+// =====================================================================
+//  مؤثرات الكاميرا لمالك VYFRI:
+//   👻 وضع الشبح: تقرص الإبهام ويا السبابة فتختفي (الخلفية تبين مكانك)، وبإيديك الثنتين تطلع بوابة.
+//   🧬 الوجه النيون: شبكة نيون على الوجه + نسخة نقاط ثلاثية الأبعاد، واللون يتغيّر بعدد الأصابع.
+//  كل التحليل يصير على الهاتف نفسه (MediaPipe)، وما ينرسل أي شي للإنترنت.
+// =====================================================================
+const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21';
+const MODELS = {
+  hand: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+  face: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+  seg: 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/1/selfie_segmenter.tflite',
+};
+let MODE = '__FX_MODE__';
+if (MODE.indexOf('__') === 0) MODE = new URLSearchParams(location.search).get('mode') || 'ghost';
+
+const $ = (id) => document.getElementById(id);
+const post = (o) => { try { if (window.VYFRI) window.VYFRI.postMessage(JSON.stringify(o)); } catch (e) {} };
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const approach = (v, t, step) => (v < t ? Math.min(t, v + step) : Math.max(t, v - step));
+const toast = (t, ms = 1600) => { const e = $('toast'); e.textContent = t; e.style.display = 'block'; clearTimeout(toast._t); toast._t = setTimeout(() => (e.style.display = 'none'), ms); };
+
+let mp = null, vision = null, hands = null, face = null, seg = null, delegate = 'GPU';
+const out = $('out'), ctx = out.getContext('2d');
+const video = $('cam');
+const mk = () => document.createElement('canvas');
+const frameC = mk(), fctx = frameC.getContext('2d');
+const maskC = mk(), mctx = maskC.getContext('2d');
+const smallMask = mk(), smctx = smallMask.getContext('2d');
+const bgC = mk(), bgctx = bgC.getContext('2d');
+const tmpC = mk(), tctx = tmpC.getContext('2d');
+const ghostC = mk(), gctx = ghostC.getContext('2d');
+const blurC = mk(), blctx = blurC.getContext('2d');
+const p1 = mk(), p1c = p1.getContext('2d');
+const p2 = mk(), p2c = p2.getContext('2d');
+let maskImg = null;
+let W = 0, H = 0, U = 1, front = true, stream = null, running = false;
+// الجزء الظاهر من الكاميرا بالشاشة (نفس نسبة الشاشة) — هو اللي ينرسم وينسجل
+let CX = 0, CY = 0, CW = 0, CH = 0, K = 1;
+
+// ---------- تحميل النماذج (تنحفظ بالهاتف بعد أول مرة) ----------
+async function modelBuffer(url) {
+  try {
+    const c = await caches.open('vyfri-fx-v1');
+    let r = await c.match(url);
+    if (!r) {
+      r = await fetch(url, { mode: 'cors' });
+      if (!r.ok) throw new Error('http ' + r.status);
+      try { await c.put(url, r.clone()); } catch (e) {}
+    }
+    return new Uint8Array(await r.arrayBuffer());
+  } catch (e) {
+    const r = await fetch(url, { mode: 'cors' });
+    if (!r.ok) throw new Error('ما گدرنا نحمّل النموذج (' + r.status + ')');
+    return new Uint8Array(await r.arrayBuffer());
+  }
+}
+
+async function createTask(Cls, url, opts) {
+  const buf = await modelBuffer(url);
+  const order = delegate === 'GPU' ? ['GPU', 'CPU'] : ['CPU'];
+  let last = null;
+  for (const d of order) {
+    try {
+      const t = await Cls.createFromOptions(vision, { baseOptions: { modelAssetBuffer: buf, delegate: d }, runningMode: 'VIDEO', ...opts });
+      delegate = d;
+      return t;
+    } catch (e) { last = e; }
+  }
+  throw last;
+}
+
+async function ensureModels() {
+  if (!mp) {
+    $('ltext').textContent = 'دا نحمّل محرّك الذكاء...';
+    mp = await import(MP + '/vision_bundle.mjs');
+    vision = await mp.FilesetResolver.forVisionTasks(MP + '/wasm');
+  }
+  if (!hands) {
+    $('ltext').textContent = 'دا نحمّل نموذج الإيدين ✋...';
+    hands = await createTask(mp.HandLandmarker, MODELS.hand, { numHands: 2, minHandDetectionConfidence: 0.55, minHandPresenceConfidence: 0.5, minTrackingConfidence: 0.5 });
+  }
+  if (MODE === 'ghost' && !seg) {
+    $('ltext').textContent = 'دا نحمّل نموذج فصل الشخص عن الخلفية 👻...';
+    seg = await createTask(mp.ImageSegmenter, MODELS.seg, { outputCategoryMask: false, outputConfidenceMasks: true });
+  }
+  if (MODE === 'neon' && !face) {
+    $('ltext').textContent = 'دا نحمّل نموذج الوجه 🧬...';
+    face = await createTask(mp.FaceLandmarker, MODELS.face, { numFaces: 1, outputFaceBlendshapes: false, minFaceDetectionConfidence: 0.5, minFacePresenceConfidence: 0.5, minTrackingConfidence: 0.5 });
+    buildCloud();
+  }
+}
+
+// ---------- الكاميرا ----------
+async function startCam() {
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  const v = { facingMode: front ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } };
+  // المايكروفون ما يشتغل هنا — بس وقت تسجيل الفيديو
+  stream = await navigator.mediaDevices.getUserMedia({ video: v, audio: false });
+  video.srcObject = stream;
+  await new Promise((r) => { if (video.readyState >= 1 && video.videoWidth) r(); else video.onloadedmetadata = () => r(); });
+  try { await video.play(); } catch (e) {}
+  resize();
+}
+
+function layout() {
+  if (!W) return;
+  const va = (window.innerWidth || 1) / (window.innerHeight || 1), ca = W / H;
+  if (ca > va) { CH = H; CW = Math.round(H * va); CX = Math.round((W - CW) / 2); CY = 0; }
+  else { CW = W; CH = Math.round(W / va); CX = 0; CY = Math.round((H - CH) / 2); }
+  out.width = CW; out.height = CH;
+  K = CH / (window.innerHeight || CH);   // بكسلات الصورة لكل بكسل بالشاشة
+  U = K;
+}
+window.addEventListener('resize', layout);
+
+function resize() {
+  W = video.videoWidth || 640; H = video.videoHeight || 480;
+  for (const c of [frameC, maskC, bgC, tmpC, ghostC]) { c.width = W; c.height = H; }
+  layout();
+  blurC.width = Math.max(16, Math.round(W / 12)); blurC.height = Math.max(16, Math.round(H / 12));
+  p1.width = Math.max(8, Math.round(W / 16)); p1.height = Math.max(8, Math.round(H / 16));
+  p2.width = Math.max(4, Math.round(W / 64)); p2.height = Math.max(4, Math.round(H / 64));
+  bgReady = false;
+}
+
+// ---------- الحلقة الرئيسية ----------
+let lastVT = -1, lastT = performance.now(), fps = 0, frameN = 0, lastTs = 0;
+function loop() {
+  requestAnimationFrame(loop);
+  if (!running || !W || video.readyState < 2) return;
+  const vt = video.currentTime;
+  if (vt === lastVT) return;
+  lastVT = vt;
+  const now = performance.now();
+  const dt = Math.min(0.2, (now - lastT) / 1000);
+  lastT = now;
+  fps = fps ? fps * 0.9 + (1 / Math.max(dt, 0.001)) * 0.1 : 15;
+  frameN++;
+  fctx.save();
+  if (front) { fctx.translate(W, 0); fctx.scale(-1, 1); }
+  fctx.drawImage(video, 0, 0, W, H);
+  fctx.restore();
+  const ts = Math.max(lastTs + 1, Math.round(now));
+  lastTs = ts;
+  ctx.setTransform(1, 0, 0, 1, -CX, -CY);
+  try {
+    if (MODE === 'ghost') ghostFrame(ts, dt, now); else neonFrame(ts, dt, now);
+  } catch (e) {
+    ctx.drawImage(frameC, 0, 0);
+  }
+}
+
+// ---------- الإيدين ----------
+const HAND = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+function detectHands(ts) {
+  if (!hands) return { lm: [], side: [] };
+  const r = hands.detectForVideo(frameC, ts);
+  return { lm: r.landmarks || [], side: (r.handedness || []).map((h) => (h && h[0] ? h[0].categoryName : '?')) };
+}
+const px = (p) => [p.x * W, p.y * H];
+const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+
+function drawHand(lm, color, tipColor) {
+  ctx.save();
+  ctx.lineWidth = 2.2 * U; ctx.strokeStyle = color; ctx.lineCap = 'round';
+  ctx.beginPath();
+  for (const [a, b] of HAND) { const A = px(lm[a]), B = px(lm[b]); ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]); }
+  ctx.stroke();
+  ctx.fillStyle = color;
+  for (let i = 0; i < 21; i++) { const P = px(lm[i]); ctx.beginPath(); ctx.arc(P[0], P[1], 3.2 * U, 0, 6.283); ctx.fill(); }
+  ctx.fillStyle = tipColor;
+  for (const i of [4, 8]) { const P = px(lm[i]); ctx.beginPath(); ctx.arc(P[0], P[1], 6.5 * U, 0, 6.283); ctx.fill(); }
+  ctx.restore();
+}
+
+// ---------- 👻 وضع الشبح ----------
+let ghost = 0, ghostTarget = 0, bgReady = false, lastPinchAt = 0, flashUntil = 0;
+const pinched = {};
+function drawMask(m) {
+  const mw = m.width, mh = m.height, data = m.getAsFloat32Array();
+  if (!maskImg || smallMask.width !== mw || smallMask.height !== mh) {
+    smallMask.width = mw; smallMask.height = mh; maskImg = smctx.createImageData(mw, mh);
+  }
+  const p = maskImg.data;
+  for (let i = 0, j = 3; i < data.length; i++, j += 4) {
+    const a = (data[i] - 0.15) * 2.6;
+    p[j] = a <= 0 ? 0 : a >= 1 ? 255 : a * 255;
+  }
+  smctx.putImageData(maskImg, 0, 0);
+  mctx.clearRect(0, 0, W, H);
+  mctx.imageSmoothingEnabled = true;
+  // نوسّع حدود الشخص شوية حتى ما يبقى أثر حوله
+  const o = 6 * U;
+  mctx.globalCompositeOperation = 'lighter';
+  for (const [dx, dy] of [[0, 0], [-o, 0], [o, 0], [0, -o], [0, o]]) mctx.drawImage(smallMask, dx, dy, W, H);
+  mctx.globalCompositeOperation = 'source-over';
+}
+
+function updateBg() {
+  tctx.globalCompositeOperation = 'copy';
+  tctx.drawImage(frameC, 0, 0);
+  tctx.globalCompositeOperation = 'destination-out';
+  tctx.drawImage(maskC, 0, 0);
+  tctx.globalCompositeOperation = 'source-over';
+  if (!bgReady) bgctx.drawImage(tmpC, 0, 0);
+  else { bgctx.globalAlpha = 0.05; bgctx.drawImage(tmpC, 0, 0); bgctx.globalAlpha = 1; }
+}
+
+function captureBg() {
+  bgctx.clearRect(0, 0, W, H);
+  bgctx.drawImage(frameC, 0, 0);
+  bgReady = true;
+}
+
+function ghostFrame(ts, dt, now) {
+  const hs = detectHands(ts);
+  let haveMask = false;
+  if (seg) {
+    const r = seg.segmentForVideo(frameC, ts);
+    const masks = r.confidenceMasks || [];
+    const m = masks.length > 1 ? masks[masks.length - 1] : masks[0];
+    if (m) { drawMask(m); haveMask = true; }
+    if (r.close) r.close();
+  }
+  if (haveMask) updateBg();
+
+  // القرص: الإبهام ويا السبابة سوا (بأي إيد) يبدّل بين الاختفاء والرجوع
+  const seen = {};
+  const pinchPts = [];
+  hs.lm.forEach((lm, i) => {
+    const key = hs.side[i] + (seen[hs.side[i]] ? '2' : '');
+    seen[hs.side[i]] = 1;
+    const size = dist(px(lm[0]), px(lm[9])) || 1;
+    const ratio = dist(px(lm[4]), px(lm[8])) / size;
+    const was = !!pinched[key];
+    const isNow = was ? ratio < 0.42 : ratio < 0.27;
+    pinched[key] = isNow;
+    pinchPts.push([(lm[4].x + lm[8].x) / 2 * W, (lm[4].y + lm[8].y) / 2 * H]);
+    if (isNow && !was && now - lastPinchAt > 700) {
+      lastPinchAt = now;
+      flashUntil = now + 900;
+      ghostTarget = ghostTarget > 0.5 ? 0 : 1;
+    }
+  });
+  for (const k of Object.keys(pinched)) if (!seen[k.replace('2', '')]) delete pinched[k];
+
+  ghost = approach(ghost, ghostTarget, dt * 1.15);
+  ctx.globalAlpha = 1;
+  ctx.drawImage(frameC, 0, 0);
+  if (ghost > 0.003 && haveMask) {
+    // اللي ورا الشخص: الخلفية المصوّرة بالضبط، والأماكن اللي ما انشافت تنملي بألوان الخلفية اللي حواليها
+    blctx.drawImage(frameC, 0, 0, blurC.width, blurC.height);
+    p1c.globalCompositeOperation = 'copy';
+    p1c.drawImage(bgC, 0, 0, p1.width, p1.height);
+    p1c.globalCompositeOperation = 'source-over';
+    p1c.drawImage(tmpC, 0, 0, p1.width, p1.height);
+    p2c.globalCompositeOperation = 'copy';
+    p2c.drawImage(p1, 0, 0, p2.width, p2.height);
+    p2c.globalCompositeOperation = 'source-over';
+    for (let k = 0; k < 3; k++) p2c.drawImage(p2, 0, 0);
+    gctx.imageSmoothingEnabled = true;
+    gctx.globalCompositeOperation = 'copy';
+    gctx.drawImage(blurC, 0, 0, W, H);
+    gctx.globalCompositeOperation = 'source-over';
+    gctx.drawImage(p2, 0, 0, W, H);
+    gctx.drawImage(p1, 0, 0, W, H);
+    gctx.drawImage(bgC, 0, 0);
+    gctx.globalCompositeOperation = 'destination-in';
+    gctx.drawImage(maskC, 0, 0);
+    gctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = ghost;
+    ctx.drawImage(ghostC, 0, 0);
+    ctx.globalAlpha = 1;
+    // خطوط مسح + تعتيم خفيف (مثل الهولوگرام)
+    ctx.fillStyle = 'rgba(20,10,0,' + (0.18 * ghost).toFixed(3) + ')';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(0,0,0,' + (0.10 * ghost).toFixed(3) + ')';
+    const step = Math.max(3, Math.round(3 * U));
+    for (let y = CY + (frameN % step); y < CY + CH; y += step) ctx.fillRect(CX, y, CW, 1);
+  }
+
+  for (const lm of hs.lm) drawHand(lm, 'rgba(255,214,200,0.95)', '#ff3b30');
+
+  // البوابة بين الإيدين
+  if (pinchPts.length === 2) {
+    const [a, b] = pinchPts;
+    const x = Math.min(a[0], b[0]), y = Math.min(a[1], b[1]), w = Math.abs(a[0] - b[0]), h = Math.abs(a[1] - b[1]);
+    if (w > 60 * U && h > 40 * U) {
+      ctx.save();
+      ctx.strokeStyle = '#ffe14d'; ctx.shadowColor = '#ffd000'; ctx.shadowBlur = 14 * U;
+      ctx.lineWidth = 3 * U; ctx.strokeRect(x, y, w, h);
+      ctx.lineWidth = 7 * U; const c = Math.min(26 * U, w / 4, h / 4);
+      ctx.beginPath();
+      for (const [cx, cy, sx, sy] of [[x, y, 1, 1], [x + w, y, -1, 1], [x, y + h, 1, -1], [x + w, y + h, -1, -1]]) {
+        ctx.moveTo(cx, cy + sy * c); ctx.lineTo(cx, cy); ctx.lineTo(cx + sx * c, cy);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 6 * U; ctx.fillStyle = '#ffe9a0';
+      ctx.font = '800 ' + Math.round(20 * U) + 'px system-ui,sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(ghostTarget > 0.5 ? 'اقرص مرة ثانية ← ترجع' : 'اقرص ← تختفي 👻', x + w / 2, y + h / 2);
+      ctx.restore();
+    }
+  }
+
+  // شريط الحالة
+  ctx.save();
+  const bx = CX + 16 * K, by = CY + 96 * K, bw = 150 * K, bh = 8 * K;
+  ctx.font = '700 ' + Math.round(15 * U) + 'px ui-monospace,monospace';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'bottom'; ctx.direction = 'ltr';
+  ctx.fillStyle = '#fff'; ctx.fillText('GHOST ' + Math.round(ghost * 100) + '%', bx, by - 6 * U);
+  ctx.fillText('HANDS ' + hs.lm.length, bx + bw + 20 * U, by + bh);
+  ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.fillRect(bx, by, bw, bh);
+  const g = ctx.createLinearGradient(bx, 0, bx + bw, 0); g.addColorStop(0, '#ffd000'); g.addColorStop(1, '#ff7a00');
+  ctx.fillStyle = g; ctx.fillRect(bx, by, bw * ghost, bh);
+  if (now < flashUntil) {
+    ctx.textAlign = 'center'; ctx.fillStyle = '#62ff8a'; ctx.shadowColor = '#000'; ctx.shadowBlur = 6 * U;
+    ctx.font = '800 ' + Math.round(22 * U) + 'px system-ui,sans-serif';
+    ctx.fillText('✓ تم القرص', CX + CW / 2, CY + CH - 196 * K);
+  }
+  ctx.restore();
+}
+
+// ---------- 🧬 الوجه النيون ----------
+const LP = [10, 297, 284, 389, 454, 361, 397, 379, 400, 152, 176, 150, 172, 132, 234, 162, 54, 67,
+  151, 9, 168, 4, 2, 98, 327, 105, 334, 33, 263, 133, 362, 61, 291, 0, 17, 199, 50, 280, 207, 427];
+let lpEdges = null, lpAcc = null, lpN = 0;
+let cloudPts = null; // [a,b,c,w1,w2,w3,bright,dx,dy,rnd]
+let fingerHist = [], colorNow = [0, 229, 255], dissolve = 0, lastHands = { lm: [], side: [] };
+const NEON = { 0: [0, 229, 255], 1: [43, 255, 136], 2: [255, 230, 0], 3: [255, 59, 59], 4: [61, 139, 255], 5: [224, 64, 251] };
+
+function delaunay(pts) {
+  const n = pts.length;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [x, y] of pts) { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
+  const d = Math.max(maxX - minX, maxY - minY) * 20, mx = (minX + maxX) / 2, my = (minY + maxY) / 2;
+  const P = pts.concat([[mx - d, my - d], [mx, my + d], [mx + d, my - d]]);
+  const cc = (t) => {
+    const [ax, ay] = P[t[0]], [bx, by] = P[t[1]], [cx, cy] = P[t[2]];
+    const D = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) || 1e-12;
+    const ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / D;
+    const uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / D;
+    return { x: ux, y: uy, r2: (ax - ux) ** 2 + (ay - uy) ** 2 };
+  };
+  let tris = [{ v: [n, n + 1, n + 2] }];
+  tris[0].c = cc(tris[0].v);
+  for (let i = 0; i < n; i++) {
+    const [x, y] = P[i];
+    const keep = [], edges = [];
+    for (const t of tris) {
+      if ((x - t.c.x) ** 2 + (y - t.c.y) ** 2 < t.c.r2) {
+        for (const [a, b] of [[t.v[0], t.v[1]], [t.v[1], t.v[2]], [t.v[2], t.v[0]]]) {
+          const k = edges.findIndex((e) => (e[0] === b && e[1] === a) || (e[0] === a && e[1] === b));
+          if (k >= 0) edges.splice(k, 1); else edges.push([a, b]);
+        }
+      } else keep.push(t);
+    }
+    tris = keep;
+    for (const [a, b] of edges) { const t = { v: [a, b, i] }; t.c = cc(t.v); tris.push(t); }
+  }
+  return tris.filter((t) => t.v[0] < n && t.v[1] < n && t.v[2] < n).map((t) => t.v);
+}
+
+function buildLowPoly(lms) {
+  // نجمع مواقع النقاط من كم لقطة ونقسّمها مثلثات مرة وحدة (شكل «لو بولي» ثابت)
+  if (!lpAcc) { lpAcc = LP.map(() => [0, 0]); lpN = 0; }
+  LP.forEach((idx, k) => { lpAcc[k][0] += lms[idx].x * W; lpAcc[k][1] += lms[idx].y * H; });
+  lpN++;
+  if (lpN < 6) return;
+  const pts = lpAcc.map(([x, y]) => [x / lpN, y / lpN]);
+  const tris = delaunay(pts);
+  const set = new Set();
+  lpEdges = [];
+  for (const [a, b, c] of tris) for (const [p, q] of [[a, b], [b, c], [c, a]]) {
+    const key = Math.min(p, q) + '-' + Math.max(p, q);
+    if (!set.has(key)) { set.add(key); lpEdges.push([LP[p], LP[q]]); }
+  }
+}
+
+function buildCloud() {
+  if (cloudPts || !mp) return;
+  const pts = [];
+  const rnd = (() => { let s = 1234567; return () => ((s = (s * 16807) % 2147483647) / 2147483647); })();
+  const T = mp.FaceLandmarker.FACE_LANDMARKS_TESSELATION || [];
+  for (let i = 0; i + 2 < T.length; i += 3) {
+    const a = T[i].start, b = T[i].end, c = T[i + 1].end;
+    if (T[i + 1].start !== b || T[i + 2].start !== c || T[i + 2].end !== a) continue;
+    for (let k = 0; k < 3; k++) {
+      let u = rnd(), v = rnd();
+      if (u + v > 1) { u = 1 - u; v = 1 - v; }
+      pts.push([a, b, c, 1 - u - v, u, v, 0]);
+    }
+  }
+  for (let i = 0; i < 478; i++) pts.push([i, i, i, 1, 0, 0, 0]);
+  const bright = [].concat(mp.FaceLandmarker.FACE_LANDMARKS_LIPS || [], mp.FaceLandmarker.FACE_LANDMARKS_LEFT_EYE || [],
+    mp.FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE || [], mp.FaceLandmarker.FACE_LANDMARKS_LEFT_EYEBROW || [],
+    mp.FaceLandmarker.FACE_LANDMARKS_RIGHT_EYEBROW || []);
+  for (const e of bright) for (let k = 0; k < 4; k++) { const w = k / 4; pts.push([e.start, e.end, e.end, 1 - w, w, 0, 1]); }
+  for (const p of pts) { const ang = rnd() * 6.283; p.push(Math.cos(ang), Math.sin(ang), 0.4 + rnd() * 0.9); }
+  cloudPts = pts;
+}
+
+function countFingers(lm) {
+  const P = (i) => px(lm[i]);
+  let n = 0;
+  for (const [tip, pip] of [[8, 6], [12, 10], [16, 14], [20, 18]]) if (dist(P(tip), P(0)) > dist(P(pip), P(0)) * 1.12) n++;
+  if (dist(P(4), P(17)) > dist(P(2), P(17)) * 1.12 && dist(P(4), P(5)) > dist(P(3), P(5)) * 1.05) n++;
+  return n;
+}
+
+function neonColor(n, now) {
+  if (n >= 6) { // الإيدين الثنتين = قوس قزح 🌈
+    const h = (now / 12) % 360, s = 1, l = 0.58;
+    const f = (k) => { const a = s * Math.min(l, 1 - l); const kk = (k + h / 30) % 12; return Math.round(255 * (l - a * Math.max(-1, Math.min(kk - 3, 9 - kk, 1)))); };
+    return [f(0), f(8), f(4)];
+  }
+  return NEON[n] || NEON[0];
+}
+
+function neonFrame(ts, dt, now) {
+  let lms = null;
+  if (face) { const r = face.detectForVideo(frameC, ts); lms = r.faceLandmarks && r.faceLandmarks[0]; }
+  if (frameN % 2 === 0 || !lastHands.lm.length) lastHands = detectHands(ts);
+  const hs = lastHands;
+  let n = 0; for (const lm of hs.lm) n += countFingers(lm);
+  // تنعيم: العدد الأكثر تكرار بآخر ثلث ثانية (حتى ما يرمش اللون)
+  fingerHist.push([n, now]);
+  while (fingerHist.length > 1 && now - fingerHist[0][1] > 350) fingerHist.shift();
+  const cnt = {}; let fc = 0, best = -1;
+  for (const [v] of fingerHist) { cnt[v] = (cnt[v] || 0) + 1; if (cnt[v] > best || (cnt[v] === best && v === n)) { best = cnt[v]; fc = v; } }
+  const target = neonColor(fc, now);
+  const k = clamp(dt * 7, 0, 1);
+  colorNow = colorNow.map((c, i) => c + (target[i] - c) * k);
+  dissolve = approach(dissolve, fc === 5 ? 1 : 0, dt * 1.7);
+  const col = (a) => 'rgba(' + colorNow.map(Math.round).join(',') + ',' + a + ')';
+
+  ctx.globalAlpha = 1;
+  ctx.drawImage(frameC, 0, 0);
+  ctx.fillStyle = 'rgba(0,0,0,0.16)'; ctx.fillRect(0, 0, W, H);
+
+  if (lms) {
+    if (!lpEdges) buildLowPoly(lms);
+    if (lpEdges) {
+      ctx.save();
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      for (const [a, b] of lpEdges) { ctx.moveTo(lms[a].x * W, lms[a].y * H); ctx.lineTo(lms[b].x * W, lms[b].y * H); }
+      ctx.strokeStyle = col(0.95); ctx.lineWidth = 2.4 * U; ctx.shadowColor = col(1); ctx.shadowBlur = 12 * U;
+      ctx.stroke();
+      ctx.shadowBlur = 0; ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1 * U;
+      ctx.stroke();
+      ctx.restore();
+    }
+    drawCloud(lms, now, col);
+  }
+
+  // أطراف الأصابع المرفوعة
+  for (const lm of hs.lm) {
+    ctx.fillStyle = col(0.95);
+    for (const i of [4, 8, 12, 16, 20]) { const P = px(lm[i]); ctx.beginPath(); ctx.arc(P[0], P[1], 5 * U, 0, 6.283); ctx.fill(); }
+  }
+
+  ctx.save();
+  ctx.direction = 'ltr'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+  ctx.font = '700 ' + Math.round(16 * U) + 'px ui-monospace,monospace';
+  ctx.fillStyle = '#fff'; ctx.shadowColor = '#000'; ctx.shadowBlur = 4 * U;
+  ctx.textAlign = 'right';
+  ctx.fillText('FPS: ' + fps.toFixed(1), CX + CW - 16 * K, CY + 96 * K);
+  ctx.fillStyle = col(1);
+  ctx.fillText('FINGERS: ' + fc, CX + CW - 16 * K, CY + 118 * K);
+  ctx.restore();
+}
+
+function drawCloud(lms, now, col) {
+  if (!cloudPts) buildCloud();
+  if (!cloudPts) return;
+  let cx = 0, cy = 0;
+  for (let i = 0; i < 468; i++) { cx += lms[i].x; cy += lms[i].y; }
+  cx = cx / 468 * W; cy = cy / 468 * H;
+  const fh = Math.hypot((lms[10].x - lms[152].x) * W, (lms[10].y - lms[152].y) * H) || 1;
+  const size = Math.min(CW, CH) * 0.4;
+  const S = size / fh;
+  const ox = CX + 12 * K + size * 0.55, oy = CY + 76 * K + size * 0.62;
+  const ang = 0.42 * Math.sin(now * 0.0007), ca = Math.cos(ang), sa = Math.sin(ang);
+  const L = lms.map((p) => [(p.x * W - cx) * S, (p.y * H - cy) * S, p.z * W * S]);
+  const shake = dissolve * size * 0.11;
+  const buckets = [[], [], [], []];
+  for (const p of cloudPts) {
+    const A = L[p[0]], B = L[p[1]], C = L[p[2]];
+    const x = A[0] * p[3] + B[0] * p[4] + C[0] * p[5];
+    const y = A[1] * p[3] + B[1] * p[4] + C[1] * p[5];
+    const z = A[2] * p[3] + B[2] * p[4] + C[2] * p[5];
+    const xr = x * ca + z * sa, zr = -x * sa + z * ca;
+    const per = 700 / (700 + zr);
+    let sx = ox + xr * per, sy = oy + y * per;
+    if (shake > 0.5) { const w = shake * p[9] * (0.75 + 0.25 * Math.sin(now * 0.004 + p[9] * 9)); sx += p[7] * w; sy += p[8] * w; }
+    const depth = clamp((60 - zr) / 140, 0, 1);
+    buckets[p[6] ? 3 : depth > 0.66 ? 2 : depth > 0.33 ? 1 : 0].push(sx, sy);
+  }
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const sizes = [1.5, 1.7, 1.9, 2.4], alphas = [0.28, 0.5, 0.75, 1];
+  for (let b = 0; b < 4; b++) {
+    const arr = buckets[b], s = sizes[b] * U;
+    ctx.fillStyle = col(alphas[b] * (1 - dissolve * 0.25));
+    for (let i = 0; i < arr.length; i += 2) ctx.fillRect(arr[i] - s / 2, arr[i + 1] - s / 2, s, s);
+  }
+  ctx.restore();
+}
+
+// ---------- التسجيل والصور ----------
+let rec = null, chunks = [], recStart = 0, recTick = null, mic = null;
+function pickMime() {
+  if (!window.MediaRecorder) return null;
+  for (const m of ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']) {
+    try { if (MediaRecorder.isTypeSupported(m)) return m; } catch (e) {}
+  }
+  return '';
+}
+function b64(u8) {
+  let s = '';
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+async function sendBlob(kind, blob) {
+  const id = Date.now().toString(36);
+  const ext = /mp4/.test(blob.type) ? 'mp4' : /jpeg/.test(blob.type) ? 'jpg' : 'webm';
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  const CH = 192 * 1024, n = Math.ceil(buf.length / CH);
+  post({ t: 'begin', id, kind, ext, n, size: buf.length });
+  for (let i = 0; i < n; i++) {
+    post({ t: 'part', id, i, d: b64(buf.subarray(i * CH, (i + 1) * CH)) });
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  post({ t: 'end', id });
+  window.__lastBlob = blob;
+}
+async function startRec() {
+  const mime = pickMime();
+  if (mime === null || !out.captureStream) { toast('التسجيل مو مدعوم بهذا الهاتف'); return; }
+  const s = out.captureStream(30);
+  // صوت جديد من المايكروفون للتسجيل بس (يتطفّى أول ما يخلص)
+  try { mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); } catch (e) { mic = null; }
+  const a = mic && mic.getAudioTracks()[0];
+  if (a) s.addTrack(a);
+  try { rec = new MediaRecorder(s, mime ? { mimeType: mime, videoBitsPerSecond: 3000000 } : undefined); }
+  catch (e) { rec = new MediaRecorder(s); }
+  chunks = [];
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  rec.onstop = async () => {
+    const type = (rec && rec.mimeType) || mime || 'video/webm';
+    rec = null;
+    if (mic) { mic.getTracks().forEach((t) => t.stop()); mic = null; }
+    toast('دا نحفظ الفيديو... ⏳', 4000);
+    await sendBlob('video', new Blob(chunks, { type }));
+  };
+  rec.start(1000);
+  recStart = performance.now();
+  $('rec').classList.add('on');
+  $('rtime').style.display = 'block';
+  recTick = setInterval(() => {
+    const s2 = Math.floor((performance.now() - recStart) / 1000);
+    $('rtime').textContent = '● ' + String(Math.floor(s2 / 60)).padStart(2, '0') + ':' + String(s2 % 60).padStart(2, '0');
+    if (s2 >= 60) stopRec();
+  }, 250);
+}
+function stopRec() {
+  clearInterval(recTick);
+  $('rec').classList.remove('on');
+  $('rtime').style.display = 'none';
+  if (rec && rec.state !== 'inactive') rec.stop();
+}
+function snap() {
+  out.toBlob((b) => { if (b) { toast('دا نحفظ الصورة...'); sendBlob('photo', b); } }, 'image/jpeg', 0.92);
+}
+
+// ---------- الواجهة ----------
+function setHint() {
+  $('hint').innerHTML = MODE === 'ghost'
+    ? 'اقرص <b>الإبهام ويا السبابة</b> بأي إيد حتى تختفي 👻 واقرص مرة ثانية حتى ترجع<br>ارفع إيديك الثنتين حتى تطلع البوابة'
+    : 'ارفع أصابعك يتغيّر اللون: ١ أخضر · ٢ أصفر · ٣ أحمر · ٤ أزرق · ٥ بنفسجي ✨<br>والإيدين الثنتين = قوس قزح 🌈';
+  document.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c.dataset.mode === MODE));
+  $('bgbtn').hidden = MODE !== 'ghost';
+}
+
+let countdown = null;
+function bgCountdown() {
+  $('bgcard').classList.remove('show');
+  let n = 3;
+  const el = $('count');
+  el.style.display = 'flex'; el.textContent = n;
+  clearInterval(countdown);
+  countdown = setInterval(() => {
+    n--;
+    if (n > 0) { el.textContent = n; return; }
+    clearInterval(countdown);
+    el.style.display = 'none';
+    captureBg();
+    toast('✓ انحفظت الخلفية — هسه ارجع للكاميرا واقرص أصابعك');
+  }, 1000);
+}
+
+async function setMode(m) {
+  if (rec) stopRec();
+  MODE = m;
+  setHint();
+  ghost = 0; ghostTarget = 0; lpEdges = null; lpAcc = null; dissolve = 0; fingerHist = [];
+  if ((m === 'ghost' && !seg) || (m === 'neon' && !face)) {
+    running = false;
+    $('loading').classList.add('show');
+    try { await ensureModels(); } catch (e) { return fail(e); }
+    $('loading').classList.remove('show');
+    running = true;
+  }
+  if (m === 'ghost' && !bgReady) $('bgcard').classList.add('show');
+  post({ t: 'mode', mode: m });
+}
+
+function fail(e) {
+  running = false;
+  $('loading').classList.remove('show');
+  const msg = String((e && e.message) || e || '');
+  $('etext').textContent = /Permission|NotAllowed|denied/i.test(msg)
+    ? 'اسمح للتطبيق يستخدم الكاميرا والمايكروفون من الإعدادات، وارجع جرّب.'
+    : /fetch|network|Failed|ما گدرنا/i.test(msg)
+      ? 'تأكد من الإنترنت (أول مرة يحمّل النماذج)، وارجع جرّب.'
+      : 'صار خطأ: ' + msg.slice(0, 140);
+  $('err').classList.add('show');
+  post({ t: 'error', m: msg.slice(0, 300) });
+}
+
+async function boot() {
+  $('err').classList.remove('show');
+  $('loading').classList.add('show');
+  setHint();
+  try {
+    await startCam();
+    await ensureModels();
+  } catch (e) { return fail(e); }
+  $('loading').classList.remove('show');
+  running = true;
+  if (MODE === 'ghost' && !bgReady) $('bgcard').classList.add('show');
+  post({ t: 'ready', delegate, w: W, h: H, mime: pickMime() });
+}
+
+$('close').onclick = () => { if (rec) stopRec(); post({ t: 'close' }); };
+$('eclose').onclick = () => post({ t: 'close' });
+$('retry').onclick = () => boot();
+$('flip').onclick = async () => { if (rec) stopRec(); front = !front; try { await startCam(); } catch (e) { front = !front; toast('ما گدرنا نقلب الكاميرا'); } };
+$('bgbtn').onclick = () => $('bgcard').classList.add('show');
+$('bgnow').onclick = () => bgCountdown();
+$('bgskip').onclick = () => { $('bgcard').classList.remove('show'); toast('تمام — الخلفية تتعلّم وحدها لما تتحرك 👌'); };
+$('rec').onclick = () => (rec ? stopRec() : startRec());
+$('shot').onclick = () => snap();
+document.querySelectorAll('.chip').forEach((c) => (c.onclick = () => { if (c.dataset.mode !== MODE) setMode(c.dataset.mode); }));
+
+// التطبيق يوكف الكاميرا لما ينقلب للخلفية، ويرجّعها لما يرجع
+window.fxPause = () => { if (rec) stopRec(); running = false; if (stream) stream.getTracks().forEach((t) => t.stop()); stream = null; };
+window.fxResume = async () => { try { await startCam(); running = true; } catch (e) { fail(e); } };
+
+window.fxToast = (t, ms) => toast(String(t), ms || 2200);
+// للفحص فقط
+window.__fxDebug = { ghost: (v) => { ghostTarget = v; }, state: () => ({ ghost, fps, W, H, delegate, mode: MODE, bgReady }) };
+
+requestAnimationFrame(loop);
+boot();
+</script>
+</body>
+</html>

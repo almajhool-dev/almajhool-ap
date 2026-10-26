@@ -8,6 +8,7 @@ import '../core/theme.dart';
 import '../models/models.dart';
 import '../services/media_service.dart';
 import '../utils/helpers.dart';
+import '../screens/chat/location_screens.dart';
 import '../screens/live/live_screens.dart';
 import 'common.dart';
 import 'sticker_sheet.dart';
@@ -69,7 +70,7 @@ class MessageBubble extends StatelessWidget {
     final bubble = Container(
       constraints: BoxConstraints(maxWidth: maxW),
       margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-      padding: EdgeInsets.all(message.type == 'image' && !message.deleted ? 4 : 10),
+      padding: EdgeInsets.all((message.type == 'image' || message.type == 'location') && !message.deleted ? 4 : 10),
       decoration: BoxDecoration(
         color: bg,
         gradient: premium
@@ -246,6 +247,8 @@ class MessageBubble extends StatelessWidget {
             child: SignedImage(path: message.mediaPath!, width: 240, height: 240),
           ),
         );
+      case 'location':
+        return LocationBubble(message: message, color: fg);
       case 'audio':
         return message.hasMedia ? AudioBubble(path: message.mediaPath!, color: fg) : const SizedBox.shrink();
       case 'video':

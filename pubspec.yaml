@@ -44,6 +44,11 @@ dependencies:
   app_links: ^6.3.2
   webview_flutter: ^4.10.0
   webview_flutter_android: any
+  # مشاركة الموقع بالمحادثات (خرائط OpenStreetMap مجانية بدون مفتاح)
+  geolocator: 14.0.2
+  geolocator_android: '>=5.0.1 <5.2.0'
+  flutter_map: ^8.3.2
+  latlong2: '>=0.9.1 <0.11.0'
 
 # تثبيت نسخ إضافات حساسة: shared_preferences_android 2.5.0 خلّى التطبيق يعلق على الشعار
 dependency_overrides:
@@ -61,6 +66,7 @@ flutter:
   assets:
     - assets/branding/
     - assets/sounds/
+    - assets/fx/
 
 flutter_launcher_icons:
   android: true

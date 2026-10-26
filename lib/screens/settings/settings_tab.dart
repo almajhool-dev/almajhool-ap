@@ -20,6 +20,7 @@ import 'about_screen.dart';
 import 'themes_screen.dart';
 import '../admin/admin_screen.dart';
 import '../admin/ai_personas_screen.dart';
+import '../admin/fx_camera_screen.dart';
 import '../../services/couple_service.dart';
 import '../../services/core_services.dart';
 import '../../services/privacy_service.dart';
@@ -248,6 +249,14 @@ class _SettingsTabState extends State<SettingsTab> {
               subtitle: const Text('شخصيات ذكاء اصطناعي بكل التخصصات: نشر وردود وتحكم كامل'),
               trailing: const Icon(Icons.chevron_left),
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AiPersonasScreen())),
+            ),
+          if (p?.isOwner ?? false)
+            ListTile(
+              leading: const Icon(Icons.auto_awesome_rounded, color: Colors.amber),
+              title: const Text('مؤثرات الكاميرا ✨'),
+              subtitle: const Text('وضع الشبح 👻 والوجه النيون 🧬 — صوّر وسجّل واحفظ بالاستوديو (لك بس)'),
+              trailing: const Icon(Icons.chevron_left),
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const FxCameraScreen())),
             ),
           if (p?.isOwner ?? false)
             ListTile(
