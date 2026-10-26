@@ -11200,5 +11200,29 @@ do $$ begin
   end if;
 end $$;
 
+-- =====================================================================
+--  الإصدار 85: إصلاح حذف رسائل الموقع 📍 — فحص الإحداثيات (الإصدار 84) چان يشتغل حتى
+--  عند الحذف (delete_message يصفّر file_name) فيرفض الحذف بـ«موقع غير صالح»، ونفس الشي
+--  بحذف الإشراف. هسه الرسالة المحذوفة تعبر بدون فحص.
+-- =====================================================================
+create or replace function public._msg_location_check() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare lat numeric; lng numeric; lbl text;
+begin
+  if new.type <> 'location' or coalesce(new.deleted, false) then return new; end if;
+  if coalesce(new.file_name, '') !~ '^-?\d{1,2}(\.\d{1,8})?,-?\d{1,3}(\.\d{1,8})?$' then
+    raise exception 'موقع غير صالح';
+  end if;
+  lat := split_part(new.file_name, ',', 1)::numeric;
+  lng := split_part(new.file_name, ',', 2)::numeric;
+  if abs(lat) > 90 or abs(lng) > 180 then raise exception 'موقع غير صالح'; end if;
+  lbl := btrim(regexp_replace(coalesce(_clean_text(regexp_replace(coalesce(new.content, ''), '^\s*📍\s*', '')), ''), '\s+', ' ', 'g'));
+  new.content := '📍 ' || left(coalesce(nullif(lbl, ''), 'موقع'), 120);
+  new.media_path := null;
+  new.file_size := null;
+  return new;
+end $$;
+revoke execute on function public._msg_location_check() from public, anon, authenticated;
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
