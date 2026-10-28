@@ -73,6 +73,28 @@ jobs:
           name: almajhool-app-${{ github.run_number }}
           path: dist/*
 
+      # استضافة ملف التحديث على تخزين Supabase (حتى يبقى التحديث شغّال لو صار المستودع خاص).
+      # ما يسوي شي إذا مفتاح الخدمة مو مضاف — البناء الحالي يكمل طبيعي.
+      - name: Host APK on Supabase Storage (when configured)
+        if: success()
+        env:
+          SB_SERVICE: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          RUN: ${{ github.run_number }}
+        run: |
+          if [ -z "${SB_SERVICE:-}" ]; then echo "SUPABASE_SERVICE_KEY غير مضاف — تخطّي استضافة التخزين"; exit 0; fi
+          base="https://smjkxsqvdpywumghvnfv.supabase.co/storage/v1/object/releases/v1.0.$RUN"
+          ok=1
+          for f in almajhool-app.apk almajhool-arm64.apk almajhool-armv7.apk; do
+            [ -f "dist/$f" ] || continue
+            code=$(curl -sS -X POST "$base/$f" \
+              -H "Authorization: Bearer $SB_SERVICE" -H "apikey: $SB_SERVICE" \
+              -H "Content-Type: application/vnd.android.package-archive" \
+              -H "x-upsert: true" --data-binary "@dist/$f" -o /dev/null -w "%{http_code}") || code=000
+            echo "host $f -> $code"
+            case "$code" in 2*) ;; *) ok=0 ;; esac
+          done
+          [ "$ok" = 1 ] && echo "SUPABASE_HOSTED=yes" || echo "SUPABASE_HOSTED=partial"
+
       - name: Publish GitHub Release
         if: success()
         uses: softprops/action-gh-release@v2

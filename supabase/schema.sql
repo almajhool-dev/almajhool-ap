@@ -11420,6 +11420,21 @@ end $$;
 grant execute on function public.update_guard_status() to authenticated;
 
 -- =====================================================================
+--  الإصدار 88: استضافة ملف التحديث (APK) على تخزين Supabase بدل GitHub.
+--  الهدف: نگدر نخلّي مستودع الكود «خاص» بدون ما ينكسر تحديث التطبيق — التطبيق ينزّل
+--  التحديث من تخزينك مو من GitHub. القراءة عامة (أي واحد ينزّل)، بس الكتابة محصورة
+--  بمفتاح الخدمة (service_role) اللي بالـ CI — محد ثاني يگدر يرفع ولا يبدّل التحديث.
+-- =====================================================================
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('releases', 'releases', true, 314572800)
+on conflict (id) do update set public = true,
+  file_size_limit = greatest(coalesce(storage.buckets.file_size_limit, 0), 314572800);
+
+drop policy if exists releases_read on storage.objects;
+create policy releases_read on storage.objects for select using (bucket_id = 'releases');
+-- ماكو سياسة insert/update/delete للزائر → بس service_role (يتجاوز RLS) يگدر يرفع
+
+-- =====================================================================
 --  الحارس الأمني (لازم يبقى آخر شي بالملف قبل تحديث ذاكرة API — أي إصدار جديد ينضاف فوقه):
 --  يسد أي دالة أو جدول انفتح للزائر بالغلط بأي إصدار.
 -- =====================================================================

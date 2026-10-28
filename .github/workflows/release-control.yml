@@ -19,26 +19,36 @@ jobs:
       - name: Apply
         env:
           GH_TOKEN: ${{ github.token }}
+          SB_SERVICE: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           python3 - <<'PY'
           import json, os, urllib.request
           c = json.load(open('release/control.json'))
           tok = os.environ['GH_TOKEN']
+          svc = os.environ.get('SB_SERVICE', '')
           repo = os.environ['GITHUB_REPOSITORY']
           def gh(method, path, body=None):
               req = urllib.request.Request('https://api.github.com/repos/' + repo + path, method=method,
                   data=None if body is None else json.dumps(body).encode(),
                   headers={'Authorization': 'Bearer ' + tok, 'Accept': 'application/vnd.github+json'})
               return json.loads(urllib.request.urlopen(req, timeout=30).read() or 'null')
-          rel = gh('GET', '/releases/tags/' + c['latest_tag'])
-          print('latest ->', rel['tag_name'], gh('PATCH', '/releases/%d' % rel['id'], {'make_latest': 'true'})['tag_name'])
+          # make_latest على GitHub (نتجاهل الخطأ إذا المستودع صار خاص أو الإصدار مو موجود)
+          try:
+              rel = gh('GET', '/releases/tags/' + c['latest_tag'])
+              print('latest ->', rel['tag_name'], gh('PATCH', '/releases/%d' % rel['id'], {'make_latest': 'true'})['tag_name'])
+          except Exception as e:
+              print('make_latest skipped:', e)
           sb = 'https://smjkxsqvdpywumghvnfv.supabase.co/rest/v1/rpc/'
           hdr = {'apikey': 'sb_publishable_xqWRKqnOIKKqKgPJrdP5TA_GA7PCSiV', 'Content-Type': 'application/json'}
           if not c['paused']:
               n = int(c['latest_tag'].split('.')[-1])
-              url = 'https://github.com/%s/releases/download/%s/almajhool-app.apk' % (repo, c['latest_tag'])
+              # لو مفتاح الخدمة مضاف: التحديث ينزل من تخزين Supabase (يشتغل حتى لو المستودع خاص)
+              if svc:
+                  url = 'https://smjkxsqvdpywumghvnfv.supabase.co/storage/v1/object/public/releases/%s/almajhool-app.apk' % c['latest_tag']
+              else:
+                  url = 'https://github.com/%s/releases/download/%s/almajhool-app.apk' % (repo, c['latest_tag'])
               r = urllib.request.Request(sb + 'ci_set_release', data=json.dumps({'p_gh': tok, 'p_build': n, 'p_url': url, 'p_notes': ''}).encode(), headers=hdr)
-              print('set', urllib.request.urlopen(r, timeout=30).read().decode())
+              print('set', url, urllib.request.urlopen(r, timeout=30).read().decode())
           r = urllib.request.Request(sb + 'ci_release_pause', data=json.dumps({'p_gh': tok, 'p_paused': bool(c['paused'])}).encode(), headers=hdr)
           print('pause', urllib.request.urlopen(r, timeout=30).read().decode())
           PY
