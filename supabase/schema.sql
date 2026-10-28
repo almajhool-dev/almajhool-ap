@@ -4,6 +4,39 @@
 --  (آمن لإعادة التشغيل: يستخدم IF NOT EXISTS / OR REPLACE قدر الإمكان)
 -- =====================================================================
 
+-- =====================================================================
+--  قفل مسبق ضد «تعارض الأقفال» (deadlock) — لازم يبقى أول شي بالملف.
+--  التحديث التلقائي يطبّق كل الملف بمعاملة وحدة. چان يمسك أقفال الجداول وحدة وحدة خلال
+--  التطبيق، فيتعارض ويّه طلبات المستخدمين اللي تمسكها بترتيب معاكس، و Postgres يلغي التحديث
+--  (سجل الخادم: "deadlock detected" بكل محاولة). الحل: نمسك أقفال كل الجداول بخطوة وحدة قبل
+--  أي شي. انتظار كل جدول أقصاه ربع ثانية (أقل من فحص التعارض بتاع Postgres، فما نلغي طلب أي
+--  مستخدم أبدًا): إذا ما ضبط نفلت كلشي ونعيد بعد لحظة. بعدها ماكو شي يتعارض لحد نهاية التطبيق
+--  (حوالي ثانية). بقاعدة جديدة ماكو جداول فما يسوي شي.
+-- =====================================================================
+do $$
+declare lst text; tries int := 0;
+begin
+  select string_agg(format('%I.%I', n.nspname, c.relname), ', ' order by c.oid) into lst
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace
+   where c.relkind in ('r', 'p')
+     and (n.nspname = 'public' or (n.nspname = 'storage' and c.relname in ('objects', 'buckets')))
+     and has_table_privilege(c.oid, 'UPDATE');
+  if lst is null then return; end if;
+  perform set_config('lock_timeout', '250ms', true);
+  loop
+    tries := tries + 1;
+    begin
+      execute 'lock table ' || lst || ' in access exclusive mode';
+      exit;
+    exception when lock_not_available or deadlock_detected then
+      if tries >= 40 then raise; end if;
+      perform pg_sleep(0.2 + random() * 0.5);
+    end;
+  end loop;
+  -- باقي التطبيق: ما ينتظر أي قفل ثاني أكثر من 5 ثواني (حتى ما يجمّد التطبيق)
+  perform set_config('lock_timeout', '5s', true);
+end $$;
+
 create extension if not exists pgcrypto;
 
 -- ---------------------------------------------------------------------
