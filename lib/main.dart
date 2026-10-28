@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -25,6 +26,8 @@ import 'services/update_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // النسخة المنشورة ما تطبع أي سجلات تشخيص (ما ينكشف شي بسجل الهاتف)
+  if (kReleaseMode) debugPrint = (String? message, {int? wrapWidth}) {};
   // كل خطوة قبل فتح الواجهة إلها حد زمني: التطبيق لازم يفتح مهما صار (ما يعلك على شاشة الشعار)
   Future<void> step(Future<void> Function() f, int secs) async {
     try {

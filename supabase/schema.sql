@@ -11435,6 +11435,50 @@ create policy releases_read on storage.objects for select using (bucket_id = 're
 -- ماكو سياسة insert/update/delete للزائر → بس service_role (يتجاوز RLS) يگدر يرفع
 
 -- =====================================================================
+--  الإصدار 89: بصمة رقمية (SHA-256) لكل تحديث + قبول رابط التخزين.
+--  1) ci_set_release چان يقبل روابط GitHub بس — هسه يقبل مخزن releases بتخزينك هم
+--     (بدونها الانتقال لمستودع خاص چان راح يفشل بصمت).
+--  2) الـ CI يحسب بصمة ملف التحديث ويخزنها، والتطبيق يتأكد منها قبل التثبيت:
+--     أي ملف منعدل أو ناقص ينرفض. النسخ القديمة تتجاهل الحقل وما تتأثر.
+--  3) أي تسجيل بدون بصمة يمسح البصمة القديمة، حتى ما ينرفض تحديث صحيح أبدًا.
+-- =====================================================================
+alter table public.app_release add column if not exists sha256 text;
+
+create or replace function public.ci_set_release(p_gh text, p_build int, p_url text, p_notes text, p_sha256 text)
+returns boolean language plpgsql security definer set search_path = public as $$
+declare h text := nullif(lower(trim(coalesce(p_sha256, ''))), '');
+begin
+  if not _gh_verify(p_gh) then return false; end if;
+  if position('..' in coalesce(p_url, '')) > 0 or not (
+       coalesce(p_url, '') like 'https://github.com/almajhool-dev/almajhool-ap/releases/download/%'
+    or coalesce(p_url, '') like 'https://smjkxsqvdpywumghvnfv.supabase.co/storage/v1/object/public/releases/%') then
+    return false;
+  end if;
+  if h is not null and h !~ '^[0-9a-f]{64}$' then return false; end if;
+  insert into app_release(id, build, url, notes, paused, sha256)
+    values (1, p_build, p_url, left(coalesce(p_notes, ''), 2000), true, h)
+    on conflict (id) do update set build = excluded.build, url = excluded.url, notes = excluded.notes,
+      sha256 = excluded.sha256, paused = true, updated_at = now();
+  return true;
+end $$;
+grant execute on function public.ci_set_release(text, int, text, text, text) to anon;
+
+-- النسخة القديمة (4 مدخلات): نفس الشي بدون بصمة — وتمسح أي بصمة قديمة
+create or replace function public.ci_set_release(p_gh text, p_build int, p_url text, p_notes text) returns boolean
+language sql security definer set search_path = public as $$
+  select public.ci_set_release(p_gh, p_build, p_url, p_notes, null::text);
+$$;
+grant execute on function public.ci_set_release(text, int, text, text) to anon;
+
+create or replace function public.latest_release() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select case when paused then null
+    else jsonb_build_object('build', build, 'url', url, 'notes', notes, 'sha256', sha256) end
+  from app_release where id = 1;
+$$;
+grant execute on function public.latest_release() to anon, authenticated;
+
+-- =====================================================================
 --  الحارس الأمني (لازم يبقى آخر شي بالملف قبل تحديث ذاكرة API — أي إصدار جديد ينضاف فوقه):
 --  يسد أي دالة أو جدول انفتح للزائر بالغلط بأي إصدار.
 -- =====================================================================

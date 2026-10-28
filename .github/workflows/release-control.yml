@@ -22,7 +22,7 @@ jobs:
           SB_SERVICE: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           python3 - <<'PY'
-          import json, os, urllib.request
+          import hashlib, json, os, urllib.error, urllib.request
           c = json.load(open('release/control.json'))
           tok = os.environ['GH_TOKEN']
           svc = os.environ.get('SB_SERVICE', '')
@@ -47,8 +47,32 @@ jobs:
                   url = 'https://smjkxsqvdpywumghvnfv.supabase.co/storage/v1/object/public/releases/%s/almajhool-app.apk' % c['latest_tag']
               else:
                   url = 'https://github.com/%s/releases/download/%s/almajhool-app.apk' % (repo, c['latest_tag'])
-              r = urllib.request.Request(sb + 'ci_set_release', data=json.dumps({'p_gh': tok, 'p_build': n, 'p_url': url, 'p_notes': ''}).encode(), headers=hdr)
-              print('set', url, urllib.request.urlopen(r, timeout=30).read().decode())
+              # البصمة الرقمية (SHA-256) لنفس الملف بالضبط: التطبيق يرفض أي ملف ما يطابقها
+              sha = None
+              try:
+                  h = hashlib.sha256()
+                  with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'vyfri-ci'}), timeout=300) as f:
+                      while True:
+                          b = f.read(1 << 20)
+                          if not b:
+                              break
+                          h.update(b)
+                  sha = h.hexdigest()
+              except Exception as e:
+                  print('sha256 skipped:', e)
+              body = {'p_gh': tok, 'p_build': n, 'p_url': url, 'p_notes': ''}
+              if sha:
+                  body['p_sha256'] = sha
+              try:
+                  r = urllib.request.Request(sb + 'ci_set_release', data=json.dumps(body).encode(), headers=hdr)
+                  print('set', url, sha, urllib.request.urlopen(r, timeout=30).read().decode())
+              except urllib.error.HTTPError as e:
+                  if 'p_sha256' not in body:
+                      raise
+                  print('5-arg set failed (%s) -> retry without fingerprint' % e.code)
+                  body.pop('p_sha256')
+                  r = urllib.request.Request(sb + 'ci_set_release', data=json.dumps(body).encode(), headers=hdr)
+                  print('set', url, urllib.request.urlopen(r, timeout=30).read().decode())
           r = urllib.request.Request(sb + 'ci_release_pause', data=json.dumps({'p_gh': tok, 'p_paused': bool(c['paused'])}).encode(), headers=hdr)
           print('pause', urllib.request.urlopen(r, timeout=30).read().decode())
           PY

@@ -9,9 +9,35 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:ota_update/ota_update.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:pointycastle/digests/sha256.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'core_services.dart';
+
+/// بصمة SHA-256 لملف (تنحسب بخيط منفصل حتى ما تعلّك الواجهة)
+String sha256OfFile(String path) {
+  final d = SHA256Digest();
+  final raf = File(path).openSync();
+  try {
+    final buf = Uint8List(1 << 20);
+    while (true) {
+      final n = raf.readIntoSync(buf);
+      if (n <= 0) break;
+      d.update(buf, 0, n);
+    }
+  } finally {
+    raf.closeSync();
+  }
+  final out = Uint8List(d.digestSize);
+  d.doFinal(out, 0);
+  return out.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+}
+
+/// بصمة صالحة (64 حرف hex) أو null
+String? _validSha(Object? v) {
+  final s = (v ?? '').toString().trim().toLowerCase();
+  return RegExp(r'^[0-9a-f]{64}$').hasMatch(s) ? s : null;
+}
 
 /// تحديث التطبيق من داخل التطبيق: يتحقق من آخر إصدار على GitHub،
 /// ينزّله ويفتح شاشة التثبيت مباشرة (بدون متصفح).
@@ -25,13 +51,19 @@ class UpdateService {
   static const _api = 'https://api.github.com/repos/almajhool-dev/almajhool-ap/releases/latest';
   static bool _shownThisRun = false;
 
-  /// يرجع (رقم البناء، رابط التحميل، الملاحظات) لآخر إصدار، أو null.
-  static Future<({int build, String url, String notes})?> latest() async {
+  /// يرجع (رقم البناء، رابط التحميل، الملاحظات، البصمة) لآخر إصدار، أو null.
+  /// البصمة بس من سيرفر التطبيق (مربوطة بنفس الرابط بالضبط)؛ الطرق البديلة بدون بصمة.
+  static Future<({int build, String url, String notes, String? sha256})?> latest() async {
     // 1) من سيرفر التطبيق (سريع وما يتقيد بعدد الطلبات مثل GitHub)
     try {
       final r = await supa.rpc('latest_release').timeout(const Duration(seconds: 10));
       if (r is Map && r['build'] != null && r['url'] != null) {
-        return (build: (r['build'] as num).toInt(), url: r['url'] as String, notes: (r['notes'] ?? '') as String);
+        return (
+          build: (r['build'] as num).toInt(),
+          url: r['url'] as String,
+          notes: (r['notes'] ?? '') as String,
+          sha256: _validSha(r['sha256']),
+        );
       }
     } catch (_) {}
     // 2) من GitHub مباشرة
@@ -66,7 +98,7 @@ class UpdateService {
       }
       url ??= universal;
       if (url == null || build == 0) return null;
-      return (build: build, url: url, notes: (j['body'] ?? '') as String);
+      return (build: build, url: url, notes: (j['body'] ?? '') as String, sha256: null);
     } catch (_) {}
     // 3) صفحة آخر إصدار (تحويل) — تشتغل حتى لو API مقيّد
     try {
@@ -82,7 +114,8 @@ class UpdateService {
         return (
           build: b,
           url: 'https://github.com/almajhool-dev/almajhool-ap/releases/download/v1.0.$b/almajhool-app.apk',
-          notes: ''
+          notes: '',
+          sha256: null,
         );
       }
     } catch (_) {}
@@ -98,7 +131,7 @@ class UpdateService {
     final c = ctx();
     if (c == null || !c.mounted) return;
     _shownThisRun = true;
-    await showUpdateDialog(c, l.url, l.build);
+    await showUpdateDialog(c, l.url, l.build, sha256: l.sha256);
   }
 
   /// فحص يدوي من الإعدادات.
@@ -113,14 +146,14 @@ class UpdateService {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('لديك آخر إصدار ($currentVersion) ✅')));
       return;
     }
-    await showUpdateDialog(context, l.url, l.build);
+    await showUpdateDialog(context, l.url, l.build, sha256: l.sha256);
   }
 
-  static Future<void> showUpdateDialog(BuildContext context, String url, int build) {
+  static Future<void> showUpdateDialog(BuildContext context, String url, int build, {String? sha256}) {
     return showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _UpdateDialog(url: url, build: build),
+      builder: (_) => _UpdateDialog(url: url, build: build, sha256: sha256),
     );
   }
 }
@@ -128,7 +161,10 @@ class UpdateService {
 class _UpdateDialog extends StatefulWidget {
   final String url;
   final int build;
-  const _UpdateDialog({required this.url, required this.build});
+
+  /// البصمة الرقمية المتوقعة للملف (من السيرفر) — أي ملف ما يطابقها ما ينثبّت
+  final String? sha256;
+  const _UpdateDialog({required this.url, required this.build, this.sha256});
   @override
   State<_UpdateDialog> createState() => _UpdateDialogState();
 }
@@ -201,6 +237,19 @@ class _UpdateDialogState extends State<_UpdateDialog> {
         });
       });
       if (!mounted) return;
+      // نتأكد من البصمة الرقمية قبل التثبيت: ملف منعدل أو ناقص ينرفض وينحذف
+      final want = widget.sha256;
+      if (want != null) {
+        setState(() => _msg = 'جارٍ التحقق من سلامة التحديث...');
+        final got = await compute(sha256OfFile, file.path);
+        if (got != want) {
+          try {
+            await file.delete();
+          } catch (_) {}
+          throw Exception('checksum mismatch');
+        }
+        if (!mounted) return;
+      }
       setState(() {
         _progress = 1;
         _msg = 'اضغط «تثبيت» أو «تحديث» في الشاشة التي ظهرت';
@@ -230,7 +279,8 @@ class _UpdateDialogState extends State<_UpdateDialog> {
 
   void _slow() {
     try {
-      OtaUpdate().execute(widget.url, destinationFilename: 'almajhool-update.apk').listen(
+      // نفس فحص البصمة بالطريقة العادية (المكتبة ترفض الملف إذا ما طابق)
+      OtaUpdate().execute(widget.url, destinationFilename: 'almajhool-update.apk', sha256checksum: widget.sha256).listen(
         (e) {
           if (!mounted) return;
           setState(() {

@@ -308,6 +308,15 @@ def write_proguard():
                     "-keepclassmembers class * { @androidx.annotation.Keep *; }\n")
     if "io.flutter.plugins.**" not in existing:
         existing += plugin_rules
+    # النسخة المنشورة ما تطبع سجلات تشخيص (Log.v/d/i) — ما تنكشف تفاصيل داخلية بسجل الهاتف.
+    # (التحذيرات والأخطاء تبقى حتى تقارير الأعطال تشتغل)
+    log_rules = ("-assumenosideeffects class android.util.Log {\n"
+                 "    public static int v(...);\n"
+                 "    public static int d(...);\n"
+                 "    public static int i(...);\n"
+                 "}\n")
+    if "assumenosideeffects class android.util.Log" not in existing:
+        existing += log_rules
     write(p, existing)
     print("proguard rules written")
 
