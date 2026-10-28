@@ -8,6 +8,8 @@ import 'package:pointycastle/export.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'integrity_service.dart';
+
 /// خزنة الهاتف 🔐
 /// مفتاح تشفير عشوائي (256 بت) لكل تثبيت، محفوظ داخل خزنة أندرويد (Keystore) / سلسلة مفاتيح آيفون،
 /// وكل اللي ينحفظ بالهاتف من بيانات حساسة (الرسائل والمحادثات المخزّنة، الرسائل المعلّقة، جلسة الدخول)
@@ -30,6 +32,9 @@ class SecureVault {
 
   static Future<void> init() async {
     if (_key != null) return;
+    // مانع عبث: إذا التطبيق معدّل أو شغّالة عليه أداة اختراق، ما نحمّل المفتاح أبدًا —
+    // فأي نسخة مكسورة ما تگدر تفك تشفير ولا بيانة (تطلع فارغة).
+    if (IntegrityService.tampered) return;
     for (var attempt = 0; attempt < 2 && _key == null; attempt++) {
       try {
         final s = await _storage.read(key: _keyName).timeout(const Duration(seconds: 4));
@@ -58,10 +63,10 @@ class SecureVault {
   static GCMBlockCipher _cipher(bool forEncryption, Uint8List key, Uint8List iv) =>
       GCMBlockCipher(AESEngine())..init(forEncryption, AEADParameters(KeyParameter(key), 128, iv, Uint8List(0)));
 
-  /// نص مشفّر جاهز للحفظ، أو null إذا الخزنة مو جاهزة
+  /// نص مشفّر جاهز للحفظ، أو null إذا الخزنة مو جاهزة أو التطبيق معدّل
   static String? encrypt(String plain) {
     final k = _key;
-    if (k == null) return null;
+    if (k == null || IntegrityService.tampered) return null;
     final iv = _random(12);
     final out = _cipher(true, k, iv).process(Uint8List.fromList(utf8.encode(plain)));
     final b = BytesBuilder(copy: false)
@@ -70,10 +75,10 @@ class SecureVault {
     return prefix + base64Encode(b.takeBytes());
   }
 
-  /// يفك التشفير؛ null إذا البيانات انعدلت أو المفتاح غير مطابق
+  /// يفك التشفير؛ null إذا البيانات انعدلت أو المفتاح غير مطابق أو التطبيق معدّل
   static String? decrypt(String data) {
     final k = _key;
-    if (k == null || !data.startsWith(prefix)) return null;
+    if (k == null || IntegrityService.tampered || !data.startsWith(prefix)) return null;
     try {
       final raw = base64Decode(data.substring(prefix.length));
       if (raw.length < 12 + 16) return null;

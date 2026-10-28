@@ -1,11 +1,14 @@
 import 'dart:typed_data';
 
+import 'package:almajhool_app/services/integrity_service.dart';
 import 'package:almajhool_app/services/secure_vault.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  tearDown(() => IntegrityService.tampered = false);
 
   test('AES-GCM round trip + tamper detection', () {
     SecureVault.debugSetKey(Uint8List.fromList(List<int>.generate(32, (i) => i)));
@@ -43,6 +46,16 @@ void main() {
     await s2.removePersistedSession();
     expect(await s2.hasAccessToken(), false);
     expect(p.getString('vyfri_session_v1'), null);
+  });
+
+  test('tampered / cracked copy cannot encrypt or decrypt (anti-crack)', () {
+    SecureVault.debugSetKey(Uint8List.fromList(List<int>.generate(32, (i) => i + 1)));
+    final enc = SecureVault.encrypt('[{"content":"بيانات"}]')!;
+    IntegrityService.tampered = true;
+    expect(SecureVault.encrypt('[{"content":"بيانات"}]'), null);
+    expect(SecureVault.decrypt(enc), null);
+    IntegrityService.tampered = false;
+    expect(SecureVault.decrypt(enc), '[{"content":"بيانات"}]');
   });
 
   test('no vault on device -> falls back to plain (never locks the user out)', () async {

@@ -33,7 +33,9 @@ Future<void> main() async {
   }
 
   await step(() => initializeDateFormatting('ar'), 3);
-  // خزنة التشفير أولًا (المفتاح بخزنة أندرويد) — بعدها الذاكرة المحلية المشفّرة
+  // فحص سلامة التطبيق أولًا: إذا النسخة معدّلة أو عليها أداة اختراق، الخزنة ما تحمّل المفتاح أبدًا
+  await step(IntegrityService.check, 4);
+  // خزنة التشفير بعدها (المفتاح بخزنة أندرويد) — بعدها الذاكرة المحلية المشفّرة
   await step(SecureVault.init, 6);
   await CacheService.init();
   Cdn.init();
@@ -42,7 +44,6 @@ Future<void> main() async {
   await Future.wait([
     AppConfig.load().timeout(const Duration(seconds: 4)).catchError((_) => AppConfig.useDefaults()),
     step(PushService.init, 6),
-    step(IntegrityService.check, 4),
   ]);
   runApp(const RootApp());
 }
