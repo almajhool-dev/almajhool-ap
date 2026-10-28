@@ -8,6 +8,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'secure_vault.dart';
+
 SupabaseClient get supa => Supabase.instance.client;
 String? get myId => Supabase.instance.client.auth.currentUser?.id;
 
@@ -44,6 +46,23 @@ class CacheService {
         }
       }
     } catch (_) {}
+    // الملفات القديمة (قبل التشفير) تتشفّر كلها بالخلفية مرة وحدة
+    if (SecureVault.ready && _dir != null) Future(_encryptOldFiles);
+  }
+
+  static Future<void> _encryptOldFiles() async {
+    try {
+      for (final f in _dir!.listSync().whereType<File>()) {
+        if (!f.path.endsWith('.json')) continue;
+        final raw = await f.readAsString();
+        if (raw.isEmpty || SecureVault.isEncrypted(raw)) continue;
+        final enc = SecureVault.encrypt(raw);
+        if (enc == null) return;
+        final tmp = File('${f.path}.tmp');
+        await tmp.writeAsString(enc, flush: true);
+        await tmp.rename(f.path);
+      }
+    } catch (_) {}
   }
 
   static String _k(String key) => '${myId ?? 'anon'}::$key';
@@ -58,7 +77,11 @@ class CacheService {
     try {
       final f = File(_file(k));
       if (!f.existsSync()) return [];
-      final l = (jsonDecode(f.readAsStringSync()) as List).cast<Map>().map((e) => e.cast<String, dynamic>()).toList();
+      // الملفات مشفّرة (AES-256-GCM)؛ الملفات القديمة غير المشفّرة تنقرا مرة وتنشفّر بأول حفظ
+      final raw = f.readAsStringSync();
+      final text = SecureVault.isEncrypted(raw) ? SecureVault.decrypt(raw) : raw;
+      if (text == null) return [];
+      final l = (jsonDecode(text) as List).cast<Map>().map((e) => e.cast<String, dynamic>()).toList();
       _mem[k] = l;
       return l;
     } catch (_) {
@@ -73,7 +96,8 @@ class CacheService {
     try {
       final f = File(_file(k));
       final tmp = File('${f.path}.tmp');
-      await tmp.writeAsString(jsonEncode(list), flush: true);
+      final text = jsonEncode(list);
+      await tmp.writeAsString(SecureVault.encrypt(text) ?? text, flush: true);
       await tmp.rename(f.path);
       if (key.startsWith('msgs_')) _trimMessageFiles();
     } catch (_) {}

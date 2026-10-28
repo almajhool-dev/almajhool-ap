@@ -29,8 +29,12 @@ class IntegrityService {
         try {
           sdk = await _ch.invokeMethod<int>('sdk') ?? 0;
         } catch (_) {}
-        // مرحلة أولى: تبليغ فقط (حتى نتأكد ما يصير حظر غلط على أي جهاز)
-        if (sdk >= 28 && !sigs.contains(_official2)) v2Missing = true;
+        // نسخة موقّعة بالمفتاح القديم وحده = مزوّرة (المفتاح القديم انكشف): ما تشتغل.
+        // (مرحلة التبليغ بس خلصت بدون أي بلاغ غلط، فهسه نوقفها فعليًا)
+        if (sdk >= 28 && !sigs.contains(_official2)) {
+          v2Missing = true;
+          tampered = true;
+        }
       }
     } catch (_) {}
     // أدوات التلاعب المحقونة داخل التطبيق (Frida / Xposed ...): نوقف التطبيق ونبلّغ

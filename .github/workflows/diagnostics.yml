@@ -18,12 +18,13 @@ jobs:
       - name: Run tests
         env:
           TURN_U: ${{ secrets.TURN_U }}
+          TURN_P: ${{ secrets.TURN_P }}
         run: |
           {
             echo "== SIGNALING (Supabase Realtime broadcast) =="
             cd tool/signal-test && npm init -y >/dev/null && npm i @supabase/supabase-js@2 >/dev/null 2>&1 && timeout 60 node test.mjs; cd ../..
-            echo "== TURN (credential from first account) =="
-            python3 tool/turn_test.py global.relay.metered.ca 80 udp "$(echo YjZiYTUzYTFjZTY1ZDg3Y2E3OWVjMjRi | base64 -d)" "$(echo bGVlMXRLQVZVRVgzM09XRw== | base64 -d)"
+            echo "== TURN (credential from repo secrets — never written in this file) =="
+            if [ -n "$TURN_U" ] && [ -n "$TURN_P" ]; then python3 tool/turn_test.py global.relay.metered.ca 80 udp "$TURN_U" "$TURN_P"; else echo "skipped: no TURN secrets"; fi
             echo "== AUTH recover endpoint =="
             curl -s -X POST "https://smjkxsqvdpywumghvnfv.supabase.co/auth/v1/recover" -H "apikey: sb_publishable_xqWRKqnOIKKqKgPJrdP5TA_GA7PCSiV" -H "Content-Type: application/json" -d '{"email":"diagnostic-test-nonexistent@example.com"}'; echo
             echo "== AUTH settings =="

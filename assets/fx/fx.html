@@ -725,8 +725,6 @@ window.fxPause = () => { if (rec) stopRec(); running = false; if (stream) stream
 window.fxResume = async () => { try { await startCam(); running = true; } catch (e) { fail(e); } };
 
 window.fxToast = (t, ms) => toast(String(t), ms || 2200);
-// للفحص فقط
-window.__fxDebug = { ghost: (v) => { ghostTarget = v; }, state: () => ({ ghost, fps, W, H, delegate, mode: MODE, bgReady }) };
 
 requestAnimationFrame(loop);
 boot();

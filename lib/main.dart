@@ -19,6 +19,7 @@ import 'services/integrity_service.dart';
 import 'services/local_notifications.dart';
 import 'services/notif_router.dart';
 import 'services/push_service.dart';
+import 'services/secure_vault.dart';
 import 'services/rtc_safety.dart';
 import 'services/update_service.dart';
 
@@ -32,6 +33,8 @@ Future<void> main() async {
   }
 
   await step(() => initializeDateFormatting('ar'), 3);
+  // خزنة التشفير أولًا (المفتاح بخزنة أندرويد) — بعدها الذاكرة المحلية المشفّرة
+  await step(SecureVault.init, 6);
   await CacheService.init();
   Cdn.init();
   await step(RtcSafety.init, 3);
@@ -66,7 +69,14 @@ class _RootAppState extends State<RootApp> {
 
   Future<void> _init() async {
     try {
-      await Supabase.initialize(url: AppConfig.url, anonKey: AppConfig.anonKey);
+      await Supabase.initialize(
+        url: AppConfig.url,
+        anonKey: AppConfig.anonKey,
+        // جلسة الدخول تنحفظ مشفّرة بالهاتف
+        authOptions: FlutterAuthClientOptions(
+          localStorage: SecureSessionStorage('sb-${Uri.parse(AppConfig.url).host.split('.').first}-auth-token'),
+        ),
+      );
       NotifRouter.install();
       CrashReporter.install();
       CrashReporter.sendPendingNativeCrash();

@@ -28,6 +28,9 @@ def patch_manifest():
     s = read(MANIFEST)
     s = re.sub(r'android:label="[^"]*"', 'android:label="VYFRI"', s, count=1)
     # حماية: منع نسخ بيانات الدخول بالنسخ الاحتياطي (حتى ما أحد ينقل جلسة المستخدم لجهاز ثاني)
+    # حماية: منع أي اتصال غير مشفّر (http) من التطبيق
+    if 'android:usesCleartextTraffic' not in s:
+        s = s.replace('android:label="VYFRI"', 'android:label="VYFRI" android:usesCleartextTraffic="false"', 1)
     if 'android:allowBackup' not in s:
         s = s.replace('android:label="VYFRI"',
                       'android:label="VYFRI" android:allowBackup="false" android:fullBackupContent="false"'

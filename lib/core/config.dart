@@ -72,7 +72,7 @@ class AppConfig {
     } catch (_) {}
     final rUrl = prefs.getString(_prefRemoteUrl) ?? '';
     final rKey = prefs.getString(_prefRemoteKey) ?? '';
-    if (rUrl.isNotEmpty && rKey.isNotEmpty) {
+    if (rUrl.isNotEmpty && rKey.isNotEmpty && _trustedServer(rUrl)) {
       url = rUrl;
       anonKey = rKey;
       return;
@@ -91,16 +91,31 @@ class AppConfig {
       final j = jsonDecode(res.body) as Map<String, dynamic>;
       final u = (j['supabase_url'] ?? '').toString().trim();
       final k = (j['supabase_key'] ?? '').toString().trim();
-      if (u.startsWith('https://') && k.length > 30) {
+      // حماية: ملف الإعدادات (حتى لو أحد عدّله) ما يكدر يحوّل التطبيق لخادم ثاني — بس نفس خادمنا
+      if (_trustedServer(u) && k.length > 30 && (k.startsWith('sb_publishable_') || k.startsWith('eyJ'))) {
         await prefs.setString(_prefRemoteUrl, u);
         await prefs.setString(_prefRemoteKey, k);
       }
       if (j['ice_servers'] is List && (j['ice_servers'] as List).isNotEmpty) {
-        await prefs.setString(_prefIce, jsonEncode(j['ice_servers']));
+        // خوادم الاتصال: بس عناوين stun/turn حقيقية
+        final ok = (j['ice_servers'] as List).every((e) {
+          if (e is! Map) return false;
+          final urls = e['urls'];
+          final l = urls is List ? urls : [urls];
+          return l.isNotEmpty && l.every((x) => x is String && RegExp(r'^(stun|turns?):[A-Za-z0-9.\-]+(:\d+)?(\?transport=(udp|tcp))?$').hasMatch(x));
+        });
+        if (ok) await prefs.setString(_prefIce, jsonEncode(j['ice_servers']));
       }
     } catch (_) {
       // بدون إنترنت: لا شيء
     }
+  }
+
+  /// الخادم المسموح بس (نفس المشروع المدمج بالتطبيق)
+  static bool _trustedServer(String u) {
+    final h = Uri.tryParse(u)?.host ?? '';
+    if (!u.startsWith('https://') || h.isEmpty) return false;
+    return h == Uri.parse(_fallbackUrl).host || (_defaultUrl.isNotEmpty && h == Uri.parse(_defaultUrl).host);
   }
 
   /// إذا تأخر تحميل الإعدادات: نشتغل على الخادم المدمج مباشرة

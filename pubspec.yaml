@@ -49,6 +49,9 @@ dependencies:
   geolocator_android: '>=5.0.1 <5.2.0'
   flutter_map: ^8.3.2
   latlong2: '>=0.9.1 <0.11.0'
+  # تشفير البيانات داخل الهاتف: المفتاح محفوظ بخزنة أندرويد (Keystore) والتشفير AES-256-GCM
+  flutter_secure_storage: ^9.2.4
+  pointycastle: ^4.0.0
 
 # تثبيت نسخ إضافات حساسة: shared_preferences_android 2.5.0 خلّى التطبيق يعلق على الشعار
 dependency_overrides:

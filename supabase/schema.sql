@@ -749,18 +749,19 @@ create policy app_settings_select on public.app_settings for select to anon, aut
 
 -- conversations
 drop policy if exists conv_select on public.conversations;
+-- (الإصدار 86: المدير ما يقرا محادثات الناس — بس الأعضاء)
 create policy conv_select on public.conversations for select to authenticated
-  using (is_member(id) or (type = 'group' and is_public) or is_admin());
+  using (is_member(id) or (type = 'group' and is_public));
 
 -- conversation_members
 drop policy if exists members_select on public.conversation_members;
 create policy members_select on public.conversation_members for select to authenticated
-  using (is_member(conversation_id) or is_admin());
+  using (is_member(conversation_id));
 
 -- messages
 drop policy if exists messages_select on public.messages;
 create policy messages_select on public.messages for select to authenticated
-  using (is_member(conversation_id) or is_admin());
+  using (is_member(conversation_id));
 drop policy if exists messages_insert on public.messages;
 create policy messages_insert on public.messages for insert to authenticated
   with check (sender_id = auth.uid() and type <> 'system' and can_send(conversation_id));
@@ -832,7 +833,7 @@ create policy avatars_delete on storage.objects for delete to authenticated
 drop policy if exists media_read on storage.objects;
 create policy media_read on storage.objects for select to authenticated
   using (bucket_id = 'chat-media'
-         and (public.is_member(((storage.foldername(name))[1])::uuid) or public.is_admin()));
+         and public.is_member(((storage.foldername(name))[1])::uuid));
 drop policy if exists media_write on storage.objects;
 create policy media_write on storage.objects for insert to authenticated
   with check (bucket_id = 'chat-media'
@@ -11223,6 +11224,156 @@ begin
   return new;
 end $$;
 revoke execute on function public._msg_location_check() from public, anon, authenticated;
+
+-- =====================================================================
+--  الإصدار 86: سد الثغرات — فحص أمني كامل (طلب المالك).
+--  اللي انلگى وانسد:
+--   1) bg_diag چانت مفتوحة لأي أحد بدون تسجيل دخول وترجّع سجلات أعطال المستخدمين ومعلومات أجهزتهم.
+--      ونفس الشي ai_diag و ai_selftest_result و push_builds و push_config و push_drop_tokens
+--      و push_submit_sa و trusted_begin — هسه مسدودة على الكل (الخادم بس يستخدمها).
+--   2) أغلب دوال التطبيق (~170) چانت تنطلب حتى بدون تسجيل دخول (تفحص داخليًا، بس الباب مفتوح).
+--      هسه الزائر يوصل بس لدوال الدخول/إنشاء الحساب وخدمة الخلفية (بمفتاح الجهاز السري)
+--      وعمّال GitHub (برمز يتحقق منه الخادم) ومراقبة الخادم. والباقي للمسجلين بس.
+--   3) الجداول: الزائر ما عنده أي صلاحية على أي جدول (إلا قراءة إعدادات التطبيق والثيمات)،
+--      والجداول الداخلية (المحافظ، الدفتر، المفاتيح، السجلات...) ما يوصلها حتى المسجّل — بس دوال الخادم.
+--   4) أسرار البنية (حساب خدمة إشعارات Google، خادم البث، خادم المكالمات TURN) وتغيير كلمة سر أي مستخدم:
+--      چانت مسموحة لأي «مدير»، هسه للمالك بس (حتى لو انخترق حساب مدير ما يكدر يحوّل البث أو الإشعارات).
+--   5) الرسائل الخاصة: چان أي «مدير» يكدر يقرا كل المحادثات الخاصة وملفاتها مباشرة — هسه بس أعضاء المحادثة.
+--      (التعديل بسياسات القراءة الأصلية فوق)
+--   6) حارس دائمي: _security_sweep تنعاد بآخر الملف بكل تحديث، فأي دالة جديدة تنفتح للزائر بالغلط تنسد تلقائيًا.
+--      أي دالة لازم تشتغل قبل تسجيل الدخول لازم تنضاف لقائمة allow_anon بالدالة.
+-- =====================================================================
+
+-- ---------- أسرار البنية وتغيير كلمات السر: للمالك بس ----------
+create or replace function public.admin_set_fcm(p_json text) returns void
+language plpgsql security definer set search_path = public as $$
+declare j jsonb;
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  begin j := p_json::jsonb; exception when others then raise exception 'الملف غير صالح'; end;
+  if j->>'type' <> 'service_account' or j->>'private_key' is null or j->>'client_email' is null then
+    raise exception 'هذا ليس ملف حساب خدمة (Service account)';
+  end if;
+  insert into private_settings(key, value) values ('fcm_sa', j::text)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+end $$;
+
+create or replace function public.admin_set_live(p_url text, p_key text, p_secret text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if coalesce(p_url, '') not like 'wss://%' or char_length(coalesce(p_key, '')) < 5 or char_length(coalesce(p_secret, '')) < 10 then
+    raise exception 'بيانات غير صالحة: تأكد من URL (يبدأ بـ wss://) و API Key و API Secret';
+  end if;
+  insert into private_settings(key, value) values ('livekit_url', trim(p_url)), ('livekit_key', trim(p_key)),
+    ('livekit_secret', trim(p_secret))
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+end $$;
+
+create or replace function public.admin_set_turn(turn_user text, turn_pass text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if char_length(coalesce(turn_user, '')) < 5 or char_length(coalesce(turn_pass, '')) < 5 then
+    raise exception 'بيانات غير صالحة';
+  end if;
+  insert into private_settings(key, value) values ('turn_user', trim(turn_user))
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  insert into private_settings(key, value) values ('turn_pass', trim(turn_pass))
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+end $$;
+
+create or replace function public.admin_set_password(target uuid, new_password text) returns void
+language plpgsql security definer set search_path = public, extensions, auth as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if char_length(coalesce(new_password, '')) < 8 then raise exception 'كلمة المرور 8 أحرف على الأقل'; end if;
+  update auth.users set encrypted_password = crypt(new_password, gen_salt('bf')), updated_at = now()
+  where id = target;
+  if not found then raise exception 'المستخدم غير موجود'; end if;
+  if target <> auth.uid() then perform _kill_sessions(target); end if;
+end $$;
+
+-- ---------- الحارس الدائمي: صلاحيات الدوال والجداول ----------
+create or replace function public._security_sweep() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare r record; n_anon int := 0; n_int int := 0; n_tab int := 0; had_auth boolean;
+  -- الدوال اللي لازم تشتغل بدون تسجيل دخول (كل وحدة تتحقق بنفسها: رمز تحقق/مفتاح جهاز سري/رمز GitHub)
+  allow_anon text[] := array[
+    'register_user', 'username_available', 'google_login', 'phone_send_code', 'phone_verify', 'phone_tg_start',
+    'phone_tg_check', 'reset_password_with_code', 'client_log', 'latest_release',
+    'bg_poll', 'bg_report', 'device_reply', 'device_call_action', 'register_device', 'unregister_device',
+    'unregister_fcm', 'push_ready',
+    'ai_img_claim', 'ai_img_done', 'ai_img_pending', 'ai_news_push', 'ai_autopost_gh', 'ci_signing', 'ci_set_release',
+    'ci_release_pause', 'push_refresh_config', 'push_promote', 'push_set_access', 'push_diag', 'perf_report',
+    'sys_diag', '_ai_ticket_ok'];
+  -- دوال داخلية/تشخيصية: ما يستدعيها أي مستخدم أبدًا (الخادم بس)
+  internal text[] := array[
+    'ai_diag', 'bg_diag', 'ai_selftest_result', 'push_builds', 'push_config', 'push_drop_tokens', 'push_submit_sa',
+    'trusted_begin', 'ai_configure', 'ai_configure2', '_b64url', '_coin_iqd', '_is_openai_key', '_phone_ok',
+    'request_ip', '_security_sweep'];
+begin
+  -- بس الدوال والجداول اللي نملكها (أي شي ثاني يعود لـ Supabase نفسه ما نمسه)، وكل وحدة بحماية خاصة
+  -- حتى لو فشلت وحدة ما يوكف التحديث كله
+  for r in select p.oid, p.proname, pg_get_function_identity_arguments(p.oid) args
+             from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public' and p.prokind = 'f' and p.proowner = (select oid from pg_roles where rolname = current_user)
+              and not exists(select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e') loop
+    begin
+      if r.proname = any(internal) then
+        if has_function_privilege('anon', r.oid, 'execute') or has_function_privilege('authenticated', r.oid, 'execute') then
+          execute format('revoke execute on function public.%I(%s) from public, anon, authenticated', r.proname, r.args);
+          n_int := n_int + 1;
+        end if;
+      elsif not (r.proname = any(allow_anon)) and has_function_privilege('anon', r.oid, 'execute') then
+        had_auth := has_function_privilege('authenticated', r.oid, 'execute');
+        execute format('revoke execute on function public.%I(%s) from public, anon', r.proname, r.args);
+        if had_auth then execute format('grant execute on function public.%I(%s) to authenticated', r.proname, r.args); end if;
+        n_anon := n_anon + 1;
+      end if;
+    exception when others then null;
+    end;
+  end loop;
+  -- الجداول: الزائر ما يوصل لشي (إلا قراءة إعدادات التطبيق والثيمات)، والجداول الداخلية ما يوصلها حتى المسجّل
+  for r in select c.oid, c.relname, exists(select 1 from pg_policy pl where pl.polrelid = c.oid) has_pol
+             from pg_class c join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = 'public' and c.relkind in ('r', 'p') and c.relowner = (select oid from pg_roles where rolname = current_user) loop
+   begin
+    if r.relname in ('app_settings', 'app_themes') then
+      if has_table_privilege('anon', r.oid, 'insert') or has_table_privilege('anon', r.oid, 'update')
+         or has_table_privilege('anon', r.oid, 'delete') then
+        execute format('revoke insert, update, delete, truncate, references, trigger on public.%I from public, anon', r.relname);
+        n_tab := n_tab + 1;
+      end if;
+    elsif has_table_privilege('anon', r.oid, 'select') or has_table_privilege('anon', r.oid, 'insert')
+          or has_table_privilege('anon', r.oid, 'update') or has_table_privilege('anon', r.oid, 'delete') then
+      execute format('revoke all on public.%I from public, anon', r.relname);
+      n_tab := n_tab + 1;
+    end if;
+    if not r.has_pol and (has_table_privilege('authenticated', r.oid, 'select') or has_table_privilege('authenticated', r.oid, 'insert')
+          or has_table_privilege('authenticated', r.oid, 'update') or has_table_privilege('authenticated', r.oid, 'delete')) then
+      execute format('revoke all on public.%I from authenticated', r.relname);
+      n_tab := n_tab + 1;
+    end if;
+   exception when others then null;
+   end;
+  end loop;
+  return jsonb_build_object('functions_closed_for_visitors', n_anon, 'internal_closed', n_int, 'tables_tightened', n_tab);
+end $$;
+revoke execute on function public._security_sweep() from public, anon, authenticated;
+
+-- الدوال الجديدة مستقبلًا ما تنفتح للزائر تلقائيًا (لازم صلاحية صريحة)
+do $$ begin
+  alter default privileges in schema public revoke execute on functions from anon;
+  alter default privileges revoke execute on functions from public;
+exception when others then raise notice 'default privileges: %', sqlerrm;
+end $$;
+
+-- =====================================================================
+--  الحارس الأمني (لازم يبقى آخر شي بالملف قبل تحديث ذاكرة API — أي إصدار جديد ينضاف فوقه):
+--  يسد أي دالة أو جدول انفتح للزائر بالغلط بأي إصدار.
+-- =====================================================================
+do $$ begin perform public._security_sweep(); end $$;
 
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
