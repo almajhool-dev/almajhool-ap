@@ -183,6 +183,8 @@ class _OverviewState extends State<_Overview> {
             const SizedBox(height: 12),
             const AiAutoPostCard(),
             const SizedBox(height: 12),
+            const _AutoUpdateGuardCard(),
+            const SizedBox(height: 12),
           ],
           const _LiveSettingsCard(),
           const SizedBox(height: 12),
@@ -939,6 +941,90 @@ class _PushSettingsCardState extends State<_PushSettingsCard> {
   }
 }
 
+
+/// مكبح طوارئ للتحديث التلقائي: المالك وحده يوقف/يشغّل جلب التحديثات من المستودع.
+class _AutoUpdateGuardCard extends StatefulWidget {
+  const _AutoUpdateGuardCard();
+  @override
+  State<_AutoUpdateGuardCard> createState() => _AutoUpdateGuardCardState();
+}
+
+class _AutoUpdateGuardCardState extends State<_AutoUpdateGuardCard> {
+  bool? _on;
+  String _last = '';
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final r = Map<String, dynamic>.from(await supa.rpc('update_guard_status') as Map);
+      if (!mounted) return;
+      final last = r['last'] is Map ? Map<String, dynamic>.from(r['last'] as Map) : null;
+      setState(() {
+        _on = r['auto_update_on'] == true;
+        _last = last == null ? '' : '${last['status'] ?? ''} · ${last['at'] ?? ''}';
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _toggle(bool on) async {
+    if (!on &&
+        !await confirmDialog(context, 'إيقاف التحديث التلقائي',
+            'التطبيق راح يوقف يجيب أي تحديث من المستودع. استخدمها بس إذا شكيت بشي. تگدر ترجّعها بأي وقت.',
+            ok: 'إيقاف', danger: true)) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await supa.rpc('set_auto_update', params: {'p_on': on});
+      if (mounted) {
+        setState(() => _on = on);
+        showSnack(context, on ? 'التحديث التلقائي شغّال ✅' : 'تم إيقاف التحديث التلقائي ⛔');
+      }
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+      _load();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final on = _on;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            Icon(Icons.security_update_good_rounded, color: on == false ? Colors.red : Colors.green),
+            const SizedBox(width: 8),
+            const Expanded(child: Text('التحديث التلقائي', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16))),
+            if (on != null) Chip(label: Text(on ? 'شغّال' : 'متوقف ⛔'), visualDensity: VisualDensity.compact),
+          ]),
+          const SizedBox(height: 6),
+          const Text('مكبح طوارئ: لو شكيت إن أحد يحاول يعبث بمشروعك، أوقف التحديث التلقائي من هنا فورًا. '
+              'بالوضع الطبيعي خلّيه شغّال حتى توصلك التحديثات.', style: TextStyle(fontSize: 12.5)),
+          if (_last.isNotEmpty) Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text('آخر فحص: $_last', style: const TextStyle(fontSize: 11.5), textDirection: TextDirection.ltr),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('استقبال التحديثات تلقائيًا'),
+            value: on ?? true,
+            onChanged: (on == null || _busy) ? null : _toggle,
+          ),
+        ]),
+      ),
+    );
+  }
+}
 
 /// إيقاف كل النسخ الأقدم من نسخة المدير، وإظهار زر تحميل من قناة التلكرام.
 class _OldVersionsCard extends StatefulWidget {

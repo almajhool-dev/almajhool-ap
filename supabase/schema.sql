@@ -11370,6 +11370,56 @@ exception when others then raise notice 'default privileges: %', sqlerrm;
 end $$;
 
 -- =====================================================================
+--  الإصدار 87: زر إيقاف طوارئ للتحديث التلقائي (طلب المالك — تحكم كامل).
+--  التحديث التلقائي يجلب schema.sql من المستودع كل 10 دقائق وينفّذه. هذا آمن لأن محد يگدر
+--  يرفع للمستودع إلا المالك. كطبقة حماية إضافية: المالك يگدر يوقف التحديث التلقائي فورًا من
+--  التطبيق إذا شك بأي شي (مكبح طوارئ).
+-- =====================================================================
+create or replace function public._auto_update_schema() returns text
+language plpgsql security definer set search_path = public, extensions as $$
+declare body text; h text; old text;
+begin
+  if coalesce((select value from private_settings where key = 'auto_update_off'), '') = '1' then return 'paused'; end if;
+  select content into body from extensions.http_get(
+    'https://raw.githubusercontent.com/almajhool-dev/almajhool-ap/main/supabase/schema.sql');
+  if body is null or position('notify pgrst' in body) = 0 then return 'skip'; end if;
+  h := md5(body);
+  select value into old from private_settings where key = 'schema_hash';
+  if old = h then return 'same'; end if;
+  execute body;
+  insert into private_settings(key, value) values ('schema_hash', h)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  return 'updated';
+end $$;
+revoke execute on function public._auto_update_schema() from public, anon, authenticated;
+
+create or replace function public.set_auto_update(p_on boolean) returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  if coalesce(p_on, true) then
+    delete from private_settings where key = 'auto_update_off';
+  else
+    insert into private_settings(key, value) values ('auto_update_off', '1')
+      on conflict (key) do update set value = '1', updated_at = now();
+  end if;
+  return coalesce(p_on, true);
+end $$;
+grant execute on function public.set_auto_update(boolean) to authenticated;
+
+create or replace function public.update_guard_status() returns jsonb
+language plpgsql stable security definer set search_path = public, cron as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  return jsonb_build_object(
+    'auto_update_on', coalesce((select value from private_settings where key = 'auto_update_off'), '') <> '1',
+    'last', (select jsonb_build_object('status', d.status, 'at', d.start_time, 'msg', left(d.return_message, 80))
+             from cron.job_run_details d join cron.job j on j.jobid = d.jobid
+             where j.jobname = 'almajhool-auto-update' order by d.runid desc limit 1));
+end $$;
+grant execute on function public.update_guard_status() to authenticated;
+
+-- =====================================================================
 --  الحارس الأمني (لازم يبقى آخر شي بالملف قبل تحديث ذاكرة API — أي إصدار جديد ينضاف فوقه):
 --  يسد أي دالة أو جدول انفتح للزائر بالغلط بأي إصدار.
 -- =====================================================================
