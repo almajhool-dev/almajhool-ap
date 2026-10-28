@@ -1,0 +1,2 @@
+338:warning • The value of the field '_error' isn't used. Try removing the field, or using it • lib/main.dart:62:11 • unused_field
+358:warning • This 'onError' handler must return a value assignable to 'bool', but ends without returning a value. Try adding a return statement • lib/screens/live/live_screens.dart:917:39 • body_might_complete_normally_catch_error
