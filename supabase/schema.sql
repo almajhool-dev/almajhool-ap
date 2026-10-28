@@ -11479,6 +11479,41 @@ $$;
 grant execute on function public.latest_release() to anon, authenticated;
 
 -- =====================================================================
+--  الإصدار 90: التحديث التلقائي ما يفشل بسبب «تعارض الأقفال» (deadlock).
+--  تطبيق المخطط يمسك أقفال على جداول عليها ضغط (رسائل، ترجمة، تخزين) فأحيانًا يتعارض
+--  ويه شغل ثاني ويفشل (سجل الخادم: "deadlock detected"). هسه:
+--  1) ما ينتظر أي قفل أكثر من 4 ثواني — حتى ما يجمّد طلبات المستخدمين،
+--  2) إذا صار تعارض يرجّع كلشي ويعيد المحاولة (لحد 4 مرات) بدل ما يفشل وينتظر 10 دقايق.
+-- =====================================================================
+create or replace function public._auto_update_schema() returns text
+language plpgsql security definer set search_path = public, extensions as $$
+declare body text; h text; old text; tries int := 0;
+begin
+  if coalesce((select value from private_settings where key = 'auto_update_off'), '') = '1' then return 'paused'; end if;
+  select content into body from extensions.http_get(
+    'https://raw.githubusercontent.com/almajhool-dev/almajhool-ap/main/supabase/schema.sql');
+  if body is null or position('notify pgrst' in body) = 0 then return 'skip'; end if;
+  h := md5(body);
+  select value into old from private_settings where key = 'schema_hash';
+  if old = h then return 'same'; end if;
+  perform set_config('lock_timeout', '4s', true);
+  loop
+    tries := tries + 1;
+    begin
+      execute body;
+      insert into private_settings(key, value) values ('schema_hash', h)
+        on conflict (key) do update set value = excluded.value, updated_at = now();
+      exit;
+    exception when deadlock_detected or lock_not_available then
+      if tries >= 4 then raise; end if;
+      perform pg_sleep(1 + random() * 2);
+    end;
+  end loop;
+  return case when tries > 1 then 'updated (retry ' || tries || ')' else 'updated' end;
+end $$;
+revoke execute on function public._auto_update_schema() from public, anon, authenticated;
+
+-- =====================================================================
 --  الحارس الأمني (لازم يبقى آخر شي بالملف قبل تحديث ذاكرة API — أي إصدار جديد ينضاف فوقه):
 --  يسد أي دالة أو جدول انفتح للزائر بالغلط بأي إصدار.
 -- =====================================================================
