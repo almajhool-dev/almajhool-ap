@@ -11388,6 +11388,14 @@ begin
       execute format('revoke all on public.%I from authenticated', r.relname);
       n_tab := n_tab + 1;
     end if;
+    -- صلاحيات ما يحتاجها أي مستخدم أبدًا (TRUNCATE تتجاوز حماية الصفوف، TRIGGER/REFERENCES تعديل بنية):
+    -- تنشال دائمًا من الكل، حتى لو باقي الصلاحيات مضبوطة
+    if has_table_privilege('anon', r.oid, 'truncate') or has_table_privilege('anon', r.oid, 'trigger')
+       or has_table_privilege('anon', r.oid, 'references') or has_table_privilege('authenticated', r.oid, 'truncate')
+       or has_table_privilege('authenticated', r.oid, 'trigger') or has_table_privilege('authenticated', r.oid, 'references') then
+      execute format('revoke truncate, references, trigger on public.%I from public, anon, authenticated', r.relname);
+      n_tab := n_tab + 1;
+    end if;
    exception when others then null;
    end;
   end loop;
@@ -11399,6 +11407,8 @@ revoke execute on function public._security_sweep() from public, anon, authentic
 do $$ begin
   alter default privileges in schema public revoke execute on functions from anon;
   alter default privileges revoke execute on functions from public;
+  -- والجداول الجديدة ما تجي بصلاحيات خطرة للمستخدمين
+  alter default privileges in schema public revoke truncate, references, trigger on tables from anon, authenticated;
 exception when others then raise notice 'default privileges: %', sqlerrm;
 end $$;
 
