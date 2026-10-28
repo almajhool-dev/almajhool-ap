@@ -73,6 +73,16 @@ jobs:
           name: almajhool-app-${{ github.run_number }}
           path: dist/*
 
+      # خريطة فك تمويه طبقة أندرويد (لتحليل الأعطال): ملف بناء مؤقت 14 يوم، مو بفرع عام
+      - name: Upload deobfuscation map (temporary)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mapping-${{ github.run_number }}
+          path: build/app/outputs/mapping/release/mapping.txt
+          retention-days: 14
+          if-no-files-found: ignore
+
       # استضافة ملف التحديث على تخزين Supabase (حتى يبقى التحديث شغّال لو صار المستودع خاص).
       # ما يسوي شي إذا مفتاح الخدمة مو مضاف — البناء الحالي يكمل طبيعي.
       - name: Host APK on Supabase Storage (when configured)
@@ -125,11 +135,13 @@ jobs:
           [ -f ci.log ] || echo "no log" > ci.log
           STATUS="${{ steps.build.outcome }}"
           mkdir -p /tmp/logs
+          # السجل ينحفظ بفرع ci-logs (مقروء من برّه): أي سر انطبع بالسجل ينشال قبل الحفظ.
+          # أمر الإخفاء ::add-mask:: يطبع القيمة نفسها بالسجل الخام — هاي چانت تسرّب كلمة سر التوقيع.
+          sed -E -i 's/::add-mask::.*/::add-mask::***/; s/((store|key)?[Pp]ass(word)?|[Ss]ecret|[Tt]oken)([=:][[:space:]]*)[^[:space:]]+/\1\4***/g' ci.log
           tail -n 400 ci.log > /tmp/logs/last.log
           echo "run=${{ github.run_number }} sha=${{ github.sha }} status=$STATUS" > /tmp/logs/status.txt
           grep -nE "error|Error|ERROR|FAILURE|Exception" ci.log | head -n 200 > /tmp/logs/errors.log || true
-          M=build/app/outputs/mapping/release/mapping.txt
-          [ -f "$M" ] && gzip -c "$M" > /tmp/logs/mapping-${{ github.run_number }}.txt.gz || true
+          # خريطة فك التمويه ما تنحفظ بالفرع (تنرفع كملف بناء مؤقت بالخطوة الجاية بس)
           cd /tmp/logs
           git init -q -b ci-logs
           git config user.name "ci"
