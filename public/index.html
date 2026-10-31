@@ -66,6 +66,14 @@
           </div>
         </fieldset>
 
+        <fieldset class="group">
+          <legend>حجم التقرير</legend>
+          <div class="modes">
+            <label><input type="radio" name="length" value="full" checked><span><b>تقرير مفصّل</b><small>شرح كامل لكل مبحث بفقرات مطوّلة مع صورة لكل مبحث</small></span></label>
+            <label><input type="radio" name="length" value="brief"><span><b>تقرير ملخّص</b><small>كلام مختصر ومركّز يغطي الأساسيات فقط، مع صورة لكل مبحث</small></span></label>
+          </div>
+        </fieldset>
+
         <label class="field wide">
           <span>اسم الموضوع / عنوان التقرير <b>*</b> <i>(اختياري إذا رفعت ملفًا — نقترح العنوان منه)</i></span>
           <textarea name="title" rows="2" maxlength="220" required placeholder="مثال: أثر الذكاء الاصطناعي في جودة التعليم الجامعي"></textarea>
@@ -106,11 +114,11 @@
           <div class="grid">
             <label class="field"><span>اسم الجامعة أو المعهد <b>*</b></span><input name="university" maxlength="160" required></label>
             <label class="field"><span>الكلية <i>(اختياري)</i></span><input name="college" maxlength="160" placeholder="مثال: كلية التربية للعلوم الصرفة"></label>
-            <label class="field"><span>القسم الدراسي <i>(اختياري)</i></span><input name="department" maxlength="120"></label>
+            <label class="field"><span>القسم / التخصص <i>(يُكتب التقرير بمصطلحات هذا التخصص)</i></span><input name="department" maxlength="120" placeholder="مثال: هندسة النفط"></label>
             <label class="field"><span>اسم المشرف <i>(اختياري)</i></span><input name="supervisor" maxlength="120"></label>
           </div>
           <div class="field">
-            <span>أسماء الطلاب المشاركين <b>*</b> <i>(تظهر أسفل الغلاف في عمودين: يمين ويسار)</i></span>
+            <span>أسماء الطلاب المشاركين <b>*</b> <i>(تظهر أسفل الغلاف بشكل عمودي، اسم تحت اسم)</i></span>
             <div id="students"></div>
             <button id="add-student" class="link" type="button">+ إضافة طالب</button>
           </div>
@@ -124,20 +132,37 @@
         </fieldset>
 
         <fieldset class="group">
-          <legend>شعار الجامعة أو المعهد</legend>
-          <div class="logo-search">
-            <input id="logo-q" type="search" placeholder="اكتب أول حروف اسم الجامعة… مثال: بغداد، البصرة، التقنية" autocomplete="off" aria-label="البحث عن شعار">
-            <ul id="logo-results" role="listbox" hidden></ul>
+          <legend>الشعارات على أركان الغلاف</legend>
+          <p class="muted small hint">ضع شعار الجامعة وشعار القسم أو الكلية: الأول في الزاوية اليمنى والثاني في الزاوية اليسرى، والترويسة الوزارية بينهما. إن لم تجد الشعار في البحث ارفعه وسنزيل خلفيته ونضبط أبعاده تلقائيًا.</p>
+          <div class="logos-grid">
+          <div class="logo-slot">
+            <h4>شعار الجامعة <i>(الزاوية اليمنى)</i></h4>
+            <div class="logo-search">
+              <input id="logo-q" type="search" placeholder="ابحث: بغداد، البصرة، التكنولوجية…" autocomplete="off" aria-label="شعار الجامعة">
+              <ul id="logo-results" role="listbox" hidden></ul>
+            </div>
+            <div class="upload">
+              <img id="logo-preview" class="logo-preview" alt="" hidden>
+              <span id="logo-name" class="small"></span>
+              <button id="logo-clear" class="link" type="button" hidden>إزالة</button>
+              <label class="btn-ghost small-btn" for="logo-input">رفع شعار</label>
+              <input id="logo-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+            </div>
           </div>
-          <div class="upload">
-            <img id="logo-preview" alt="" hidden>
-            <span id="logo-name" class="small"></span>
-            <button id="logo-clear" class="link" type="button" hidden>إزالة</button>
+          <div class="logo-slot">
+            <h4>شعار القسم أو الكلية <i>(الزاوية اليسرى)</i></h4>
+            <div class="logo-search">
+              <input id="logo2-q" type="search" placeholder="ابحث أو ارفع شعار القسم — مثال: هندسة النفط" autocomplete="off" aria-label="شعار القسم أو الكلية">
+              <ul id="logo2-results" role="listbox" hidden></ul>
+            </div>
+            <div class="upload">
+              <img id="logo2-preview" class="logo-preview" alt="" hidden>
+              <span id="logo2-name" class="small"></span>
+              <button id="logo2-clear" class="link" type="button" hidden>إزالة</button>
+              <label class="btn-ghost small-btn" for="logo2-input">رفع شعار</label>
+              <input id="logo2-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+            </div>
           </div>
-          <div class="upload">
-            <label class="btn-ghost" for="logo-input">رفع شعار مخصص</label>
-            <input id="logo-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
-            <span class="muted small">إن لم تجد شعارك: ارفعه (PNG أو JPG أو WEBP، أقل من 2 ميغابايت) وسنزيل الخلفية ونضبط أبعاده تلقائيًا.</span>
           </div>
         </fieldset>
 
@@ -180,7 +205,7 @@
               </div>
             </div>
             <div class="preview" id="preview" aria-hidden="true">
-              <div class="pv-top"><div class="pv-min"><b>جمهورية العراق</b><b>وزارة التعليم العالي والبحث العلمي</b><span id="pv-uni">اسم الجامعة</span></div><img id="pv-logo" alt="" hidden></div>
+              <div class="pv-top"><img id="pv-logo" alt="" hidden><div class="pv-min"><b>جمهورية العراق</b><b>وزارة التعليم العالي والبحث العلمي</b><span id="pv-uni">اسم الجامعة</span></div><img id="pv-logo2" alt="" hidden></div>
               <div class="pv-mid"><div class="pv-lbl">تقرير بعنوان</div><div id="pv-title" class="pv-title">عنوان الموضوع</div></div>
               <div class="pv-bot"><div class="pv-lbl small">إعداد الطلاب</div><div id="pv-names" class="pv-names"></div></div>
             </div>

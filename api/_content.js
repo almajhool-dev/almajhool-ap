@@ -65,9 +65,17 @@ export async function buildContent(input) {
   const src = input.source ? prepareSource(input.source) : null;
   const L = { ...LANGS[lang] };
   const p = plan(pages, format, lang, true); // every report carries illustrations
+  const brief = input.length === "brief";
+  if (brief && format !== "pptx") {
+    // Summary report: short, focused text per section with its illustration; concise intro and conclusion.
+    p.words = Math.min(p.words, 85); p.paraWords = 85;
+    p.introWords = Math.min(p.introWords, 110); p.conclWords = Math.min(p.conclWords, 100);
+  }
   const learned = mode === "advanced" && style ? style : null;
   if (learned?.avgParaWords && format !== "pptx") p.paraWords = Math.max(60, Math.min(220, learned.avgParaWords));
-  const sys = { role: "system", content: STYLE(L.name) + styleInstructions(learned) };
+  const field = department ? `\nYou are writing for students of the field «${department}» (e.g. petroleum engineering): write as a specialist in this field, use its correct technical terminology, units, equipment and processes, and give field-specific examples.` : "";
+  const briefRule = brief ? "\nThis is a SUMMARY report: be concise and direct, keep only the essential facts, definitions and figures, no padding." : "";
+  const sys = { role: "system", content: STYLE(L.name) + field + briefRule + styleInstructions(learned) };
   const stats = { ok: {}, fail: [], ms: {} };
   const t0 = Date.now();
   const script = lang === "ar" ? "arabic" : undefined;
@@ -107,7 +115,7 @@ ${srcBlock}Write 4 to 5 concise, informative bullet points for this presentation
       const text = await chat([sys, { role: "user", content: `Report title: "${title}".
 Full outline:\n${outlineText}\n
 ${srcBlock}Write the section "${s.title}" of the chapter "${c.title}".
-Length: about ${p.words} words, in ${Math.max(2, Math.round(p.words / (p.paraWords || 110)))} well-developed paragraphs separated by a blank line.
+Length: about ${p.words} words, in ${brief ? 1 : Math.max(2, Math.round(p.words / (p.paraWords || 110)))} ${brief ? "short, dense paragraph" : "well-developed paragraphs separated by a blank line"}.
 Do not repeat the section title, do not write an introduction to the whole report, do not summarize at the end.` }], { maxTokens: Math.min(4000, Math.round(p.words * 3.2) + 400), script, stats, temperature: 0.6, timeoutMs: 55_000 });
       s.paragraphs = trimWords(splitParas(text), Math.round(p.words * 1.35));
     }
@@ -118,10 +126,10 @@ Do not repeat the section title, do not write an introduction to the whole repor
   const rest = Promise.all([
     chat([sys, { role: "user", content: format === "pptx"
       ? `Write 4 concise introduction bullet points (12-22 words each) for a presentation titled "${title}" with this outline:\n${outlineText}\nOne per line, no symbols.`
-      : `Write the introduction of the university report "${title}" with this outline:\n${outlineText}\nAbout ${p.introWords} words in 2-4 paragraphs: context and importance of the topic, the problem it addresses, objectives, and a short description of how the report is organized. Do not write a heading.${overview}` }], { maxTokens: 2000, script, stats, temperature: 0.6, timeoutMs: 55_000 }),
+      : `Write the introduction of the university report "${title}" with this outline:\n${outlineText}\nAbout ${p.introWords} words in ${brief ? "1 short paragraph" : "2-4 paragraphs"}: context and importance of the topic, the problem it addresses, objectives, and a short description of how the report is organized. Do not write a heading.${overview}` }], { maxTokens: 2000, script, stats, temperature: 0.6, timeoutMs: 55_000 }),
     chat([sys, { role: "user", content: format === "pptx"
       ? `Write 4 concise conclusion bullet points (12-22 words each) for a presentation titled "${title}". One per line, no symbols.`
-      : `Write the conclusion of the university report "${title}" with this outline:\n${outlineText}\nAbout ${p.conclWords} words in 2-3 paragraphs: main findings and a few practical recommendations. Do not write a heading.${overview}` }], { maxTokens: 1600, script, stats, temperature: 0.6, timeoutMs: 55_000 }),
+      : `Write the conclusion of the university report "${title}" with this outline:\n${outlineText}\nAbout ${p.conclWords} words in ${brief ? "1 short paragraph" : "2-3 paragraphs"}: main findings and a few practical recommendations. Do not write a heading.${overview}` }], { maxTokens: 1600, script, stats, temperature: 0.6, timeoutMs: 55_000 }),
     findReferences({ title, lang, keywordsAr: String(outline.keywords_ar || ""), keywordsEn: String(outline.keywords_en || ""), stats }),
     findSectionImages(items, { fallbacks: [String(outline.keywords_en || "")], budgetMs: 80_000 }),
   ]);

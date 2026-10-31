@@ -1,6 +1,6 @@
 // Turns report content into DOCX / PDF / PPTX / XLSX files with formal academic typesetting.
-// Cover (all formats): Iraqi ministry header on the right, institution logo on the left, the heading in red,
-// the topic below it, and the students' names in two columns under a red "إعداد الطلاب" / "Prepared by".
+// Cover (all formats): Iraqi ministry header; university logo and department logo in the two top corners (or one logo
+// opposite the header), the heading in red, the topic below it, and the students' names listed vertically.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -33,8 +33,6 @@ const T = (r) => r.theme || { primary: "1F2A44", topic: "000000", border: "none"
 const headerLines = (r) => [...MINISTRY, r.university, r.college, r.department ? `قسم ${r.department.replace(/^قسم\s+/, "")}` : ""].filter(Boolean);
 const byLabel = (r) => (r.lang === "ar" ? (r.students.length > 1 ? "إعداد الطلاب" : "إعداد الطالب") : r.L.by);
 const figLabel = (r, n) => (r.lang === "ar" ? `شكل (${n})` : `Figure ${n}`);
-/** Names in pairs: first of each pair on the reading-start side (right in Arabic, left otherwise). */
-const pairs = (names) => { const out = []; for (let i = 0; i < names.length; i += 2) out.push(names.slice(i, i + 2)); return out; };
 
 /* ------------------------------- DOCX ------------------------------- */
 export async function buildDocx(r) {
@@ -69,25 +67,28 @@ export async function buildDocx(r) {
 
   // ---- Cover ----
   const cover = [];
-  const logoPara = r.logo
-    ? new Paragraph({ alignment: AlignmentType.LEFT, children: [new ImageRun({ type: "png", data: r.logo.data, transformation: (() => { const h = 105; const w = Math.min(190, Math.round((r.logo.width / r.logo.height) * h)); return { width: w, height: Math.round(w * r.logo.height / r.logo.width) }; })() })] })
-    : new Paragraph({ children: [] });
-  const hdr = headerLines(r).map((t, i) => ar(t, { bold: true, size: i < 2 ? 30 : 28, align: AlignmentType.RIGHT, color: INK }));
-  cover.push(new Table({
-    width: { size: 9070, type: WidthType.DXA }, columnWidths: [5670, 3400], borders: noBorders, visuallyRightToLeft: true,
-    rows: [new TableRow({ children: [cell(hdr, { w: 5670 }), cell([logoPara], { w: 3400 })] })],
-  }));
-  cover.push(para(r.L.report, { align: center, bold: true, size: rtl ? 44 : 36, color: RED, before: 1900, after: 220, line: 300 }));
+  const logoImg = (lg, align) => new Paragraph({ alignment: align, children: lg ? [new ImageRun({ type: "png", data: lg.data, transformation: (() => { const h = 100; const w = Math.min(150, Math.round((lg.width / lg.height) * h)); return { width: w, height: Math.round(w * lg.height / lg.width) }; })() })] : [] });
+  const two = r.logo && r.logo2;
+  const hdr = headerLines(r).map((t, i) => ar(t, { bold: true, size: i < 2 ? 30 : 27, align: two ? AlignmentType.CENTER : AlignmentType.RIGHT, color: INK }));
+  if (two) {
+    // University logo in the right corner, department logo in the left corner, ministry header between them.
+    cover.push(new Table({
+      width: { size: 9070, type: WidthType.DXA }, columnWidths: [2200, 4670, 2200], borders: noBorders, visuallyRightToLeft: true,
+      rows: [new TableRow({ children: [cell([logoImg(r.logo, AlignmentType.RIGHT)], { w: 2200 }), cell(hdr, { w: 4670 }), cell([logoImg(r.logo2, AlignmentType.LEFT)], { w: 2200 })] })],
+    }));
+  } else {
+    cover.push(new Table({
+      width: { size: 9070, type: WidthType.DXA }, columnWidths: [5670, 3400], borders: noBorders, visuallyRightToLeft: true,
+      rows: [new TableRow({ children: [cell(hdr, { w: 5670 }), cell([logoImg(r.logo || r.logo2, AlignmentType.LEFT)], { w: 3400 })] })],
+    }));
+  }
+  const many = r.students.length;
+  cover.push(para(r.L.report, { align: center, bold: true, size: rtl ? 44 : 36, color: RED, before: many > 5 ? 1200 : 1700, after: 220, line: 300 }));
   cover.push(para(r.title, { align: center, bold: true, size: rtl ? 48 : 40, color: th.topic, after: 120, line: 320 }));
-  cover.push(para(byLabel(r), { align: center, bold: true, size: rtl ? 34 : 30, color: RED, before: 1900, after: 160 }));
-  const nameRuns = (n) => [para(n, { align: center, bold: true, size: rtl ? 32 : 26, after: 60 })];
-  if (r.students.length === 1) cover.push(...nameRuns(r.students[0]));
-  else cover.push(new Table({
-    width: { size: 9070, type: WidthType.DXA }, columnWidths: [4535, 4535], borders: noBorders, visuallyRightToLeft: rtl,
-    rows: pairs(r.students).map((pr) => new TableRow({ children: pr[1]
-      ? [cell(nameRuns(pr[0]), { w: 4535 }), cell(nameRuns(pr[1]), { w: 4535 })]
-      : [new TableCell({ children: nameRuns(pr[0]), columnSpan: 2, width: { size: 9070, type: WidthType.DXA }, borders: { top: none, bottom: none, left: none, right: none } })] })),
-  }));
+  cover.push(para(byLabel(r), { align: center, bold: true, size: rtl ? 34 : 30, color: RED, before: many > 5 ? 900 : 1500, after: 120 }));
+  // Students listed vertically, one name per line, centred.
+  const nameSize = many > 6 ? (rtl ? 26 : 22) : rtl ? 30 : 26;
+  r.students.forEach((n) => cover.push(para(n, { align: center, bold: true, size: nameSize, after: 30, line: 276 })));
   if (r.supervisor) cover.push(para(`${r.L.sup}: ${r.supervisor}`, { align: center, bold: true, size: rtl ? 30 : 26, color: th.primary, before: 360, after: 60 }));
   cover.push(para(`${r.L.year}: ${academicYear()}`, { align: center, size: rtl ? 26 : 22, color: GREY, before: 480 }));
 
@@ -210,23 +211,27 @@ function pdfCss(r) {
   .cover .lbl { color: #${RED}; font-weight: 700; font-size: ${r.rtl ? "24pt" : "20pt"}; margin-bottom: 10pt; }
   .cover .title { color: #${th.topic}; font-weight: 700; font-size: ${r.rtl ? "26pt" : "22pt"}; line-height: 1.45; max-width: 15cm; margin: 0 auto; }
   .cover .by { color: #${RED}; font-weight: 700; font-size: ${r.rtl ? "18pt" : "16pt"}; margin-bottom: 6pt; }
-  .cover .names { display: grid; grid-template-columns: 1fr 1fr; gap: 4pt 1cm; font-weight: 700; font-size: ${r.rtl ? "16pt" : "14pt"}; direction: ${r.rtl ? "rtl" : "ltr"}; }
-  .cover .names.one { grid-template-columns: 1fr; }
-  .cover .names div:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .cover .names { display: flex; flex-direction: column; align-items: center; gap: 2pt; font-weight: 700; font-size: ${r.students.length > 6 ? (r.rtl ? "13pt" : "12pt") : r.rtl ? "16pt" : "14pt"}; }
+  .cover .top.two { display: grid; grid-template-columns: 4.2cm 1fr 4.2cm; align-items: start; }
+  .cover .top.two .min { text-align: center; }
+  .cover .top.two .logo { display: flex; }
+  .cover .top.two .logo.r { justify-content: flex-start; }
+  .cover .top.two .logo.l { justify-content: flex-end; }
+  .cover .top.two .logo img { max-height: 3.2cm; max-width: 4cm; }
   .cover .sup { margin-top: 12pt; font-weight: 700; color: #${th.primary}; font-size: ${r.rtl ? "15pt" : "13pt"}; }
   .cover .year { margin-top: 14pt; color: #${GREY}; font-size: 12pt; }`;
 }
 
+const img64 = (lg) => (lg ? `<img src="data:image/png;base64,${lg.data.toString("base64")}" alt="">` : "");
 function coverHtml(r) {
   const names = r.students.map((n) => `<div>${esc(n)}</div>`).join("");
   return `<!doctype html><html lang="${r.lang}" dir="${r.rtl ? "rtl" : "ltr"}"><head><meta charset="utf-8"><style>${pdfCss(r)}</style></head><body>
   <div class="cover">
-    <div class="top">
-      <div class="min">${headerLines(r).map((t) => `<div>${esc(t)}</div>`).join("")}</div>
-      <div class="logo">${r.logo ? `<img src="data:image/png;base64,${r.logo.data.toString("base64")}" alt="">` : ""}</div>
-    </div>
+    ${r.logo && r.logo2
+      ? `<div class="top two"><div class="logo r">${img64(r.logo)}</div><div class="min">${headerLines(r).map((t) => `<div>${esc(t)}</div>`).join("")}</div><div class="logo l">${img64(r.logo2)}</div></div>`
+      : `<div class="top"><div class="min">${headerLines(r).map((t) => `<div>${esc(t)}</div>`).join("")}</div><div class="logo">${img64(r.logo || r.logo2)}</div></div>`}
     <div class="mid"><div class="lbl">${esc(r.L.report)}</div><div class="title">${esc(r.title)}</div></div>
-    <div><div class="by">${esc(byLabel(r))}</div><div class="names${r.students.length === 1 ? " one" : ""}">${names}</div>
+    <div><div class="by">${esc(byLabel(r))}</div><div class="names">${names}</div>
       ${r.supervisor ? `<div class="sup">${esc(r.L.sup)}: ${esc(r.supervisor)}</div>` : ""}
       <div class="year">${esc(r.L.year)}: ${academicYear()}</div></div>
   </div></body></html>`;
@@ -323,31 +328,27 @@ export async function buildPptx(r) {
   const t = pptx.addSlide();
   t.background = bg;
   if (th.border !== "none") t.addShape(pptx.ShapeType.rect, { x: 0.18, y: 0.18, w: 12.97, h: 7.14, fill: { type: "none" }, line: { color: th.primary, width: 2.5 } });
+  const two = r.logo && r.logo2;
   t.addText(headerLines(r).map((x, i) => ({ text: x, options: { breakLine: true, fontSize: i < 2 ? 16 : 14 } })),
-    { fontFace: "Simplified Arabic", rtlMode: true, bold: true, color: INK, x: 6.4, y: 0.35, w: 6.5, h: 1.7, align: "right", valign: "top" });
-  if (r.logo) {
-    const h = 1.5, w = Math.min(3, (r.logo.width / r.logo.height) * h);
-    t.addImage({ data: `data:image/png;base64,${r.logo.data.toString("base64")}`, x: 0.5, y: 0.35, w, h });
-  }
+    two ? { fontFace: "Simplified Arabic", rtlMode: true, bold: true, color: INK, x: 3.4, y: 0.3, w: 6.53, h: 1.7, align: "center", valign: "top" }
+        : { fontFace: "Simplified Arabic", rtlMode: true, bold: true, color: INK, x: 6.4, y: 0.35, w: 6.5, h: 1.7, align: "right", valign: "top" });
+  const putLogo = (lg, right) => {
+    const h = 1.5, w = Math.min(2.6, (lg.width / lg.height) * h);
+    t.addImage({ data: `data:image/png;base64,${lg.data.toString("base64")}`, x: right ? 13.33 - 0.5 - w : 0.5, y: 0.35, w, h });
+  };
+  if (two) { putLogo(r.logo, true); putLogo(r.logo2, false); } else if (r.logo || r.logo2) putLogo(r.logo || r.logo2, false);
   t.addText(r.L.report, { ...base, x: 1, y: 2.25, w: 11.33, h: 0.7, fontSize: 26, bold: true, color: RED, align: "center" });
   t.addText(r.title, { ...base, x: 1, y: 2.95, w: 11.33, h: 1.4, fontSize: 32, bold: true, color: th.topic, align: "center", valign: "middle" });
   t.addText(byLabel(r), { ...base, x: 1, y: 4.55, w: 11.33, h: 0.5, fontSize: 20, bold: true, color: RED, align: "center" });
-  const rows = pairs(r.students);
-  rows.forEach((pr, i) => {
-    const y = 5.05 + i * 0.42;
-    if (pr.length === 1) t.addText(pr[0], { ...base, x: 1, y, w: 11.33, h: 0.42, fontSize: 18, bold: true, align: "center" });
-    else {
-      const [first, second] = pr;
-      const startX = r.rtl ? 6.9 : 1.2, otherX = r.rtl ? 1.2 : 6.9;
-      t.addText(first, { ...base, x: startX, y, w: 5.2, h: 0.42, fontSize: 17, bold: true, align: "center" });
-      if (second) t.addText(second, { ...base, x: otherX, y, w: 5.2, h: 0.42, fontSize: 17, bold: true, align: "center" });
-    }
-  });
-  const yEnd = 5.1 + rows.length * 0.42;
+  // Students vertically, one per line.
+  const n = r.students.length;
+  const nameFont = n <= 3 ? 17 : n <= 5 ? 14 : 11;
+  const namesH = Math.min(1.9, n * nameFont / 72 * 1.35 + 0.1);
+  t.addText(r.students.map((x) => ({ text: x, options: { breakLine: true } })), { ...base, x: 2, y: 5.0, w: 9.33, h: namesH, fontSize: nameFont, bold: true, align: "center", valign: "top" });
   t.addText([
     ...(r.supervisor ? [{ text: `${r.L.sup}: ${r.supervisor}`, options: { breakLine: true, bold: true, color: th.primary } }] : []),
-    { text: `${r.L.year}: ${academicYear()}`, options: { color: GREY, fontSize: 13 } },
-  ], { ...base, x: 1, y: Math.min(6.4, yEnd), w: 11.33, h: 0.85, fontSize: 16, align: "center" });
+    { text: `${r.L.year}: ${academicYear()}`, options: { color: GREY, fontSize: 12 } },
+  ], { ...base, x: 1, y: Math.min(6.55, 5.05 + namesH), w: 11.33, h: 0.8, fontSize: 15, align: "center" });
 
   const content = (title, bullets, img) => {
     const s = pptx.addSlide({ masterName: "BODY" });
@@ -395,7 +396,7 @@ export async function buildXlsx(r) {
   wb.creator = r.students.join("، ");
   wb.title = r.title;
   const font = r.rtl ? "Simplified Arabic" : "Times New Roman";
-  const ws = wb.addWorksheet(r.L.report.slice(0, 28) || "Report", { views: [{ rightToLeft: r.rtl, state: "frozen", ySplit: 12 }], pageSetup: { paperSize: 9, orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.98, right: 0.98, top: 0.98, bottom: 0.98, header: 0.3, footer: 0.3 } } });
+  const ws = wb.addWorksheet(r.L.report.slice(0, 28) || "Report", { views: [{ rightToLeft: r.rtl, state: "frozen", ySplit: 11 + r.students.length }], pageSetup: { paperSize: 9, orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.98, right: 0.98, top: 0.98, bottom: 0.98, header: 0.3, footer: 0.3 } } });
   ws.columns = [{ width: 8 }, { width: 34 }, { width: 110 }];
   const fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + th.primary } };
   const wrap = { wrapText: true, vertical: "top", horizontal: r.rtl ? "right" : "left", readingOrder: r.rtl ? "rtl" : "ltr" };
@@ -409,7 +410,7 @@ export async function buildXlsx(r) {
   merged(r.L.report, { bold: true, size: 16, color: "FF" + RED, align: { horizontal: "center" } });
   merged(r.title, { bold: true, size: 20, color: "FF" + th.topic, align: { horizontal: "center", wrapText: true } }).height = 40;
   merged(byLabel(r), { bold: true, color: "FF" + RED, align: { horizontal: "center" } });
-  merged(r.students.join("    ·    "), { bold: true, align: { horizontal: "center", wrapText: true } });
+  r.students.forEach((x) => merged(x, { bold: true, align: { horizontal: "center" } }));
   merged(`${r.supervisor ? `${r.L.sup}: ${r.supervisor}    ` : ""}${r.L.year}: ${academicYear()}`, { color: "FF" + GREY, align: { horizontal: "center" } });
   const head = add(["#", r.lang === "ar" ? "العنوان" : "Heading", r.lang === "ar" ? "النص" : "Text"], { bold: true, color: "FFFFFFFF", fill });
   head.height = 24;

@@ -67,7 +67,7 @@ async function logError(userId, stage, e) {
 export const POST = route(async (request) => {
   requireSameOrigin(request);
   const len = Number(request.headers.get("content-length") || 0);
-  if (len > 4_300_000) throw new HttpError(413, "حجم الطلب كبير جدًا");
+  if (len > 4_450_000) throw new HttpError(413, "حجم الطلب كبير جدًا — صغّر الشعارات أو الملف المرفوع");
   const user = await requireUser(request);
   // No report quota. Abuse protection only: a flood guard per network address and one report at a time per account.
   await rateLimit(`ip:${clientIp(request)}`, 40, 600, "طلبات كثيرة جدًا من نفس الشبكة خلال دقائق، انتظر قليلًا.");
@@ -108,9 +108,11 @@ export const POST = route(async (request) => {
     college: clean(body.college, 160, { label: "الكلية" }),
     department: clean(body.department, 120, { label: "القسم" }),
     lang, format, pages, mode, theme, style,
+    length: body.length === "brief" ? "brief" : "full",
     fmt: style?.format || null,
   };
   const logo = await processLogo(body.logo);
+  const logo2 = await processLogo(body.logo2);
   setOidcToken(request.headers.get("x-vercel-oidc-token"));
 
   await ensureOps();
@@ -128,6 +130,7 @@ export const POST = route(async (request) => {
       return json({ error: "خدمة الكتابة مزدحمة الآن، حاول مرة أخرى بعد دقيقة." }, 503);
     }
     report.logo = logo;
+    report.logo2 = logo2;
     stage = "images";
     // Images are mandatory: any section without a suitable photo or AI image gets a drawn diagram.
     try { await ensureImages(report, (i) => chapterLabel(report, i), shared); } catch (e) { await logError(user.id, "diagram", e); }

@@ -176,3 +176,22 @@ legend { font-weight: 700; color: var(--navy); padding: 0 8px; }
 .sw.c-f3f7f2 { background: #f3f7f2; }
 .source { background: #fbfaf6; }
 #source-status.error { color: var(--err); }
+
+/* Two corner logos + vertical names */
+.logos-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.logo-slot h4 { margin: 0 0 8px; font-size: .95rem; color: var(--navy); }
+.logo-slot h4 i { color: var(--muted); font-style: normal; font-weight: 400; font-size: .82rem; }
+.logo-slot input[type=search] { width: 100%; padding: 11px 13px; border: 1px solid #d8d3c8; border-radius: 10px; background: #fff; outline: none; }
+.logo-slot input[type=search]:focus { border-color: var(--navy); box-shadow: 0 0 0 3px rgba(31,42,68,.12); }
+.logo-slot ul[role=listbox] { position: absolute; z-index: 4; inset-inline: 0; top: calc(100% + 4px); list-style: none; margin: 0; padding: 6px; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 16px 40px -20px rgba(0,0,0,.35); max-height: 300px; overflow: auto; }
+.logo-slot ul[role=listbox] li { padding: 8px 10px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; gap: 10px; }
+.logo-slot ul[role=listbox] li[aria-selected=true], .logo-slot ul[role=listbox] li:hover { background: #eef0f5; }
+.logo-slot ul[role=listbox] li small { color: var(--muted); }
+.logo-slot ul[role=listbox] li.more { color: var(--navy); font-weight: 700; justify-content: center; }
+.logo-preview { height: 52px; max-width: 120px; object-fit: contain; border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 4px; }
+.small-btn { padding: 7px 14px; font-size: .88rem; }
+.pv-top { gap: 4px; }
+.pv-top .pv-min { flex: 1; text-align: center; }
+#pv-logo2 { width: 30px; height: 30px; object-fit: contain; }
+.pv-names { display: flex !important; flex-direction: column; align-items: center; }
+@media (max-width: 640px) { .logos-grid { grid-template-columns: 1fr; } }
