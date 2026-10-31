@@ -3,4 +3,3 @@ node_modules
 .env*
 public/fonts
 public/vendor
-public/bg.js
