@@ -30,32 +30,28 @@ void main() {
         ),
       );
 
-  bool opaque(WidgetTester t) {
-    final p = find.descendant(of: find.byType(FxOpaqueWhileMoving), matching: find.byType(CustomPaint));
-    return p.evaluate().any((e) => (e.widget as CustomPaint).painter != null);
-  }
-
-  testWidgets('فتح محادثة: انزلاق بدون تلاشي، وخلفية معتمة أثناء الحركة بس (ماكو تداخل)', (tester) async {
+  testWidgets('فتح المحادثة فوري: تطلع بالإطار اللي بعد الضغطة، بدون تداخل ولا انزلاق', (tester) async {
     await tester.pumpWidget(app());
     await tester.tap(find.text('افتح'));
+    await tester.pump(); // إطار واحد بس بعد الضغطة
+
+    // المحادثة طالعة كاملة بمكانها من أول إطار
+    expect(find.text('المحادثة'), findsOneWidget);
+    // ماكو أي حركة بين الشاشتين (لا تلاشي ولا انزلاق)
+    expect(find.ancestor(of: find.text('المحادثة'), matching: find.byType(FadeTransition)), findsNothing);
+    expect(find.ancestor(of: find.text('المحادثة'), matching: find.byType(SlideTransition)), findsNothing);
+    // وماكو إطارات حركة باقية — كلشي خلص
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 120)); // نص الانتقال
+    expect(tester.binding.hasScheduledFrame, isFalse, reason: 'ماكو انتقال يرسم');
+    // القائمة اللي تحت مخفية تمامًا: ماكو تداخل
+    expect(find.text('افتح'), findsNothing);
 
-    // ماكو أي تلاشي (شفافية) بالانتقال — هذا اللي چان يثقّل ويداخل الشاشتين
-    final route = find.ancestor(of: find.text('المحادثة'), matching: find.byType(FadeTransition));
-    expect(route, findsNothing, reason: 'الانتقال لازم يكون انزلاق بدون تلاشي');
-
-    // الشاشة الجديدة معتمة أثناء الحركة: تغطي القائمة اللي تحتها
-    expect(opaque(tester), isTrue, reason: 'أثناء الانتقال: خلفية معتمة');
-
-    // بالعربي تجي من اليسار: بنص الحركة بعدها مزاحة لليسار
-    final x = tester.getTopLeft(find.text('المحادثة')).dx;
-    await tester.pumpAndSettle();
-    final xEnd = tester.getTopLeft(find.text('المحادثة')).dx;
-    expect(x, lessThan(xEnd), reason: 'تنزلق من اليسار (عربي)');
-
-    // بعد ما يخلص: ترجع شفافة حتى تبين الخلفية المتحركة
-    expect(opaque(tester), isFalse, reason: 'بعد الانتقال: شفافة مثل قبل');
+    // الرجوع هم فوري
+    tester.state<NavigatorState>(find.byType(Navigator)).pop();
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('افتح'), findsOneWidget);
+    expect(find.text('المحادثة'), findsNothing);
   });
 
   testWidgets('الرسالة الصوتية ما تخلق مشغّل صوت أصلي إلا لما تضغط تشغيل', (tester) async {

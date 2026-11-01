@@ -302,7 +302,9 @@ class MessageBubble extends StatelessWidget {
             ],
           );
         }
-        final body = SelectableText.rich(
+        // نص عادي (مو SelectableText): أخف بكثير بالبناء والتمرير، والنسخ موجود بقائمة الضغط المطوّل.
+        // SelectableText چان ينبني كأنه حقل كتابة لكل رسالة وياخذ الضغط المطوّل من الفقاعة.
+        final body = Text.rich(
           _linkify(text, fg),
           style: TextStyle(color: fg, fontSize: 15.5, height: 1.35),
         );

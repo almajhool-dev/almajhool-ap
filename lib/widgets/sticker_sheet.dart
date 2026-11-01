@@ -18,6 +18,8 @@ class StickerImage extends StatelessWidget {
         child: CachedNetworkImage(
           imageUrl: url,
           fit: BoxFit.contain,
+          // الملصق المتحرك ينفكّ بحجم عرضه بس (چان ينفكّ بدقته الكاملة لكل إطار حركة وهو ظاهر)
+          memCacheWidth: (size * MediaQuery.devicePixelRatioOf(context)).round(),
           fadeInDuration: const Duration(milliseconds: 120),
           placeholder: (_, __) => Center(child: Text(fallback, style: TextStyle(fontSize: size * 0.5))),
           errorWidget: (_, __, ___) => Center(child: Text(fallback, style: TextStyle(fontSize: size * 0.5))),

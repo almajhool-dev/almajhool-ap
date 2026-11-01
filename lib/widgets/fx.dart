@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
@@ -143,8 +144,15 @@ class _FxBasePainter extends CustomPainter {
   final bool dark;
   _FxBasePainter(this.th, this.dark);
 
-  @override
-  void paint(Canvas canvas, Size s) {
+  // الخلفية «مخبوزة» كصورة وحدة: محرّك الرسم بأندرويد (Impeller) يعيد رسم كلشي بكل إطار،
+  // فچانت الأضواء الثلاث (تدرجات بحجم الشاشة) تنحسب من جديد بكل إطار. هسه تنحسب مرة وحدة
+  // وكل إطار ينسخ صورة وحدة بس (أخف بهواية). الشكل نفسه بالضبط.
+  static final Map<String, ui.Image> _baked = {};
+
+  String _key(Size s) =>
+      '${s.width.round()}x${s.height.round()}|${th.base}|${th.colors.map((c) => c.toARGB32()).join(',')}|$dark';
+
+  void _draw(Canvas canvas, Size s) {
     final base = dark ? const Color(0xFF0A0E17) : const Color(0xFFF1F3FA);
     canvas.drawRect(Offset.zero & s, Paint()..color = base);
     final k = dark ? 1.0 : 0.6;
@@ -172,27 +180,49 @@ class _FxBasePainter extends CustomPainter {
   }
 
   @override
+  void paint(Canvas canvas, Size s) {
+    if (s.isEmpty) return;
+    final key = _key(s);
+    var img = _baked[key];
+    if (img == null) {
+      try {
+        final rec = ui.PictureRecorder();
+        _draw(Canvas(rec), s);
+        final pic = rec.endRecording();
+        // بدقة الشاشة المنطقية (ثلث البكسلات تقريبًا): التدرجات ناعمة فما يبيّن أي فرق
+        img = pic.toImageSync(s.width.ceil(), s.height.ceil());
+        pic.dispose();
+        if (_baked.length >= 6) _baked.remove(_baked.keys.first)?.dispose();
+        _baked[key] = img;
+      } catch (_) {
+        _draw(canvas, s); // احتياط: إذا الخبز ما زبط نرسم مثل قبل
+        return;
+      }
+    }
+    canvas.drawImageRect(
+      img,
+      Offset.zero & Size(img.width.toDouble(), img.height.toDouble()),
+      Offset.zero & s,
+      Paint()..filterQuality = FilterQuality.low,
+    );
+  }
+
+  @override
   bool shouldRepaint(_FxBasePainter o) => o.th != th || o.dark != dark;
 }
 
-/// انتقال بين الشاشات مثل ماسنجر: الشاشة الجديدة تنزلق فوق القديمة (من اليسار بالعربي).
-/// حركة بس بدون أي شفافية — چان الانتقال القديم «تلاشي»: الشاشتين شفافات فوق بعض
-/// (التداخل اللي بالفيديو) والجهاز يرسمهن بطبقات شفافة ثقيلة بكل إطار فيعلّق.
+/// انتقال فوري بين الشاشات (أندرويد): الشاشة الجديدة تطلع بالإطار اللي بعد الضغطة مباشرة،
+/// مثل قلب صفحة. بدون أي حركة — فما يصير تداخل ولا انزلاق ولا أي رسم إضافي على الجهاز.
+/// (التلاشي القديم چان يخلي الشاشتين فوق بعض ويعلّق، والانزلاق يبيّن القائمة جنب المحادثة.)
 class FxPageTransition extends PageTransitionsBuilder {
   const FxPageTransition();
   @override
-  Duration get transitionDuration => const Duration(milliseconds: 240);
+  Duration get transitionDuration => Duration.zero; // والرجوع هم فوري (نفس المدة)
 
   @override
   Widget buildTransitions<T>(PageRoute<T> route, BuildContext context, Animation<double> animation,
-      Animation<double> secondaryAnimation, Widget child) {
-    final rtl = Directionality.of(context) == TextDirection.rtl;
-    final curve = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic);
-    return SlideTransition(
-      position: Tween<Offset>(begin: Offset(rtl ? -1 : 1, 0), end: Offset.zero).animate(curve),
-      child: FxOpaqueWhileMoving(animation: animation, child: child),
-    );
-  }
+          Animation<double> secondaryAnimation, Widget child) =>
+      child;
 }
 
 /// آيفون: نفس انتقال آيفون الأصلي (ويبقى السحب من الحافة للرجوع)، بس بخلفية ثابتة أثناء الحركة.

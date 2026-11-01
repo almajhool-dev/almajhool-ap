@@ -5,7 +5,14 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 class Fmt {
   Fmt._();
 
-  static String time(DateTime t) => DateFormat('h:mm a', 'ar').format(t.toLocal());
+  // المنسّقات تنخلق مرة وحدة بس (چانت تنخلق من جديد لكل رسالة ولكل سطر بالقائمة بكل بناء —
+  // إنشاء DateFormat يحلّل النمط ويحمّل بيانات العربي، فچان من أثقل شي بفتح المحادثة)
+  static final _time = DateFormat('h:mm a', 'ar');
+  static final _weekday = DateFormat('EEEE', 'ar');
+  static final _date = DateFormat('d/M/yyyy', 'ar');
+  static final _dayHeader = DateFormat('EEEE d MMMM yyyy', 'ar');
+
+  static String time(DateTime t) => _time.format(t.toLocal());
 
   static String chatListTime(DateTime t) {
     final local = t.toLocal();
@@ -15,8 +22,8 @@ class Fmt {
         .inDays;
     if (diff == 0) return time(local);
     if (diff == 1) return 'أمس';
-    if (diff < 7) return DateFormat('EEEE', 'ar').format(local);
-    return DateFormat('d/M/yyyy', 'ar').format(local);
+    if (diff < 7) return _weekday.format(local);
+    return _date.format(local);
   }
 
   static String dayHeader(DateTime t) {
@@ -27,7 +34,7 @@ class Fmt {
         .inDays;
     if (diff == 0) return 'اليوم';
     if (diff == 1) return 'أمس';
-    return DateFormat('EEEE d MMMM yyyy', 'ar').format(local);
+    return _dayHeader.format(local);
   }
 
   static String lastSeen(DateTime? t) {
