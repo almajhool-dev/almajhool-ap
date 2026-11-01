@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -448,6 +449,37 @@ class _ReportsState extends State<_Reports> {
     }
   }
 
+  // مخالفة جدّية: نحفظ المحتوى المخالف كدليل (حتى لو انمسح بعدين) ونطلع ملف قضية
+  // منظّم ينتسخ ويتسلّم للجهة الرسمية. التعرّف على هوية الشخص قانونيًا تسويه الجهة الرسمية.
+  Future<void> _caseFile(String id) async {
+    try {
+      await _admin.escalateReport(id);
+      final text = await _admin.caseFile(id);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('ملف القضية'),
+          content: SingleChildScrollView(child: SelectableText(text, style: const TextStyle(fontSize: 12.5, height: 1.5))),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: text));
+                Navigator.pop(c);
+                showSnack(context, 'انتسخ ملف القضية — سلّمه للجهة الرسمية');
+              },
+              child: const Text('انسخ'),
+            ),
+            TextButton(onPressed: () => Navigator.pop(c), child: const Text('إغلاق')),
+          ],
+        ),
+      );
+      await _load();
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
@@ -562,6 +594,12 @@ class _ReportsState extends State<_Reports> {
                           onPressed: () => _run(() => _admin.resolveReport(r['id'] as String), 'تم إغلاق البلاغ'),
                           icon: const Icon(Icons.check),
                           label: const Text('تجاهل'),
+                        ),
+                        // مخالفة جدّية راح تنرفع للجهة الرسمية: نحفظ الدليل ونطلع ملف قضية منظّم
+                        TextButton.icon(
+                          onPressed: () => _caseFile(r['id'] as String),
+                          icon: const Icon(Icons.gavel_rounded, color: Colors.indigo),
+                          label: const Text('ملف قضية'),
                         ),
                       ],
                     ),

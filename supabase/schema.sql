@@ -12467,6 +12467,90 @@ create policy media_write on storage.objects for insert to authenticated
               and (lower(name) !~ '\.(apk|xapk|apks|apkm|aab|exe|msi|bat|cmd|com|scr|pif|jar|vbs|vbe|js|jse|wsf|ps1|hta|dll|cpl|lnk|reg|sh|ipa|dmg|pkg)$'
                    or public.is_admin()));
 
+-- =====================================================================
+--  الإصدار 93: ملف قضية للبلاغات الجدّية (طلب المالك: «شلون أكشف اللي يسوي جريمة»).
+--  الحقيقة: التطبيق ما يخزّن موقع ولا IP للمستخدمين (بسياسة الخصوصية)، والتعرّف على هوية
+--  الشخص الحقيقية تسويها الجهة الرسمية (الشرطة/القضاء) عن طريق مزوّد الخدمة بأمر قانوني —
+--  مو صاحب التطبيق. اللي نقدر نسويه قانونيًا وينفع فعلًا: نحفظ المحتوى المخالف كدليل (حتى لو
+--  انمسح بعدين) ونطلع ملف قضية منظّم فيه كل المعلومات المتوفرة بالتطبيق، يتسلّم للجهة المختصة.
+-- =====================================================================
+create table if not exists public.report_evidence (
+  report_id uuid primary key references public.reports(id) on delete cascade,
+  reported_user_id uuid,
+  username text, display_name text, joined_at timestamptz,
+  content_kind text,          -- post | message | account
+  snapshot text,              -- المحتوى المخالف محفوظ قبل أي حذف
+  source_id uuid,
+  reason text,
+  captured_at timestamptz not null default now(),
+  captured_by uuid
+);
+alter table public.report_evidence enable row level security;
+-- ماكو سياسات: المدير/المالك بس عبر الدوال أدناه
+
+-- حالة جديدة للبلاغ: «مصعّد» (قضية جدّية انحفظ دليلها)
+do $$ begin
+  alter table public.reports drop constraint if exists reports_status_check;
+  alter table public.reports add constraint reports_status_check check (status in ('open', 'resolved', 'escalated'));
+exception when others then raise notice 'reports status check: %', sqlerrm; end $$;
+
+-- يصعّد البلاغ كقضية جدّية ويحفظ الدليل (المحتوى + معلومات الحساب) قبل أي حذف
+create or replace function public.admin_escalate_report(rid uuid, note text default null) returns void
+language plpgsql security definer set search_path = public as $$
+declare r public.reports; mc text; pc text; un text; dn text; j timestamptz;
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  select * into r from reports where id = rid;
+  if r.id is null then raise exception 'البلاغ غير موجود'; end if;
+  select content into mc from messages where id = r.message_id;
+  select content into pc from posts where id = r.post_id;
+  select username, display_name, created_at into un, dn, j from profiles where id = r.reported_user_id;
+  insert into report_evidence(report_id, reported_user_id, username, display_name, joined_at,
+      content_kind, snapshot, source_id, reason, captured_by)
+    values (rid, r.reported_user_id, un, dn, j,
+      case when r.post_id is not null then 'post' when r.message_id is not null then 'message' else 'account' end,
+      left(coalesce(pc, mc, ''), 4000), coalesce(r.post_id, r.message_id), coalesce(note, r.reason), auth.uid())
+    on conflict (report_id) do update set snapshot = excluded.snapshot, reason = excluded.reason, captured_at = now();
+  update reports set status = 'escalated' where id = rid;
+end $$;
+grant execute on function public.admin_escalate_report(uuid, text) to authenticated;
+
+-- ملف قضية منظّم (نص) يتسلّم للجهة الرسمية — كل المعلومات المتوفرة بالتطبيق، مع توضيح إنه
+-- التعرّف على الهوية تسويه الجهة الرسمية (التطبيق ما يخزّن موقع ولا IP)
+create or replace function public.report_case_file(rid uuid) returns text
+language plpgsql stable security definer set search_path = public as $$
+declare r public.reports; e public.report_evidence; un text; dn text; j timestamptz;
+  w int; b boolean; dev int; rep text;
+begin
+  if not is_admin() then raise exception 'للمدير فقط'; end if;
+  select * into r from reports where id = rid;
+  if r.id is null then raise exception 'البلاغ غير موجود'; end if;
+  select * into e from report_evidence where report_id = rid;
+  select username, display_name, created_at, coalesce(warnings, 0), coalesce(is_banned, false)
+    into un, dn, j, w, b from profiles where id = r.reported_user_id;
+  select count(*) into dev from banned_devices where user_id = r.reported_user_id;
+  select username into rep from profiles where id = r.reporter_id;
+  return
+       '═══ ملف قضية — تطبيق VYFRI ═══' || E'\n'
+    || 'رقم البلاغ: ' || rid || E'\n'
+    || 'تاريخ البلاغ: ' || to_char(r.created_at, 'YYYY-MM-DD HH24:MI') || E'\n'
+    || 'المبلّغ: @' || coalesce(rep, '-') || E'\n\n'
+    || '— الحساب المبلّغ عنه —' || E'\n'
+    || 'اسم المستخدم: @' || coalesce(un, '-') || E'\n'
+    || 'الاسم الظاهر: ' || coalesce(dn, '-') || E'\n'
+    || 'تاريخ إنشاء الحساب: ' || coalesce(to_char(j, 'YYYY-MM-DD HH24:MI'), '-') || E'\n'
+    || 'الحالة: ' || case when b then 'محظور' else 'نشط' end
+       || ' · إنذارات: ' || w || ' · أجهزة محظورة: ' || dev || E'\n\n'
+    || '— سبب البلاغ —' || E'\n' || coalesce(e.reason, r.reason, '-') || E'\n\n'
+    || '— المحتوى المخالف (محفوظ كدليل) —' || E'\n'
+    || coalesce(nullif(e.snapshot, ''), '(ماكو نص محفوظ — المحتوى نصّي انحفظ وقت التصعيد، والصور/الملفات تنشاف داخل اللوحة)') || E'\n\n'
+    || '═══════════════════════════' || E'\n'
+    || 'ملاحظة قانونية: التعرّف على هوية الشخص الحقيقية يتم عن طريق الجهات الرسمية (الشرطة/القضاء) '
+    || 'اللي تطلب بيانات المشترك من مزوّد خدمة الإنترنت بأمر قانوني. التطبيق — حفاظًا على خصوصية '
+    || 'المستخدمين وحسب سياسته — ما يخزّن موقع ولا عنوان IP، فهذا الملف هو كل الدليل المتوفر لتسليمه للجهة المختصة.';
+end $$;
+grant execute on function public.report_case_file(uuid) to authenticated;
+
 -- الحارس الأمني كل ساعة (مو بس وقت التحديث): إذا انفتحت أي صلاحية بالغلط (حتى من لوحة Supabase)
 -- تنسد تلقائيًا وينبلّغ المالك
 create or replace function public._security_sweep_tick() returns jsonb

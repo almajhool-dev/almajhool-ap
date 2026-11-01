@@ -171,6 +171,14 @@ class AdminRepository {
   Future<void> resolveReport(String id, {bool deleteMessage = false}) =>
       supa.rpc('admin_resolve_report', params: {'rid': id, 'delete_msg': deleteMessage});
 
+  // يحفظ المحتوى المخالف كدليل قبل أي حذف (للبلاغات الجدّية اللي راح تنرفع للجهة الرسمية)
+  Future<void> escalateReport(String id, {String? note}) =>
+      supa.rpc('admin_escalate_report', params: {'rid': id, 'note': note});
+
+  // ملف قضية منظّم (نص) يتسلّم للشرطة/القضاء
+  Future<String> caseFile(String id) async =>
+      (await supa.rpc('report_case_file', params: {'rid': id}) as String?) ?? '';
+
   Future<List<Map<String, dynamic>>> groups() async {
     final r = await supa.rpc('admin_list_groups') as List;
     return r.cast<Map<String, dynamic>>();
