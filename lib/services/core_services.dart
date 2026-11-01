@@ -118,6 +118,41 @@ class CacheService {
     } catch (_) {}
   }
 
+  /// تسخين الكاش بالخلفية: نقرا ونفكّ تشفير ملفات محادثات معيّنة ونحطها بذاكرة RAM،
+  /// وحدة بكل دورة حدث (microtask) حتى ما نجمّد الواجهة. فمن يضغط المستخدم على محادثة
+  /// تطلع رسائلها فورًا من الذاكرة بدون فكّ تشفير أثناء الانتقال (هذا اللي چان يسبب «تعليق»).
+  static final List<String> _warmQueue = [];
+  static bool _warming = false;
+  static void prewarm(Iterable<String> keys) {
+    for (final key in keys) {
+      final k = _k(key);
+      if (!_mem.containsKey(k) && !_warmQueue.contains(k)) _warmQueue.add(k);
+    }
+    if (!_warming) _drainWarm();
+  }
+
+  static void _drainWarm() {
+    if (_warmQueue.isEmpty) {
+      _warming = false;
+      return;
+    }
+    _warming = true;
+    final k = _warmQueue.removeAt(0);
+    if (!_mem.containsKey(k) && _dir != null) {
+      try {
+        final f = File(_file(k));
+        if (f.existsSync()) {
+          final raw = f.readAsStringSync();
+          final text = SecureVault.isEncrypted(raw) ? SecureVault.decrypt(raw) : raw;
+          if (text != null) {
+            _mem[k] = (jsonDecode(text) as List).cast<Map>().map((e) => e.cast<String, dynamic>()).toList();
+          }
+        }
+      } catch (_) {}
+    }
+    Future(_drainWarm); // الملف الجاي بالدورة اللي بعدها — ما نجمّد الإطار
+  }
+
   static List<Map<String, dynamic>> conversations() => readList('conversations');
   static Future<void> saveConversations(List<Map<String, dynamic>> l) => writeList('conversations', l);
 

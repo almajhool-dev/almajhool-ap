@@ -28,7 +28,8 @@ import 'location_screens.dart';
 
 class ChatScreen extends StatefulWidget {
   final String conversationId;
-  const ChatScreen({super.key, required this.conversationId});
+  final ConversationSummary? initial; // ملخص المحادثة من القائمة: يخلي العنوان والصورة يطلعون فورًا
+  const ChatScreen({super.key, required this.conversationId, this.initial});
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -74,6 +75,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _scroll.addListener(_onScroll);
     _text.addListener(() => setState(() {}));
     _messages = _repo.cachedMessages(_id);
+    _conv = widget.initial; // فوري من القائمة
     for (final c in _hub.conversations) {
       if (c.id == _id) _conv = c;
     }

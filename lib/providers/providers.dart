@@ -313,7 +313,10 @@ class ChatHub extends ChangeNotifier with WidgetsBindingObserver {
     _prefetching = true;
     try {
       final list = [...conversations]..sort((a, b) => b.lastMessageAt.compareTo(a.lastMessageAt));
+      // نسخّن كاش آخر المحادثات بالذاكرة بالخلفية (بدون تجميد) حتى يفتحون فورًا
+      CacheService.prewarm(list.take(12).map((c) => 'msgs_${c.id}'));
       for (final c in list.take(12)) {
+        await Future<void>.delayed(Duration.zero); // نتنفّس بين كل محادثة حتى ما نجمّد الواجهة
         if (c.id == openConversationId) continue;
         final last = _prefetched[c.id];
         if (last != null && !c.lastMessageAt.isAfter(last)) continue;

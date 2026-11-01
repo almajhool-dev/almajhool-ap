@@ -213,7 +213,7 @@ class _ChatsTabState extends State<ChatsTab> {
                     itemBuilder: (_, i) {
                       final c = onlineDirect[i];
                       return GestureDetector(
-                        onTap: () => openChat(context, c.id),
+                        onTap: () => openChat(context, c.id, initial: c),
                         child: SizedBox(
                           width: 62,
                           child: Column(
@@ -335,7 +335,7 @@ class ConversationTile extends StatelessWidget {
           Badge2(conv.unread),
         ],
       ),
-      onTap: () => openChat(context, conv.id),
+      onTap: () => openChat(context, conv.id, initial: conv),
       onLongPress: () => _actions(context, hub),
     );
   }
@@ -382,9 +382,9 @@ class ConversationTile extends StatelessWidget {
   }
 }
 
-Future<void> openChat(BuildContext context, String conversationId) {
+Future<void> openChat(BuildContext context, String conversationId, {ConversationSummary? initial}) {
   return Navigator.push(
     context,
-    MaterialPageRoute(builder: (_) => ChatScreen(conversationId: conversationId)),
+    MaterialPageRoute(builder: (_) => ChatScreen(conversationId: conversationId, initial: initial)),
   );
 }
