@@ -11339,7 +11339,7 @@ declare r record; n_anon int := 0; n_int int := 0; n_tab int := 0; had_auth bool
     'unregister_fcm', 'push_ready',
     'ai_img_claim', 'ai_img_done', 'ai_img_pending', 'ai_news_push', 'ai_autopost_gh', 'ci_signing', 'ci_set_release',
     'ci_release_pause', 'push_refresh_config', 'push_promote', 'push_set_access', 'push_diag', 'perf_report',
-    'sys_diag', '_ai_ticket_ok'];
+    'sys_diag', '_ai_ticket_ok', 'spam_ban_commit', 'device_status'];
   -- دوال داخلية/تشخيصية: ما يستدعيها أي مستخدم أبدًا (الخادم بس)
   internal text[] := array[
     'ai_diag', 'bg_diag', 'ai_selftest_result', 'push_builds', 'push_config', 'push_drop_tokens', 'push_submit_sa',
@@ -11555,6 +11555,391 @@ begin
   return case when tries > 1 then 'updated (retry ' || tries || ')' else 'updated' end;
 end $$;
 revoke execute on function public._auto_update_schema() from public, anon, authenticated;
+
+-- =====================================================================
+--  الإصدار 91: حماية من سبام «التجارة الرمادية» (طلب المالك).
+--  رسائل مثل «搜女出海 … 海外数据｜渗透｜承兑｜USDT｜代收代付 … t.me/…»: بيع بيانات مسروقة،
+--  غسيل أموال، حسابات، قمار، تزوير وثائق. أي أحد ينشرها بأي مكان بالتطبيق (منشور، تعليق،
+--  رسالة خاصة أو كروب، ستوري، تعليق بث، عنوان بث، اسم/وصف كروب، اسم أو بايو):
+--   • المحتوى ما ينحفظ أبدًا،
+--   • الحساب ينحظر نهائيًا فورًا وتنقطع جلساته،
+--   • كل أجهزته تنحظر (التطبيق يوكف عنده وما يكدر يسوي حساب جديد).
+--  الكشف دقيق لهالنوع بس: يحتاج عدة مصطلحات من هالتجارة سوه (أو مصطلحين + رابط تلكرام)،
+--  فرابط تلكرام وحده أو أرقام أو كلام صيني عادي ما يتأثر. ويتجاوز حيل الإخفاء: الحروف العريضة
+--  (ｔ．ｍｅ)، المسافات والرموز والإيموجي بين الحروف، الحروف المخفية، والصيني التقليدي.
+--  الحظر ينحفظ بمعاملة مستقلة (اتصال داخلي بالخادم نفسه)، فيثبت حتى لو الطلب كله انرفض.
+--  المالك: يشوف كل حظر تلقائي وسببه، ويكدر يفك الحظر، ويجرّب أي نص قبل.
+-- =====================================================================
+
+-- ---------- الكاشف ----------
+create or replace function public._gray_spam_info(p text) returns jsonb
+language plpgsql immutable set search_path = public as $$
+declare
+  t text; sq text; t2 text; cjk int; tg boolean; hits int := 0; en int := 0; w text; found text[] := '{}';
+  zh constant text[] := array[
+    '灰产','灰產','黑产','黑產','搜女','引流','打粉','粉商','代投','承兑','承兌','代收','代付','跑分',
+    '渗透','滲透','筛料','篩料','料子','海外数据','海外數據','数据资源','數據資源','收数据','收數據',
+    '包网','包網','棋牌','博彩','菠菜','实卡','實卡','虚拟卡','虛擬卡','流量卡','群发','群發','拉群',
+    '短信推广','短信推廣','双向短信','雙向短信','苹果推','蘋果推','电销','電銷','证件','證件','云控','雲控',
+    '网逃','網逃','撤网','撤網','取保候审','取保候審','洗钱','洗錢','能量兑换','能量兌換','888租赁','888租賃',
+    '收粉','收号','收號','三方支付','四方支付','跨境支付','支付通道','广告户','廣告戶','色流','接码','接碼',
+    '卡商','水房','车队','車隊','资金盘','資金盤','获客','獲客','全网资源','全網資源','索引机器人','索引機器人',
+    'usdt','u商','换汇','換匯','黑钱','黑錢','跑量','代开','代開','流量矩阵','流量矩陣','精准流量','精準流量',
+    '纸飞机','紙飛機','担保交易','擔保交易','公群','汇旺','匯旺','杀猪盘','殺豬盤','刷单','刷單','日结','日結',
+    '出海资源','盘口','盤口'];
+  en_terms constant text[] := array[
+    'gray industry','grey industry','black industry','money laundering','usdt acceptance','usdt exchange',
+    'usdt otc','collection and payment','payment channel','overseas data','data screening','fan farming',
+    'bulk sms','sms blast','mass sms','fake id','fake documents','fake passport','real name card',
+    'anonymous number','cloud control','group control','traffic drainage','traffic diversion',
+    'telegram accounts','whatsapp accounts','pig butchering','order brushing','escrow group'];
+begin
+  if p is null or char_length(p) < 8 then return jsonb_build_object('spam', false); end if;
+  -- توحيد: الحروف العريضة والمزخرفة ترجع عادية، والحروف المخفية تنشال
+  t := lower(normalize(p, NFKC));
+  t := regexp_replace(t, '[­͏؜ᅟᅠ឴឵᠎​-‏‪-‮⁠-⁤⁪-⁯⃣ㅤ︀-️﻿ﾠ]', '', 'g');
+  cjk := char_length(regexp_replace(t, '[^㐀-䶿一-鿿]', '', 'g'));
+  tg := t ~ '(t\.me/|telegram\.(me|dog)/|tg://|telegra\.ph/)' or t ~ '(^|[^a-z0-9_.])@[a-z][a-z0-9_]{3,31}';
+  -- مسار سريع: أغلب المحتوى عربي بدون صيني ولا تلكرام
+  if cjk < 2 and not tg then return jsonb_build_object('spam', false, 'cjk', cjk); end if;
+  if cjk >= 2 then
+    -- «مضغوط»: حروف صينية ولاتينية وأرقام بس — المسافات والرموز والإيموجي بين الحروف ما تفيدهم
+    sq := regexp_replace(t, '[^0-9a-z㐀-䶿一-鿿]', '', 'g');
+    tg := tg or sq ~ '(tme|telegram)';
+    foreach w in array zh loop
+      if position(w in sq) > 0 then hits := hits + 1; if cardinality(found) < 10 then found := found || w; end if; end if;
+    end loop;
+  end if;
+  if tg then
+    t2 := ' ' || regexp_replace(t, '[^a-z0-9]+', ' ', 'g') || ' ';
+    foreach w in array en_terms loop
+      if position(' ' || w || ' ' in t2) > 0 then en := en + 1; if cardinality(found) < 10 then found := found || w; end if; end if;
+    end loop;
+  end if;
+  return jsonb_build_object(
+    'spam', hits >= 4
+         or (hits >= 2 and tg)
+         or (cjk >= 8 and sq ~ '(灰产|灰產|黑产|黑產)')
+         or (hits >= 1 and t ~ 't\.me/(addlist|joinchat|\+)')
+         or (en >= 2 and tg),
+    'hits', hits, 'en', en, 'cjk', cjk, 'tg', tg, 'terms', to_jsonb(found));
+end $$;
+
+create or replace function public._gray_spam(p text) returns boolean
+language sql immutable set search_path = public as $$
+  select coalesce((public._gray_spam_info(p)->>'spam')::boolean, false);
+$$;
+
+-- ---------- سجل الحظر التلقائي (للمالك) ----------
+create table if not exists public.spam_bans (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  banned_at timestamptz not null default now(),
+  hits int not null default 1,
+  source text,
+  snippet text
+);
+alter table public.spam_bans enable row level security;
+-- ماكو سياسات: الخادم بس يقرا ويكتب
+
+-- مفتاح سري داخلي (للاتصال الداخلي بالخادم) — ينخلق مرة وحدة وما يطلع لأي أحد
+insert into private_settings(key, value)
+  values ('spam_key', md5(gen_random_uuid()::text) || md5(gen_random_uuid()::text) || md5(gen_random_uuid()::text))
+  on conflict (key) do nothing;
+
+-- ---------- تنفيذ الحظر ----------
+-- p_row_done: صف الحساب نفسه انحظر بمكانه (حارس جدول الحسابات) — ما نعدّله مرة ثانية
+create or replace function public._spam_ban_local(p_uid uuid, p_src text, p_txt text, p_row_done boolean default false) returns void
+language plpgsql security definer set search_path = public as $$
+declare me profiles;
+begin
+  select * into me from profiles where id = p_uid;
+  if me.id is null or me.is_owner then return; end if;
+  insert into spam_bans(user_id, source, snippet) values (p_uid, left(p_src, 40), left(p_txt, 600))
+    on conflict (user_id) do update set banned_at = now(), hits = spam_bans.hits + 1,
+      source = excluded.source, snippet = excluded.snippet;
+  if not me.is_banned then
+    if not p_row_done then
+      perform set_config('app.trusted', '1', true);
+      update profiles set is_banned = true, warnings = greatest(warnings, 4) where id = p_uid;
+      perform set_config('app.trusted', '', true);
+    end if;
+    begin
+      insert into notifications(user_id, type, title, body, data)
+        select o.id, 'warning', '🚫 حظر تلقائي: سبام',
+               '@' || me.username || ' نشر رسائل سبام (تجارة رمادية) — انحظر نهائيًا هو وأجهزته.',
+               jsonb_build_object('user_id', p_uid)
+          from profiles o where o.is_owner limit 1;
+    exception when others then null;
+    end;
+  end if;
+  -- كل أجهزته (حتى لو چان محظور من قبل) + قطع كل جلساته
+  insert into banned_devices(device_id, user_id)
+    select device_id, p_uid from user_devices where user_id = p_uid on conflict do nothing;
+  perform _kill_sessions(p_uid);
+end $$;
+
+-- الحفظ المستقل: الخادم يتصل بنفسه، فالحظر ينحفظ بمعاملة ثانية ما تتأثر برفض الطلب الأصلي
+create or replace function public.spam_ban_commit(p_key text, p_uid uuid, p_src text, p_snip text) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare k text := (select value from private_settings where key = 'spam_key');
+begin
+  if k is null or char_length(k) < 64 or p_key is distinct from k or p_uid is null then return false; end if;
+  perform _spam_ban_local(p_uid, p_src, p_snip);
+  return true;
+end $$;
+grant execute on function public.spam_ban_commit(text, uuid, text, text) to anon;
+
+create or replace function public._spam_commit_remote(p_uid uuid, p_src text, p_txt text) returns boolean
+language plpgsql security definer set search_path = public, extensions as $$
+declare r extensions.http_response;
+begin
+  perform set_config('http.timeout_msec', '6000', true);
+  r := extensions.http((
+    'POST', 'https://smjkxsqvdpywumghvnfv.supabase.co/rest/v1/rpc/spam_ban_commit',
+    array[extensions.http_header('apikey', 'sb_publishable_xqWRKqnOIKKqKgPJrdP5TA_GA7PCSiV')],
+    'application/json',
+    jsonb_build_object('p_key', (select value from private_settings where key = 'spam_key'),
+                       'p_uid', p_uid, 'p_src', p_src, 'p_snip', left(p_txt, 600))::text
+  )::extensions.http_request);
+  return r.status between 200 and 299 and coalesce(r.content, '') like 'true%';
+exception when others then return false;
+end $$;
+
+-- ---------- الحارس: قبل أي حفظ أو تعديل لنص يكتبه مستخدم ----------
+create or replace function public._spam_guard() returns trigger
+language plpgsql security definer set search_path = public, extensions as $$
+declare uid uuid := auth.uid(); j jsonb := to_jsonb(new); txt text := ''; i int; col text;
+begin
+  if uid is null then return new; end if;  -- شغل الخادم نفسه
+  for i in 0 .. tg_nargs - 1 loop
+    txt := txt || E'\n' || coalesce(j->>tg_argv[i], '');
+  end loop;
+  if char_length(txt) < 10 or not _gray_spam(txt) then return new; end if;
+  if exists(select 1 from profiles where id = uid and is_owner) then return new; end if;
+  -- 1) الحظر ينحفظ بمعاملة مستقلة، وبعدها نرفض المحتوى كليًا
+  if _spam_commit_remote(uid, tg_table_name, txt) then
+    raise exception 'blocked_spam: هذا المحتوى ممنوع (سبام) وتم حظر الحساب نهائيًا' using errcode = 'P0001';
+  end if;
+  -- 2) احتياط إذا الاتصال الداخلي ما نجح: نحظر بنفس المعاملة، والمحتوى ينحفظ مخفي وفارغ (ما يطلع لأحد)
+  perform _spam_ban_local(uid, tg_table_name, txt);
+  for i in 0 .. tg_nargs - 1 loop
+    col := tg_argv[i];
+    if j->>col is not null then j := jsonb_set(j, array[col], to_jsonb('🚫'::text)); end if;
+  end loop;
+  if j ? 'deleted' then j := j || '{"deleted": true}'::jsonb; end if;
+  if j ? 'hidden' then j := j || '{"hidden": true}'::jsonb; end if;
+  if j ? 'removed_by_mod' then j := j || '{"removed_by_mod": true}'::jsonb; end if;
+  if tg_table_name = 'stories' then j := j || jsonb_build_object('expires_at', now()); end if;
+  -- حراس ثانية بالجدول ترجّع «محذوف» لقيمته الافتراضية للصفوف الجديدة؛ حارس الإخفاء يشتغل آخر شي ويثبّته
+  perform set_config('app.spam_row', tg_table_name || ':' || coalesce(j->>'id', ''), true);
+  new := jsonb_populate_record(new, j);
+  return new;
+end $$;
+
+-- آخر حارس قبل الحفظ: يثبّت إخفاء الصف اللي انكشف (بس الصف نفسه)
+create or replace function public._spam_hide() returns trigger
+language plpgsql as $$
+declare j jsonb; mark text := coalesce(current_setting('app.spam_row', true), '');
+begin
+  if mark = '' then return new; end if;
+  j := to_jsonb(new);
+  if mark <> tg_table_name || ':' || coalesce(j->>'id', '') then return new; end if;
+  if j ? 'deleted' then j := j || '{"deleted": true}'::jsonb; end if;
+  if j ? 'hidden' then j := j || '{"hidden": true}'::jsonb; end if;
+  if j ? 'removed_by_mod' then j := j || '{"removed_by_mod": true}'::jsonb; end if;
+  if tg_table_name = 'stories' then j := j || jsonb_build_object('expires_at', now()); end if;
+  return jsonb_populate_record(new, j);
+end $$;
+
+-- جدول الحسابات (الاسم والبايو) له حارس خاص: يشتغل آخر شي بعد حارس الحماية الأصلي
+-- (trg_protect_profile)، ويحظر بنفس الصف اللي ينكتب. وبالتسجيل الجديد (قبل تسجيل الدخول) يشتغل هم:
+-- حساب ينسجل باسم سبام يطلع محظور من أول لحظة.
+create or replace function public._spam_guard_profiles() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := auth.uid(); txt text;
+begin
+  if uid is null and tg_op <> 'INSERT' then return new; end if;  -- تعديل من الخادم نفسه
+  if coalesce(new.is_owner, false) then return new; end if;
+  txt := coalesce(new.display_name, '') || E'\n' || coalesce(new.bio, '');
+  if char_length(txt) < 10 or not _gray_spam(txt) then return new; end if;
+  new.display_name := new.username;
+  new.bio := '';
+  new.is_banned := true;
+  new.warnings := greatest(coalesce(new.warnings, 0), 4);
+  if tg_op = 'UPDATE' then
+    perform _spam_ban_local(new.id, 'profiles', txt, true);
+  else
+    -- حساب جديد: الصف بعده ما موجود، فنبلّغ المالك بس (الجهاز ينحظر أول ما يفتح التطبيق)
+    begin
+      insert into notifications(user_id, type, title, body, data)
+        select o.id, 'warning', '🚫 حظر تلقائي: سبام', '@' || new.username || ' سجّل باسم سبام (تجارة رمادية) — انحظر من أول لحظة.',
+               jsonb_build_object('user_id', new.id)
+          from profiles o where o.is_owner limit 1;
+    exception when others then null;
+    end;
+  end if;
+  return new;
+end $$;
+drop trigger if exists a0_spam_guard on public.profiles;
+drop trigger if exists zz_spam_guard on public.profiles;
+create trigger zz_spam_guard before insert or update of display_name, bio on public.profiles
+  for each row execute function public._spam_guard_profiles();
+
+do $$
+declare r record;
+begin
+  for r in select * from (values
+      ('posts', 'content'), ('post_comments', 'content'), ('messages', 'content, file_name'),
+      ('stories', 'content'), ('live_comments', 'content'), ('lives', 'title'),
+      ('conversations', 'name, description'), ('feature_suggestions', 'content')) v(tbl, cols) loop
+    begin
+      execute format('drop trigger if exists a0_spam_guard on public.%I', r.tbl);
+      execute format('create trigger a0_spam_guard before insert or update of %s on public.%I '
+                     'for each row execute function public._spam_guard(%s)',
+                     r.cols, r.tbl, (select string_agg(quote_literal(btrim(c)), ', ') from unnest(string_to_array(r.cols, ',')) c));
+      execute format('drop trigger if exists zzz_spam_hide on public.%I', r.tbl);
+      execute format('create trigger zzz_spam_hide before insert or update of %s on public.%I '
+                     'for each row execute function public._spam_hide()', r.cols, r.tbl);
+    exception when others then raise notice 'spam guard %: %', r.tbl, sqlerrm;
+    end;
+  end loop;
+end $$;
+
+-- ---------- الجهاز المحظور: التطبيق يسأل عند الفتح (حتى قبل تسجيل الدخول) ----------
+create or replace function public.device_status(p_device text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce(btrim(p_device), '') <> '' and char_length(p_device) <= 128
+     and exists(select 1 from banned_devices where device_id = p_device);
+$$;
+grant execute on function public.device_status(text) to anon, authenticated;
+
+-- ---------- لوحة المالك ----------
+create or replace function public.spam_bans_list() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  return coalesce((select jsonb_agg(jsonb_build_object(
+      'user_id', s.user_id, 'username', p.username, 'display_name', p.display_name, 'at', s.banned_at,
+      'hits', s.hits, 'source', s.source, 'snippet', left(s.snippet, 300), 'banned', p.is_banned,
+      'devices', (select count(*) from banned_devices d where d.user_id = s.user_id)) order by s.banned_at desc)
+    from (select * from spam_bans order by banned_at desc limit 200) s join profiles p on p.id = s.user_id), '[]'::jsonb);
+end $$;
+grant execute on function public.spam_bans_list() to authenticated;
+
+create or replace function public.spam_unban(p_uid uuid) returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  perform set_config('app.trusted', '1', true);
+  update profiles set is_banned = false, warnings = 0 where id = p_uid;  -- trg_ban_devices يفك أجهزته
+  perform set_config('app.trusted', '', true);
+  delete from banned_devices where user_id = p_uid
+     or device_id in (select device_id from user_devices where user_id = p_uid);
+  delete from spam_bans where user_id = p_uid;
+  return true;
+end $$;
+grant execute on function public.spam_unban(uuid) to authenticated;
+
+-- المالك يجرّب أي نص: يطلع سبام أو لا ولماذا (بدون ما ينحظر أحد)
+create or replace function public.spam_test(p_text text) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  return _gray_spam_info(p_text);
+end $$;
+grant execute on function public.spam_test(text) to authenticated;
+
+-- ---------- تنظيف السبام القديم (اللي انتشر قبل هالحماية) — دفعات بالخلفية لحد ما يخلص ----------
+create or replace function public._spam_backfill_tick() returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  st jsonb := coalesce((select value::jsonb from private_settings where key = 'spam_backfill'), '{}'::jsonb);
+  r record; cur timestamptz; n int; lim constant int := 3000; done boolean := true; found int := 0;
+  since constant timestamptz := now() - interval '120 days';
+begin
+  if coalesce((st->>'done')::boolean, false) then
+    begin perform cron.unschedule('almajhool-spam-backfill'); exception when others then null; end;
+    return 'done';
+  end if;
+
+  cur := coalesce((st->>'posts')::timestamptz, since); n := 0;
+  for r in select id, author_id who, content txt, created_at ts from posts where created_at > cur and not deleted order by created_at limit lim loop
+    n := n + 1; cur := r.ts;
+    if _gray_spam(r.txt) then update posts set deleted = true, removed_by_mod = true where id = r.id; perform _spam_ban_local(r.who, 'posts', r.txt); found := found + 1; end if;
+  end loop;
+  st := st || jsonb_build_object('posts', cur); if n >= lim then done := false; end if;
+
+  cur := coalesce((st->>'post_comments')::timestamptz, since); n := 0;
+  for r in select id, author_id who, content txt, created_at ts from post_comments where created_at > cur and not hidden order by created_at limit lim loop
+    n := n + 1; cur := r.ts;
+    if _gray_spam(r.txt) then update post_comments set hidden = true where id = r.id; perform _spam_ban_local(r.who, 'post_comments', r.txt); found := found + 1; end if;
+  end loop;
+  st := st || jsonb_build_object('post_comments', cur); if n >= lim then done := false; end if;
+
+  cur := coalesce((st->>'messages')::timestamptz, since); n := 0;
+  for r in select id, sender_id who, coalesce(content, '') || ' ' || coalesce(file_name, '') txt, created_at ts from messages
+           where created_at > cur and not deleted order by created_at limit lim loop
+    n := n + 1; cur := r.ts;
+    if _gray_spam(r.txt) then update messages set deleted = true where id = r.id; perform _spam_ban_local(r.who, 'messages', r.txt); found := found + 1; end if;
+  end loop;
+  st := st || jsonb_build_object('messages', cur); if n >= lim then done := false; end if;
+
+  cur := coalesce((st->>'stories')::timestamptz, since); n := 0;
+  for r in select id, user_id who, content txt, created_at ts from stories where created_at > cur order by created_at limit lim loop
+    n := n + 1; cur := r.ts;
+    if _gray_spam(r.txt) then update stories set expires_at = now() where id = r.id; perform _spam_ban_local(r.who, 'stories', r.txt); found := found + 1; end if;
+  end loop;
+  st := st || jsonb_build_object('stories', cur); if n >= lim then done := false; end if;
+
+  cur := coalesce((st->>'live_comments')::timestamptz, since); n := 0;
+  for r in select id, user_id who, content txt, created_at ts from live_comments where created_at > cur order by created_at limit lim loop
+    n := n + 1; cur := r.ts;
+    if _gray_spam(r.txt) then delete from live_comments where id = r.id; perform _spam_ban_local(r.who, 'live_comments', r.txt); found := found + 1; end if;
+  end loop;
+  st := st || jsonb_build_object('live_comments', cur); if n >= lim then done := false; end if;
+
+  -- الأسماء والبايو والكروبات: كلها مرة وحدة (قليلة)
+  if not coalesce((st->>'profiles_done')::boolean, false) then
+    for r in select id who, coalesce(display_name, '') || ' ' || coalesce(bio, '') txt from profiles where not is_banned and not is_owner loop
+      if _gray_spam(r.txt) then
+        perform set_config('app.trusted', '1', true);
+        update profiles set bio = '', display_name = username where id = r.who;
+        perform set_config('app.trusted', '', true);
+        perform _spam_ban_local(r.who, 'profiles', r.txt); found := found + 1;
+      end if;
+    end loop;
+    for r in select id, created_by who, coalesce(name, '') || ' ' || coalesce(description, '') txt from conversations where name is not null or coalesce(description, '') <> '' loop
+      if _gray_spam(r.txt) then
+        update conversations set name = null, description = '' where id = r.id;
+        perform _spam_ban_local(r.who, 'conversations', r.txt); found := found + 1;
+      end if;
+    end loop;
+    st := st || '{"profiles_done": true}'::jsonb;
+  end if;
+
+  st := st || jsonb_build_object('done', done, 'found', coalesce((st->>'found')::int, 0) + found, 'last', now());
+  insert into private_settings(key, value) values ('spam_backfill', st::text)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  if done then begin perform cron.unschedule('almajhool-spam-backfill'); exception when others then null; end; end if;
+  return st::text;
+end $$;
+
+do $$ begin
+  if not coalesce((select (value::jsonb->>'done')::boolean from private_settings where key = 'spam_backfill'), false) then
+    perform cron.schedule('almajhool-spam-backfill', '* * * * *', 'select public._spam_backfill_tick()');
+  end if;
+exception when others then raise notice 'spam backfill cron: %', sqlerrm;
+end $$;
+
+-- كل الدوال الداخلية ما يوصلها أحد (حتى ما أحد يجرّب نصوصه على الكاشف ليتجاوزه)
+revoke execute on function public._gray_spam_info(text) from public, anon, authenticated;
+revoke execute on function public._gray_spam(text) from public, anon, authenticated;
+revoke execute on function public._spam_ban_local(uuid, text, text, boolean) from public, anon, authenticated;
+revoke execute on function public._spam_commit_remote(uuid, text, text) from public, anon, authenticated;
+revoke execute on function public._spam_guard() from public, anon, authenticated;
+revoke execute on function public._spam_guard_profiles() from public, anon, authenticated;
+revoke execute on function public._spam_hide() from public, anon, authenticated;
+revoke execute on function public._spam_backfill_tick() from public, anon, authenticated;
 
 -- =====================================================================
 --  الحارس الأمني (لازم يبقى آخر شي بالملف قبل تحديث ذاكرة API — أي إصدار جديد ينضاف فوقه):
