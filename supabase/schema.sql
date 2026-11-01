@@ -12467,6 +12467,33 @@ create policy media_write on storage.objects for insert to authenticated
               and (lower(name) !~ '\.(apk|xapk|apks|apkm|aab|exe|msi|bat|cmd|com|scr|pif|jar|vbs|vbe|js|jse|wsf|ps1|hta|dll|cpl|lnk|reg|sh|ipa|dmg|pkg)$'
                    or public.is_admin()));
 
+-- الحارس الأمني كل ساعة (مو بس وقت التحديث): إذا انفتحت أي صلاحية بالغلط (حتى من لوحة Supabase)
+-- تنسد تلقائيًا وينبلّغ المالك
+create or replace function public._security_sweep_tick() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare r jsonb := _security_sweep(); a int; b int; c int;
+begin
+  a := coalesce((r->>'functions_closed_for_visitors')::int, 0);
+  b := coalesce((r->>'internal_closed')::int, 0);
+  c := coalesce((r->>'tables_tightened')::int, 0);
+  if a + b + c > 0 then
+    begin
+      insert into notifications(user_id, type, title, body, data)
+        select o.id, 'warning', '🛡️ الحارس الأمني سدّ ' || (a + b + c) || ' صلاحية',
+               'انفتحت صلاحيات بالغلط وانسدّت تلقائيًا — دوال كانت مفتوحة للزائر: ' || a
+               || '، دوال داخلية: ' || b || '، جداول: ' || c || '.', r
+          from profiles o where o.is_owner limit 1;
+    exception when others then null;
+    end;
+  end if;
+  return r;
+end $$;
+revoke execute on function public._security_sweep_tick() from public, anon, authenticated;
+do $$ begin
+  perform cron.schedule('almajhool-security-sweep', '17 * * * *', 'select public._security_sweep_tick()');
+exception when others then raise notice 'security sweep cron: %', sqlerrm;
+end $$;
+
 -- السجل ينظف نفسه (أقدم من 60 يوم)
 do $$ begin
   perform cron.schedule('almajhool-abuse-log-clean', '41 3 * * *',
