@@ -36,7 +36,7 @@ dependencies:
   firebase_messaging: any
   firebase_app_installations: any
   google_sign_in: ^6.2.2
-  livekit_client: any
+  livekit_client: ^2.13.1
   video_player: ^2.9.1
   video_compress: ^3.1.4
   visibility_detector: ^0.4.0+2
