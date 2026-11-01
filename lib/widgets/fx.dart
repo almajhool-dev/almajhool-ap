@@ -44,7 +44,8 @@ class _FxBackgroundState extends State<FxBackground> with WidgetsBindingObserver
   void _sync() {
     if (_on && _timer == null) {
       _sw.start();
-      _timer = Timer.periodic(const Duration(milliseconds: 33), (_) => _clock.value = _sw.elapsedMilliseconds / 1000.0);
+      // 12 إطار بالثانية (چانت 30): الحركة بطيئة أصلًا فما يبيّن الفرق، والحِمل ينزل أكثر من النص
+      _timer = Timer.periodic(const Duration(milliseconds: 80), (_) => _clock.value = _sw.elapsedMilliseconds / 1000.0);
     } else if (!_on && _timer != null) {
       _timer?.cancel();
       _timer = null;
@@ -53,6 +54,7 @@ class _FxBackgroundState extends State<FxBackground> with WidgetsBindingObserver
   }
 
   Timer? _resume;
+  bool _scrolling = false;
   void _pause() {
     _resume?.cancel();
     if (_timer != null) {
@@ -62,10 +64,11 @@ class _FxBackgroundState extends State<FxBackground> with WidgetsBindingObserver
     }
   }
 
-  void _resumeSoon() {
+  // ترجع الحركة بعد ما يخلص اللمس/الانتقال (انتقال الشاشة ~300ms، فننتظر شوية أكثر)
+  void _resumeSoon([int ms = 900]) {
     _resume?.cancel();
-    _resume = Timer(const Duration(milliseconds: 350), () {
-      if (mounted) _sync();
+    _resume = Timer(Duration(milliseconds: ms), () {
+      if (mounted && !_scrolling) _sync();
     });
   }
 
@@ -95,22 +98,80 @@ class _FxBackgroundState extends State<FxBackground> with WidgetsBindingObserver
     final dark = Theme.of(context).brightness == Brightness.dark;
     final th = widget.theme ?? _fx.current;
     return Stack(fit: StackFit.expand, children: [
+      // الطبقة الثابتة (اللون والأضواء الكبيرة): تنرسم مرة وحدة وتنحفظ — ما تنعاد بكل إطار
+      RepaintBoundary(
+        child: CustomPaint(painter: _FxBasePainter(th, dark)),
+      ),
+      // الطبقة المتحركة (نجوم/شيفرة/شبكة/أمواج) بس: رسم خفيف
       RepaintBoundary(
         child: CustomPaint(painter: _FxPainter(_clock, th, dark, _on)),
       ),
-      // أثناء التمرير نوقف حركة الخلفية حتى يبقى التصفح سريع وسلس
-      NotificationListener<ScrollNotification>(
-        onNotification: (n) {
-          if (n.depth == 0 || n.metrics.axis == Axis.vertical) {
-            if (n is ScrollStartNotification) _pause();
-            if (n is ScrollEndNotification) _resumeSoon();
-          }
-          return false;
-        },
-        child: widget.child,
+      // أي لمس (مثل فتح محادثة): الحركة توكف حتى الانتقال يصير ناعم، وترجع بعد ما يخلص
+      Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => _pause(),
+        onPointerUp: (_) => _resumeSoon(),
+        onPointerCancel: (_) => _resumeSoon(),
+        // أثناء التمرير نوقف حركة الخلفية حتى يبقى التصفح سريع وسلس
+        child: NotificationListener<ScrollNotification>(
+          onNotification: (n) {
+            if (n.depth == 0 || n.metrics.axis == Axis.vertical) {
+              if (n is ScrollStartNotification) {
+                _scrolling = true;
+                _pause();
+              }
+              if (n is ScrollEndNotification) {
+                _scrolling = false;
+                _resumeSoon(500);
+              }
+            }
+            return false;
+          },
+          child: widget.child,
+        ),
       ),
     ]);
   }
+}
+
+/// الطبقة الثابتة للخلفية: اللون + الأضواء الكبيرة (أثقل رسم: 3 تدرجات بحجم الشاشة).
+/// تنرسم مرة وحدة وتنحفظ (ما عندها ساعة تحرّكها)، وتنعاد بس إذا تغيّرت السمة أو الوضع الليلي.
+/// چانت تنرسم 30 مرة بالثانية ورا كل الشاشات — هذا اللي چان يثقّل الجهاز ويعلّق التطبيق.
+class _FxBasePainter extends CustomPainter {
+  final FxTheme th;
+  final bool dark;
+  _FxBasePainter(this.th, this.dark);
+
+  @override
+  void paint(Canvas canvas, Size s) {
+    final base = dark ? const Color(0xFF0A0E17) : const Color(0xFFF1F3FA);
+    canvas.drawRect(Offset.zero & s, Paint()..color = base);
+    final k = dark ? 1.0 : 0.6;
+    final alpha = switch (th.base) {
+      'matrix' => 0.10 * k,
+      'network' => 0.14 * k,
+      'waves' => 0.12 * k,
+      _ => 0.24 * k,
+    };
+    final c = th.colors;
+    // نفس أماكن الأضواء بلحظة البداية (حركتها چانت بطيئة جدًا — دورة 24 ثانية — فما تبيّن)
+    const blobs = [(0, 0.25, 0.34, 0.62), (1, 0.93, 0.38, 0.70), (2, 0.635, 0.93, 0.58)];
+    final m = math.max(s.width, s.height);
+    for (final b in blobs) {
+      final col = c[b.$1];
+      final o = Offset(b.$2 * s.width, b.$3 * s.height);
+      final r = b.$4 * m * 0.6;
+      canvas.drawCircle(
+          o,
+          r,
+          Paint()
+            ..shader = RadialGradient(colors: [col.withValues(alpha: alpha), col.withValues(alpha: 0)])
+                .createShader(Rect.fromCircle(center: o, radius: r)));
+    }
+  }
+
+  @override
+  bool shouldRepaint(_FxBasePainter o) => o.th != th || o.dark != dark;
 }
 
 /// كانت خلفية خاصة بكل شاشة — هسه الخلفية وحدة للتطبيق كله، فهذا يمرّر الشاشة بس.
@@ -146,46 +207,21 @@ class _FxPainter extends CustomPainter {
     });
   }
 
+  // الطبقة المتحركة بس (اللون والأضواء الكبيرة بطبقة ثابتة منفصلة: _FxBasePainter)
   @override
   void paint(Canvas canvas, Size s) {
-    final base = dark ? const Color(0xFF0A0E17) : const Color(0xFFF1F3FA);
-    canvas.drawRect(Offset.zero & s, Paint()..color = base);
     final t = on ? clock.value : 0.0;
     final c = th.colors;
     final k = dark ? 1.0 : 0.6; // بالفاتح أخف حتى يبقى المحتوى واضح
     switch (th.base) {
       case 'matrix':
-        _glow(canvas, s, t, c, 0.10 * k);
         _matrix(canvas, s, t, c, k);
       case 'network':
-        _glow(canvas, s, t, c, 0.14 * k);
         _network(canvas, s, t, c, k);
       case 'waves':
-        _glow(canvas, s, t, c, 0.12 * k);
         _waves(canvas, s, t, c, k);
       default:
-        _glow(canvas, s, t, c, 0.24 * k);
         _stars(canvas, s, t, k);
-    }
-  }
-
-  void _glow(Canvas canvas, Size s, double t, List<Color> c, double alpha) {
-    final a = t * 2 * math.pi / 24;
-    final blobs = [
-      (c[0], 0.25 + 0.18 * math.sin(a), 0.22 + 0.12 * math.cos(a * 2), 0.62),
-      (c[1], 0.78 + 0.15 * math.cos(a), 0.38 + 0.16 * math.sin(a * 1.5), 0.70),
-      (c[2], 0.45 + 0.22 * math.sin(a * 1.3 + 1), 0.85 + 0.08 * math.cos(a), 0.58),
-    ];
-    final m = math.max(s.width, s.height);
-    for (final b in blobs) {
-      final o = Offset(b.$2 * s.width, b.$3 * s.height);
-      final r = b.$4 * m * 0.6;
-      canvas.drawCircle(
-          o,
-          r,
-          Paint()
-            ..shader = RadialGradient(colors: [b.$1.withValues(alpha: alpha), b.$1.withValues(alpha: 0)])
-                .createShader(Rect.fromCircle(center: o, radius: r)));
     }
   }
 
