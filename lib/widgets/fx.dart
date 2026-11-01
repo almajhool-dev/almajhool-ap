@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
@@ -172,6 +173,93 @@ class _FxBasePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_FxBasePainter o) => o.th != th || o.dark != dark;
+}
+
+/// انتقال بين الشاشات مثل ماسنجر: الشاشة الجديدة تنزلق فوق القديمة (من اليسار بالعربي).
+/// حركة بس بدون أي شفافية — چان الانتقال القديم «تلاشي»: الشاشتين شفافات فوق بعض
+/// (التداخل اللي بالفيديو) والجهاز يرسمهن بطبقات شفافة ثقيلة بكل إطار فيعلّق.
+class FxPageTransition extends PageTransitionsBuilder {
+  const FxPageTransition();
+  @override
+  Duration get transitionDuration => const Duration(milliseconds: 240);
+
+  @override
+  Widget buildTransitions<T>(PageRoute<T> route, BuildContext context, Animation<double> animation,
+      Animation<double> secondaryAnimation, Widget child) {
+    final rtl = Directionality.of(context) == TextDirection.rtl;
+    final curve = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic);
+    return SlideTransition(
+      position: Tween<Offset>(begin: Offset(rtl ? -1 : 1, 0), end: Offset.zero).animate(curve),
+      child: FxOpaqueWhileMoving(animation: animation, child: child),
+    );
+  }
+}
+
+/// آيفون: نفس انتقال آيفون الأصلي (ويبقى السحب من الحافة للرجوع)، بس بخلفية ثابتة أثناء الحركة.
+class FxCupertinoTransition extends PageTransitionsBuilder {
+  const FxCupertinoTransition();
+  static const _ios = CupertinoPageTransitionsBuilder();
+  @override
+  Widget buildTransitions<T>(PageRoute<T> route, BuildContext context, Animation<double> animation,
+          Animation<double> secondaryAnimation, Widget child) =>
+      _ios.buildTransitions(route, context, animation, secondaryAnimation,
+          FxOpaqueWhileMoving(animation: animation, child: child));
+}
+
+/// الشاشات شفافة حتى تبين الخلفية المتحركة. أثناء الانتقال بس، نحط ورا الشاشة الجديدة نفس
+/// الطبقة الثابتة للخلفية (معتمة) حتى تغطي الشاشة اللي تحتها وما يصير تداخل.
+/// تنشال أول ما يخلص الانتقال، ولأنها نفس شكل الخلفية بالضبط ما يبيّن أي فرق.
+class FxOpaqueWhileMoving extends StatefulWidget {
+  final Animation<double> animation;
+  final Widget child;
+  const FxOpaqueWhileMoving({super.key, required this.animation, required this.child});
+  @override
+  State<FxOpaqueWhileMoving> createState() => _FxOpaqueWhileMovingState();
+}
+
+class _FxOpaqueWhileMovingState extends State<FxOpaqueWhileMoving> {
+  late bool _moving = _isMoving(widget.animation.status);
+
+  static bool _isMoving(AnimationStatus s) => s == AnimationStatus.forward || s == AnimationStatus.reverse;
+
+  void _onStatus(AnimationStatus s) {
+    final m = _isMoving(s);
+    if (m != _moving && mounted) setState(() => _moving = m);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.animation.addStatusListener(_onStatus);
+  }
+
+  @override
+  void didUpdateWidget(FxOpaqueWhileMoving old) {
+    super.didUpdateWidget(old);
+    if (old.animation != widget.animation) {
+      old.animation.removeStatusListener(_onStatus);
+      widget.animation.addStatusListener(_onStatus);
+      _moving = _isMoving(widget.animation.status);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.animation.removeStatusListener(_onStatus);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    // طبقة وحدة (RepaintBoundary): تنرسم مرة وتنزلق كصورة — الانزلاق ما يعيد الرسم
+    return RepaintBoundary(
+      child: CustomPaint(
+        painter: _moving ? _FxBasePainter(FxSettings.instance.current, dark) : null,
+        child: widget.child,
+      ),
+    );
+  }
 }
 
 /// كانت خلفية خاصة بكل شاشة — هسه الخلفية وحدة للتطبيق كله، فهذا يمرّر الشاشة بس.

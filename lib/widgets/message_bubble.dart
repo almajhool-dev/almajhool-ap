@@ -386,20 +386,24 @@ class AudioBubble extends StatefulWidget {
 }
 
 class _AudioBubbleState extends State<AudioBubble> {
-  final _player = AudioPlayer();
+  // المشغّل ينخلق بس أول ما تضغط تشغيل — چان ينخلق لكل رسالة صوتية أول ما تفتح المحادثة
+  // (مشغّل أصلي بالنظام لكل وحدة أثناء الانتقال = تعليق)
+  AudioPlayer? _player;
   PlayerState _state = PlayerState.stopped;
   Duration _pos = Duration.zero;
   Duration _dur = Duration.zero;
   final List<StreamSubscription> _subs = [];
   bool _loading = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _subs.add(_player.onPlayerStateChanged.listen((s) => mounted ? setState(() => _state = s) : null));
-    _subs.add(_player.onPositionChanged.listen((p) => mounted ? setState(() => _pos = p) : null));
-    _subs.add(_player.onDurationChanged.listen((d) => mounted ? setState(() => _dur = d) : null));
-    _subs.add(_player.onPlayerComplete.listen((_) => mounted ? setState(() => _pos = Duration.zero) : null));
+  AudioPlayer _ensure() {
+    final p = _player;
+    if (p != null) return p;
+    final n = AudioPlayer();
+    _subs.add(n.onPlayerStateChanged.listen((s) => mounted ? setState(() => _state = s) : null));
+    _subs.add(n.onPositionChanged.listen((p) => mounted ? setState(() => _pos = p) : null));
+    _subs.add(n.onDurationChanged.listen((d) => mounted ? setState(() => _dur = d) : null));
+    _subs.add(n.onPlayerComplete.listen((_) => mounted ? setState(() => _pos = Duration.zero) : null));
+    return _player = n;
   }
 
   @override
@@ -407,23 +411,24 @@ class _AudioBubbleState extends State<AudioBubble> {
     for (final s in _subs) {
       s.cancel();
     }
-    _player.dispose();
+    _player?.dispose();
     super.dispose();
   }
 
   Future<void> _toggle() async {
+    final player = _ensure();
     if (_state == PlayerState.playing) {
-      await _player.pause();
+      await player.pause();
       return;
     }
     if (_state == PlayerState.paused) {
-      await _player.resume();
+      await player.resume();
       return;
     }
     setState(() => _loading = true);
     try {
       final url = await MediaService.signedUrl(widget.path);
-      await _player.play(UrlSource(url));
+      await player.play(UrlSource(url));
     } catch (e) {
       if (mounted) showSnack(context, friendlyError(e), error: true);
     } finally {

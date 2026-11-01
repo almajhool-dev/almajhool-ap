@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../widgets/fx.dart' show FxPageTransition, FxCupertinoTransition;
+
 class AppColors {
   AppColors._();
   static const cyan = Color(0xFF00E5FF);
@@ -123,31 +125,12 @@ class AppTheme {
         thickness: 0.6,
       ),
       snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
-      // تنقّل أسرع بين الشاشات (انتقال خفيف وسريع بدل التكبير البطيء)
+      // تنقّل مثل ماسنجر: الشاشة تنزلق فوق القديمة (بدون تلاشي — التلاشي چان يعلّق ويداخل الشاشات)
       pageTransitionsTheme: const PageTransitionsTheme(builders: {
-        TargetPlatform.android: _FxPageTransition(),
+        TargetPlatform.android: FxPageTransition(),
+        TargetPlatform.iOS: FxCupertinoTransition(),
       }),
     );
   }
 }
 
-/// انتقال بين الشاشات: الشاشة الجديدة تظهر بتلاشي وتكبير خفيف، والقديمة تتلاشى
-/// (لأن الشاشات شفافة فوق الخلفية المتحركة ما تتداخل).
-class _FxPageTransition extends PageTransitionsBuilder {
-  const _FxPageTransition();
-  @override
-  Duration get transitionDuration => const Duration(milliseconds: 260);
-  @override
-  Widget buildTransitions<T>(PageRoute<T> route, BuildContext context, Animation<double> animation,
-      Animation<double> secondaryAnimation, Widget child) {
-    final inC = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
-    final outC = CurvedAnimation(parent: secondaryAnimation, curve: Curves.easeInCubic);
-    return FadeTransition(
-      opacity: ReverseAnimation(outC),
-      child: FadeTransition(
-        opacity: inC,
-        child: ScaleTransition(scale: Tween(begin: 0.97, end: 1.0).animate(inC), child: child),
-      ),
-    );
-  }
-}
