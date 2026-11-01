@@ -12607,5 +12607,88 @@ revoke execute on function public._flood_guard() from public, anon, authenticate
 -- =====================================================================
 do $$ begin perform public._security_sweep(); end $$;
 
+-- =====================================================================
+--  الإصدار 94: دوال التشخيص العامة (sys_diag / perf_report) ما تنستغل لإثقال الخادم
+--  كانت مفتوحة للزائر بدون أي حد، وsys_diag ياخذ ~2.8 ثانية بكل استدعاء (أثقل دالة يستدعيها الزائر)
+--  — أي أحد يكرر الاستدعاء چان يكدر يثقّل قاعدة البيانات على كل المستخدمين.
+--  هسه النتيجة تنحفظ 30 ثانية: الاستدعاءات المتكررة ترجع النسخة المحفوظة فورًا،
+--  وبس استدعاء واحد بالمرة يحسبها من جديد (الباقي ياخذون آخر نسخة). نفس المعلومات بالضبط.
+-- =====================================================================
+create or replace function public._sys_diag_compute() returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare r jsonb := '{}'; mx bigint;
+begin
+  perform set_config('statement_timeout', '8s', true);
+  begin r := r || jsonb_build_object('queued', (select count(*) from net.http_request_queue), 'qmin', (select min(id) from net.http_request_queue), 'resp_max_id', (select max(id) from net._http_response),
+      'last_resp', (select max(created) from net._http_response)); exception when others then r := r || jsonb_build_object('net_err', sqlerrm); end;
+  begin r := r || jsonb_build_object('workers', (select jsonb_agg(jsonb_build_object('t', backend_type, 'a', application_name, 's', state)) from pg_stat_activity where backend_type not in ('client backend')),
+      'max_workers', current_setting('max_worker_processes'), 'cron_bgw', current_setting('cron.use_background_workers', true), 'conns', (select count(*) from pg_stat_activity)); exception when others then null; end;
+  begin
+    select max(runid) into mx from cron.job_run_details;
+    r := r || jsonb_build_object('cron', (select jsonb_agg(x) from (select j.jobname, d.status, count(*) n, max(left(d.return_message, 120)) msg
+        from cron.job_run_details d join cron.job j using (jobid)
+       where d.runid > coalesce(mx, 0) - 50000 and d.start_time > now() - interval '30 minutes' group by 1, 2) x));
+  exception when others then null; end;
+  begin r := r || jsonb_build_object('watchdog', (select value from private_settings where key = 'push_watchdog'), 'wd_state', (select value from private_settings where key = 'push_wd_state')); exception when others then null; end;
+  return r;
+end $$;
+revoke execute on function public._sys_diag_compute() from public, anon, authenticated;
+
+create or replace function public._perf_report_compute() returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare r jsonb;
+begin
+  select coalesce(jsonb_agg(x), '[]') into r from (
+    select calls, round(mean_exec_time::numeric, 1) mean_ms, round(total_exec_time::numeric) total_ms,
+           left(regexp_replace(query, '\s+', ' ', 'g'), 300) q
+      from extensions.pg_stat_statements
+     where query !~* '^(begin|commit|set |show |select pg_|listen|notify)'
+     order by total_exec_time desc limit 25) x;
+  return jsonb_build_object('top', r,
+    'guard', (select value from private_settings where key = 'minute_guard'),
+    'unused_indexes', (select coalesce(jsonb_agg(indexrelname), '[]') from pg_stat_user_indexes
+                        where schemaname = 'public' and idx_scan = 0),
+    'seq_scans', (select coalesce(jsonb_agg(jsonb_build_object('t', relname, 'seq', seq_scan, 'rows', n_live_tup)), '[]')
+                    from (select * from pg_stat_user_tables where schemaname = 'public' and n_live_tup > 500
+                          order by seq_tup_read desc limit 10) s));
+exception when others then return jsonb_build_object('error', sqlerrm);
+end $$;
+revoke execute on function public._perf_report_compute() from public, anon, authenticated;
+
+create or replace function public._diag_cached(p_key text, p_ttl int) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare v text; t timestamptz; r jsonb;
+begin
+  select value, updated_at into v, t from private_settings where key = p_key;
+  if v is not null and t > now() - make_interval(secs => p_ttl) then return v::jsonb; end if;
+  -- استدعاء واحد بس يحسب بالمرة؛ اللي يجي بنفس اللحظة ياخذ آخر نسخة محفوظة
+  if not pg_try_advisory_xact_lock(hashtext('diag_cache:' || p_key)) then
+    return coalesce(v::jsonb, '{}'::jsonb) || jsonb_build_object('cached', true);
+  end if;
+  r := case p_key when 'diag_cache_sys' then _sys_diag_compute() else _perf_report_compute() end;
+  begin
+    insert into private_settings(key, value) values (p_key, r::text)
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  exception when others then null;
+  end;
+  return r;
+end $$;
+revoke execute on function public._diag_cached(text, int) from public, anon, authenticated;
+
+create or replace function public.sys_diag() returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  return _diag_cached('diag_cache_sys', 30);
+end $$;
+grant execute on function public.sys_diag() to anon;
+
+create or replace function public.perf_report(p_gh text default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  return _diag_cached('diag_cache_perf', 30);
+end $$;
+grant execute on function public.perf_report(text) to anon;
+
+
 -- تحديث ذاكرة واجهة API حتى تظهر الجداول والدوال فورًا
 notify pgrst, 'reload schema';
