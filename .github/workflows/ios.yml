@@ -26,11 +26,30 @@ jobs:
           channel: stable
           cache: true
       - name: Build
+        id: build
         run: |
+          set -o pipefail
           # CocoaPods بدل Swift Package Manager (تعارض نسخ Firebase و Google Sign-In بالـ SPM)
           flutter config --no-enable-swift-package-manager
-          flutter pub get
-          flutter build ios --release --no-codesign --build-name=1.0.${{ github.run_number }} --build-number=${{ github.run_number }}
+          flutter pub get 2>&1 | tee ios.log
+          flutter build ios --release --no-codesign --build-name=1.0.${{ github.run_number }} --build-number=${{ github.run_number }} 2>&1 | tee -a ios.log
+
+      # سجل البناء بفرع ci-logs-ios (مثل أندرويد) حتى نعرف سبب أي فشل — بعد شيل أي سر من السجل
+      - name: Save build log
+        if: always()
+        run: |
+          [ -f ios.log ] || echo "no log" > ios.log
+          sed -E -i.bak 's/::add-mask::.*/::add-mask::***/; s/((store|key)?[Pp]ass(word)?|[Ss]ecret|[Tt]oken)([=:][[:space:]]*)[^[:space:]]+/\1\4***/g' ios.log && rm -f ios.log.bak
+          mkdir -p /tmp/ilogs
+          tail -n 300 ios.log > /tmp/ilogs/last.log
+          grep -nE "error|Error|ERROR|FAILED|Failed|Exception" ios.log | head -n 150 > /tmp/ilogs/errors.log || true
+          echo "run=${{ github.run_number }} sha=${{ github.sha }} status=${{ steps.build.outcome }}" > /tmp/ilogs/status.txt
+          cd /tmp/ilogs
+          git init -q -b ci-logs-ios
+          git config user.name "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git add -A && git commit -qm "ios log run ${{ github.run_number }}: ${{ steps.build.outcome }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-logs-ios
       - name: Package IPA
         run: |
           rm -rf Payload && mkdir Payload

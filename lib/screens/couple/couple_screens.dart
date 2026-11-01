@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -117,9 +116,9 @@ class _StarsPainter extends CustomPainter {
 class _NeonCircle extends StatelessWidget {
   final IconData icon;
   final Color color;
-  final double size;
+  static const double size = 54;
   final VoidCallback? onTap;
-  const _NeonCircle({required this.icon, required this.color, this.size = 54, this.onTap});
+  const _NeonCircle({required this.icon, required this.color, this.onTap});
   @override
   Widget build(BuildContext context) => GestureDetector(
         onTap: onTap,
@@ -232,10 +231,12 @@ class _CouplePairCardState extends State<CouplePairCard> {
   Future<void> _newCode() async {
     try {
       final r = await CoupleService.myCode();
-      if (mounted) setState(() {
-        _code = r.code;
-        _expires = r.expires;
-      });
+      if (mounted) {
+        setState(() {
+          _code = r.code;
+          _expires = r.expires;
+        });
+      }
     } catch (_) {}
   }
 
@@ -341,7 +342,7 @@ class _CouplePairCardState extends State<CouplePairCard> {
   }
 
   Widget _pair() {
-    final left = _expires == null ? null : _expires!.difference(DateTime.now());
+    final left = _expires?.difference(DateTime.now());
     final mm = left == null || left.isNegative ? '--' : left.inMinutes.toString().padLeft(2, '0');
     final ss = left == null || left.isNegative ? '--' : (left.inSeconds % 60).toString().padLeft(2, '0');
     return Column(children: [
@@ -1217,12 +1218,19 @@ class _WatchTogetherScreenState extends State<WatchTogetherScreen> {
       ..setBackgroundColor(Colors.black)
       ..addJavaScriptChannel('Bridge', onMessageReceived: (m) => _onJs(m.message))
       ..setNavigationDelegate(NavigationDelegate(onNavigationRequest: (r) {
-        // أي رابط يطلع برا المشغل يفتح بيوتيوب نفسه
-        if (r.url.startsWith(_origin) || r.url.contains('youtube.com/embed') || r.url.startsWith('about:')) {
+        final u = Uri.tryParse(r.url);
+        if (u == null) return NavigationDecision.prevent;
+        // المشغل نفسه + إطار يوتيوب الرسمي بس — فحص المضيف الحقيقي
+        // (مو «يحتوي الكلمة» أو «يبدي بنفس الحروف»: evil.com/?x=youtube.com/embed چان يعبر)
+        final ytEmbed = u.scheme == 'https' &&
+            const {'www.youtube.com', 'youtube.com', 'www.youtube-nocookie.com'}.contains(u.host) &&
+            u.path.startsWith('/embed/');
+        if (r.url.startsWith('$_origin/') || ytEmbed || r.url.startsWith('about:blank') || r.url.startsWith('about:srcdoc')) {
           return NavigationDecision.navigate;
         }
         if (r.isMainFrame) {
-          launchUrl(Uri.parse(r.url), mode: LaunchMode.externalApplication);
+          // أي رابط ثاني يفتح بيوتيوب/المتصفح — روابط ويب عادية بس، ما نفتح أي نوع ثاني
+          if (u.scheme == 'https' || u.scheme == 'http') launchUrl(u, mode: LaunchMode.externalApplication);
           return NavigationDecision.prevent;
         }
         return NavigationDecision.navigate;
@@ -1271,7 +1279,9 @@ class _WatchTogetherScreenState extends State<WatchTogetherScreen> {
       return;
     }
     final e = m['e'];
-    final t = (m['t'] as num?)?.toDouble() ?? 0;
+    // قيم الجسر نتأكد منها: وقت معقول وحالة تشغيل معروفة بس (أي شي غريب ينتجاهل)
+    final rawT = m['t'];
+    final t = rawT is num && rawT.isFinite && rawT >= 0 && rawT < 86400 ? rawT.toDouble() : 0.0;
     if (e == 'ready') {
       setState(() => _ready = true);
       final p = _pending;
@@ -1283,7 +1293,8 @@ class _WatchTogetherScreenState extends State<WatchTogetherScreen> {
       setState(() => _error = true);
       return;
     }
-    final s = (m['s'] as num?)?.toInt() ?? -1;
+    final rawS = m['s'];
+    final s = rawS is num && const {-1, 0, 1, 2, 3, 5}.contains(rawS.toInt()) ? rawS.toInt() : -1;
     if (e == 'state') {
       if (_error && s == 1) setState(() => _error = false);
       if (!_suppressed && _videoId != null && (s == 1 || s == 2 || s == 0) && s != _lastState) {

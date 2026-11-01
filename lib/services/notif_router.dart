@@ -26,13 +26,16 @@ class NotifRouter {
 
   static Future<void> _openLink(Uri uri) async {
     if (uri.scheme != 'almajhool' || uri.host != 'live' || uri.pathSegments.isEmpty) return;
+    // معرّف البث لازم يكون بالشكل الصحيح بالضبط — أي شي ثاني ينتجاهل
+    final id = uri.pathSegments.first;
+    if (!RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$').hasMatch(id)) return;
     final now = DateTime.now();
     if (_lastLink == uri.toString() && now.difference(_lastLinkAt).inSeconds < 8) return;
     _lastLink = uri.toString();
     _lastLinkAt = now;
     await Future<void>.delayed(const Duration(milliseconds: 500));
     final ctx = CallService.instance.navigatorKey.currentContext;
-    if (ctx != null && ctx.mounted) await openLive(ctx, uri.pathSegments.first);
+    if (ctx != null && ctx.mounted) await openLive(ctx, id);
   }
 
   static void install() {

@@ -15,7 +15,6 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../../core/theme.dart';
 import '../../models/models.dart';
 import '../../providers/providers.dart';
 import '../../repositories/live_repository.dart';
@@ -914,7 +913,8 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> with WidgetsBindingObse
     // فصل ثم تنظيف بالتسلسل (التنظيف المتزامن كان يسبب انهيار WebRTC)
     if (room != null) {
       room.disconnect().catchError((_) {}).whenComplete(() {
-        room.dispose().catchError((_) {});
+        // dispose ترجّع قيمة: معالج الخطأ لازم يرجّع من نفس النوع، وإلا الخطأ نفسه يسبب خطأ ثاني
+        room.dispose().catchError((_) => false);
         RtcSafety.active(false);
       });
     } else {
@@ -2389,7 +2389,7 @@ class _LivePreviewCardState extends State<LivePreviewCard> with WidgetsBindingOb
   void didChangeDependencies() {
     super.didChangeDependencies();
     // TickerMode يتعطّل لما تكون بتبويب ثاني أو فاتح شاشة فوق الرئيسية
-    _tickerOn = TickerMode.of(context);
+    _tickerOn = TickerMode.valuesOf(context).enabled;
     final p = Scrollable.maybeOf(context)?.position;
     if (p != _pos) {
       _pos?.removeListener(_onScroll);

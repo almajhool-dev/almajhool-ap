@@ -329,7 +329,7 @@ class _FxItemState extends State<FxItem> with SingleTickerProviderStateMixin {
                 alignment: Alignment.centerRight,
                 transform: Matrix4.identity()
                   ..setEntry(3, 2, 0.0012)
-                  ..translate(0.0, (1 - v) * 24)
+                  ..translateByDouble(0.0, (1 - v) * 24, 0.0, 1.0)
                   ..rotateX((1 - v) * 0.35),
                 child: child,
               ),
@@ -444,7 +444,7 @@ class _GlowButtonState extends State<GlowButton> with TickerProviderStateMixin {
                 ..setEntry(3, 2, 0.0022)
                 ..rotateX(-_tilt.dy * 0.22 * p)
                 ..rotateY(_tilt.dx * 0.22 * p)
-                ..scale(1 - 0.045 * p);
+                ..scaleByDouble(1 - 0.045 * p, 1 - 0.045 * p, 1 - 0.045 * p, 1.0);
               final ang = _spin.value * 2 * math.pi;
               return Transform(
                 alignment: Alignment.center,
@@ -553,7 +553,7 @@ class _FloatingLogo3DState extends State<FloatingLogo3D> with SingleTickerProvid
           alignment: Alignment.center,
           transform: Matrix4.identity()
             ..setEntry(3, 2, 0.0016)
-            ..translate(0.0, 6 * math.sin(a))
+            ..translateByDouble(0.0, 6 * math.sin(a), 0.0, 1.0)
             ..rotateY(0.32 * math.sin(a))
             ..rotateX(0.12 * math.cos(a)),
           child: child,

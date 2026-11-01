@@ -35,6 +35,20 @@ def patch_manifest():
         s = s.replace('android:label="VYFRI"',
                       'android:label="VYFRI" android:allowBackup="false" android:fullBackupContent="false"'
                       ' tools:replace="android:allowBackup"', 1)
+    # أندرويد 12 فما فوق: allowBackup=false ما يمنع «النقل من جهاز لجهاز» — نمنعه صراحة،
+    # فما تطلع أي بيانة من التطبيق لا لنسخة سحابية ولا لجهاز ثاني
+    if 'android:dataExtractionRules' not in s:
+        s = s.replace('android:label="VYFRI"',
+                      'android:label="VYFRI" android:dataExtractionRules="@xml/data_extraction_rules"', 1)
+    xml_dir = os.path.join(APP, "src", "main", "res", "xml")
+    os.makedirs(xml_dir, exist_ok=True)
+    domains = ["root", "file", "database", "sharedpref", "external",
+               "device_root", "device_file", "device_database", "device_sharedpref"]
+    ex = "".join(f'        <exclude domain="{d}" path="."/>\n' for d in domains)
+    write(os.path.join(xml_dir, "data_extraction_rules.xml"),
+          '<?xml version="1.0" encoding="utf-8"?>\n<data-extraction-rules>\n'
+          f'    <cloud-backup>\n{ex}    </cloud-backup>\n'
+          f'    <device-transfer>\n{ex}    </device-transfer>\n</data-extraction-rules>\n')
     perms = [
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",

@@ -195,7 +195,7 @@ class PostRepository {
   /// الريلز: منشورات الفيديو
   Future<List<Post>> reels({DateTime? before}) async {
     final r = await supa.rpc('reels_page', params: {'p_before': before?.toUtc().toIso8601String(), 'p_limit': 10}) as List;
-    return [for (final e in r) Post.fromMap(Map<String, dynamic>.from(e as Map), liked: (e as Map)['_liked'] == true)];
+    return [for (final e in r) Post.fromMap(Map<String, dynamic>.from(e as Map), liked: e['_liked'] == true)];
   }
 
   Future<void> unlike(String postId) =>

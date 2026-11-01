@@ -416,9 +416,10 @@ class _CallScreenState extends State<CallScreen> {
       final r = await CallSignal.fetch(widget.callId);
       if (r == null || _ended) return;
       final st = r['status'] as String? ?? 'ringing';
-      if (st == 'rejected') return _end('رُفضت المكالمة');
-      if (st == 'busy') return _end('المستخدم في مكالمة أخرى');
-      if (st == 'ended') return _end('انتهت المكالمة');
+      // await داخل try: أي خطأ بالإنهاء ينمسك هنا بدل ما يطلع خطأ غير معالج
+      if (st == 'rejected') return await _end('رُفضت المكالمة');
+      if (st == 'busy') return await _end('المستخدم في مكالمة أخرى');
+      if (st == 'ended') return await _end('انتهت المكالمة');
 
       if (widget.outgoing) {
         if (st == 'accepted' && !_accepted) {

@@ -877,7 +877,7 @@ class _GiftBurstState extends State<GiftBurst> with SingleTickerProviderStateMix
                       transform: Matrix4.identity()
                         ..setEntry(3, 2, 0.002)
                         ..rotateY(math.sin(t * math.pi * 2) * 0.6)
-                        ..scale(0.2 + pop * 0.8),
+                        ..scaleByDouble(0.2 + pop * 0.8, 0.2 + pop * 0.8, 0.2 + pop * 0.8, 1.0),
                       child: Text(widget.emoji,
                           style: TextStyle(fontSize: big, shadows: const [Shadow(color: _gold1, blurRadius: 30)])),
                     ),

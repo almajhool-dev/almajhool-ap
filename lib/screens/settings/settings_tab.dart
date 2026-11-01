@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../feed/community.dart';
-import '../../core/config.dart';
 import '../../models/models.dart';
 import '../../providers/providers.dart';
 import '../../repositories/user_repositories.dart';
@@ -449,21 +448,24 @@ class _SettingsTabState extends State<SettingsTab> {
       builder: (c) => StatefulBuilder(
         builder: (c, set) => AlertDialog(
           title: const Text('اختر نغمة الرنين'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final t in SoundService.ringtones)
-                RadioListTile<String>(
-                  value: t.id,
-                  groupValue: selected,
-                  title: Text(t.name),
-                  secondary: const Icon(Icons.play_circle_outline_rounded),
-                  onChanged: (v) {
-                    set(() => selected = v!);
-                    SoundService.preview(v!);
-                  },
-                ),
-            ],
+          content: RadioGroup<String>(
+            groupValue: selected,
+            onChanged: (v) {
+              if (v == null) return;
+              set(() => selected = v);
+              SoundService.preview(v);
+            },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final t in SoundService.ringtones)
+                  RadioListTile<String>(
+                    value: t.id,
+                    title: Text(t.name),
+                    secondary: const Icon(Icons.play_circle_outline_rounded),
+                  ),
+              ],
+            ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(c), child: const Text('إلغاء')),

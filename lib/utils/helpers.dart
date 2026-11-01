@@ -103,6 +103,10 @@ void _logError(String raw) {
 String friendlyError(Object e) {
   final raw = e.toString();
   _logError('${e.runtimeType}: $raw');
+  // حماية السبام بالخادم رفضت المحتوى (والحساب انحظر)
+  if (raw.contains('blocked_spam')) {
+    return 'هذا المحتوى ممنوع (سبام) وتم حظر الحساب نهائيًا';
+  }
   if (raw.contains('Bearer') || raw.contains('Invalid API key') || raw.contains('No API key')) {
     return 'مفتاح الخادم غير صحيح. اضغط «تغيير إعدادات الخادم» وأدخل anon public key الصحيح';
   }

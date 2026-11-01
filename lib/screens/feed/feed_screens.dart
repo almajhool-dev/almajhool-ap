@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
@@ -206,7 +206,7 @@ class _FeedTabState extends State<FeedTab> {
           },
           child: CustomScrollView(
             controller: _scroll,
-            cacheExtent: 1200,
+            scrollCacheExtent: const ScrollCacheExtent.pixels(1200),
             slivers: [
               SliverToBoxAdapter(
                 child: Padding(

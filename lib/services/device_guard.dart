@@ -19,6 +19,19 @@ class DeviceGuard {
     return _id;
   }
 
+  /// هل هذا الجهاز محظور؟ يشتغل حتى بدون تسجيل دخول (قبل شاشة الدخول وإنشاء الحساب).
+  /// أي خطأ (بدون إنترنت أو خادم قديم) = مو محظور — ما نقفل التطبيق على مستخدم حقيقي بالغلط.
+  static Future<bool> isBanned() async {
+    final d = await id();
+    if (d == null || d.isEmpty) return false;
+    try {
+      final r = await supa.rpc('device_status', params: {'p_device': d}).timeout(const Duration(seconds: 8));
+      return r == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// يرجع true إذا الجهاز محظور.
   static Future<bool> checkin() async {
     if (supa.auth.currentUser == null) return false;

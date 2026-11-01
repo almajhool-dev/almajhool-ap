@@ -185,6 +185,8 @@ class _OverviewState extends State<_Overview> {
             const SizedBox(height: 12),
             const _AutoUpdateGuardCard(),
             const SizedBox(height: 12),
+            const _SpamGuardCard(),
+            const SizedBox(height: 12),
           ],
           const _LiveSettingsCard(),
           const SizedBox(height: 12),
@@ -1026,6 +1028,167 @@ class _AutoUpdateGuardCardState extends State<_AutoUpdateGuardCard> {
   }
 }
 
+/// حماية السبام (تجارة رمادية): كل حساب انحظر تلقائيًا وسببه، فك الحظر، وتجربة أي نص.
+class _SpamGuardCard extends StatefulWidget {
+  const _SpamGuardCard();
+  @override
+  State<_SpamGuardCard> createState() => _SpamGuardCardState();
+}
+
+class _SpamGuardCardState extends State<_SpamGuardCard> {
+  static const _where = {
+    'posts': 'منشور',
+    'post_comments': 'تعليق',
+    'messages': 'رسالة',
+    'stories': 'ستوري',
+    'live_comments': 'تعليق بث',
+    'lives': 'عنوان بث',
+    'conversations': 'اسم/وصف كروب',
+    'profiles': 'الاسم أو البايو',
+    'feature_suggestions': 'اقتراح',
+  };
+  final _test = TextEditingController();
+  List<Map<String, dynamic>> _bans = const [];
+  bool _loaded = false;
+  bool _busy = false;
+  String? _verdict;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _test.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final r = await supa.rpc('spam_bans_list');
+      if (!mounted) return;
+      setState(() {
+        _bans = (r as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        _loaded = true;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loaded = true);
+    }
+  }
+
+  Future<void> _check() async {
+    final t = _test.text.trim();
+    if (t.isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      final r = Map<String, dynamic>.from(await supa.rpc('spam_test', params: {'p_text': t}) as Map);
+      final terms = (r['terms'] as List? ?? const []).join('، ');
+      if (mounted) {
+        setState(() => _verdict = r['spam'] == true
+            ? '🚫 سبام — اللي ينشره ينحظر هو وجهازه فورًا${terms.isEmpty ? '' : '\nكلمات انكشفت: $terms'}'
+            : '✅ نص عادي — يعبر بدون مشكلة');
+      }
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _unban(Map<String, dynamic> b) async {
+    if (!await confirmDialog(context, 'فك الحظر',
+        'فك حظر @${b['username']} وأجهزته؟ استخدمها بس إذا الحظر صار بالغلط.', ok: 'فك الحظر')) {
+      return;
+    }
+    try {
+      await supa.rpc('spam_unban', params: {'p_uid': b['user_id']});
+      if (mounted) showSnack(context, 'تم فك حظر @${b['username']} ✅');
+    } catch (e) {
+      if (mounted) showSnack(context, friendlyError(e), error: true);
+    }
+    _load();
+  }
+
+  String _when(Object? v) {
+    final d = DateTime.tryParse('${v ?? ''}')?.toLocal();
+    if (d == null) return '';
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${d.year}/${two(d.month)}/${two(d.day)} ${two(d.hour)}:${two(d.minute)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            const Icon(Icons.shield_rounded, color: Colors.green),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text('حماية السبام', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+            ),
+            if (_loaded) Chip(label: Text('محظورين: ${_bans.length}'), visualDensity: VisualDensity.compact),
+          ]),
+          const SizedBox(height: 6),
+          const Text(
+              'أي أحد ينشر سبام «تجارة رمادية» (بيع بيانات، غسيل أموال USDT، حسابات، قمار، تزوير…) بأي مكان '
+              'بالتطبيق: المحتوى ما ينشر، وحسابه وجهازه ينحظرون نهائيًا فورًا. جرّب أي نص هنا قبل:',
+              style: TextStyle(fontSize: 12.5)),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _test,
+            minLines: 1,
+            maxLines: 4,
+            decoration: InputDecoration(
+              hintText: 'الصق نص حتى تشوف إذا ينحسب سبام',
+              isDense: true,
+              border: const OutlineInputBorder(),
+              suffixIcon: IconButton(
+                icon: _busy
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.fact_check_rounded),
+                onPressed: _busy ? null : _check,
+              ),
+            ),
+          ),
+          if (_verdict != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(_verdict!, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+            ),
+          if (_loaded && _bans.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 10),
+              child: Text('ماكو أي حساب انحظر بسبب السبام لحد هسه ✅', style: TextStyle(fontSize: 12.5)),
+            ),
+          for (final b in _bans.take(30))
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              leading: Icon(b['banned'] == true ? Icons.block_rounded : Icons.check_circle_outline_rounded,
+                  color: b['banned'] == true ? Colors.red : Colors.green),
+              title: Text('@${b['username'] ?? ''} · ${_where[b['source']] ?? b['source'] ?? ''}',
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+              subtitle: Text(
+                '${_when(b['at'])} · أجهزة: ${b['devices'] ?? 0}\n${b['snippet'] ?? ''}',
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 11.5),
+              ),
+              isThreeLine: true,
+              trailing: b['banned'] == true
+                  ? TextButton(onPressed: () => _unban(b), child: const Text('فك الحظر'))
+                  : null,
+            ),
+        ]),
+      ),
+    );
+  }
+}
+
 /// إيقاف كل النسخ الأقدم من نسخة المدير، وإظهار زر تحميل من قناة التلكرام.
 class _OldVersionsCard extends StatefulWidget {
   const _OldVersionsCard();
@@ -1039,7 +1202,7 @@ class _OldVersionsCardState extends State<_OldVersionsCard> {
   bool _busy = false;
 
   Future<void> _set(bool block) async {
-    final build = UpdateService.currentBuild;
+    const build = UpdateService.currentBuild;
     if (block &&
         !await confirmDialog(
             context,
@@ -1516,7 +1679,7 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
         ),
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
-          value: _model[p.id],
+          initialValue: _model[p.id],
           isExpanded: true,
           decoration: const InputDecoration(labelText: 'النموذج', isDense: true),
           items: [for (final m in p.models) DropdownMenuItem(value: m, child: Text(m, style: const TextStyle(fontSize: 12)))],
@@ -1588,7 +1751,7 @@ class _AiAssistantCardState extends State<AiAssistantCard> {
                   ),
                   const Divider(),
                   DropdownButtonFormField<String>(
-                    value: _first,
+                    initialValue: _first,
                     isExpanded: true,
                     decoration: const InputDecoration(labelText: 'الأساسي (والباقين احتياط)', isDense: true),
                     items: [for (final p in _providers) DropdownMenuItem(value: p.id, child: Text('${p.title} أولًا'))],
@@ -1772,7 +1935,7 @@ class _AiAutoPostCardState extends State<AiAutoPostCard> {
                           },
                   ),
                   DropdownButtonFormField<int>(
-                    value: _minutes,
+                    initialValue: _minutes,
                     isExpanded: true,
                     decoration: const InputDecoration(labelText: 'كل قدّيش ينشر', isDense: true),
                     items: [for (final e in _intervals.entries) DropdownMenuItem(value: e.key, child: Text(e.value))],
@@ -1788,7 +1951,7 @@ class _AiAutoPostCardState extends State<AiAutoPostCard> {
                   ),
                   if (_image) ...[
                     DropdownButtonFormField<String>(
-                      value: _quality,
+                      initialValue: _quality,
                       isExpanded: true,
                       decoration: const InputDecoration(labelText: 'جودة الصورة', isDense: true),
                       items: [

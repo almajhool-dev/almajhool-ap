@@ -290,6 +290,7 @@ class _ReelPageState extends State<_ReelPage> {
         bottom: 30,
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           _ReelAction(
+            label: '${p.likeCount}',
             child: GestureDetector(
               onLongPress: () {
                 final box = context.findRenderObject() as RenderBox?;
@@ -302,21 +303,20 @@ class _ReelPageState extends State<_ReelPage> {
                   ? const Icon(Icons.thumb_up_alt_outlined, color: Colors.white, size: 32)
                   : Text(reactionOf(p.myReaction).emoji, style: const TextStyle(fontSize: 30)),
             ),
-            label: '${p.likeCount}',
           ),
           _ReelAction(
+            label: '${p.commentCount}',
             child: IconButton(
               icon: const Icon(Icons.mode_comment_rounded, color: Colors.white, size: 30),
               onPressed: () => openPost(context, p.id, controller: widget.controller),
             ),
-            label: '${p.commentCount}',
           ),
           _ReelAction(
+            label: '${p.shareCount}',
             child: IconButton(
               icon: Transform.flip(flipX: true, child: const Icon(Icons.reply_rounded, color: Colors.white, size: 32)),
               onPressed: () => showSharePost(context, p, controller: widget.controller),
             ),
-            label: '${p.shareCount}',
           ),
         ]),
       ),

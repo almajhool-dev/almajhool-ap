@@ -59,7 +59,6 @@ class RootApp extends StatefulWidget {
 
 class _RootAppState extends State<RootApp> {
   bool _ready = false;
-  String? _error;
   final _theme = ThemeProvider();
 
   @override
@@ -75,7 +74,7 @@ class _RootAppState extends State<RootApp> {
     try {
       await Supabase.initialize(
         url: AppConfig.url,
-        anonKey: AppConfig.anonKey,
+        publishableKey: AppConfig.anonKey,
         // جلسة الدخول تنحفظ مشفّرة بالهاتف
         authOptions: FlutterAuthClientOptions(
           localStorage: SecureSessionStorage('sb-${Uri.parse(AppConfig.url).host.split('.').first}-auth-token'),
@@ -91,13 +90,9 @@ class _RootAppState extends State<RootApp> {
           () => UpdateService.autoCheck(() => CallService.instance.navigatorKey.currentContext));
       // فيديو مشارك من CapCut (أو أي تطبيق) ← شاشة النشر
       ShareInbox.bind(CallService.instance.navigatorKey);
-      setState(() {
-        _ready = true;
-        _error = null;
-      });
-    } catch (e) {
+      setState(() => _ready = true);
+    } catch (_) {
       // ما نطلع شاشة إعدادات للمستخدم: نبقى على شاشة البداية ونعيد المحاولة وحدنا
-      _error = '$e';
       final wait = Duration(seconds: (2 << _retries.clamp(0, 4)).clamp(2, 30));
       _retries++;
       Future.delayed(wait, () {

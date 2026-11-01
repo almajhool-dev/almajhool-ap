@@ -58,9 +58,21 @@ class SessionProvider extends ChangeNotifier {
   SessionProvider() {
     _sub = supa.auth.onAuthStateChange.listen((s) => _handle(s.session));
     _handle(supa.auth.currentSession);
+    checkDevice();
   }
 
   bool get isAdmin => profile?.isAdmin ?? false;
+
+  /// الجهاز محظور (نشر سبام): التطبيق يوكف عليه، حتى شاشة الدخول وإنشاء الحساب ما تطلع
+  bool deviceBanned = false;
+
+  Future<void> checkDevice() async {
+    final banned = await DeviceGuard.isBanned();
+    if (banned != deviceBanned) {
+      deviceBanned = banned;
+      notifyListeners();
+    }
+  }
 
   Future<void> _handle(Session? session) async {
     if (session == null) {
@@ -68,6 +80,8 @@ class SessionProvider extends ChangeNotifier {
       status = SessionStatus.signedOut;
       _unsubscribe();
       notifyListeners();
+      // بعد الخروج (مثلًا حساب انحظر): نتأكد إذا الجهاز نفسه صار محظور
+      checkDevice();
       return;
     }
     if (status != SessionStatus.signedIn || profile?.id != session.user.id) {
@@ -78,6 +92,8 @@ class SessionProvider extends ChangeNotifier {
       // جهاز محظور (حساب جديد على نفس الجهاز، حتى مع VPN) ← الحساب ينحظر
       DeviceGuard.checkin().then((banned) {
         if (banned) refresh();
+        // دخول المالك يفك حظر جهازه؛ وأي حساب ثاني على جهاز محظور ينحظر — بالحالتين نحدّث
+        checkDevice();
       });
     }
   }

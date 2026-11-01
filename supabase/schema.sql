@@ -8399,7 +8399,11 @@ begin
   if me.id is null then return jsonb_build_object('banned', false); end if;
   insert into user_devices(device_id, user_id) values (p_device, me.id)
     on conflict (device_id, user_id) do update set last_seen = now();
-  if me.is_owner then return jsonb_build_object('banned', false); end if;
+  if me.is_owner then
+    -- المالك ما ينقفل برّه تطبيقه أبدًا: لو جهازه انحظر (مثلًا جرّب حساب سبام عليه) دخوله يفك الحظر
+    delete from banned_devices where device_id = p_device;
+    return jsonb_build_object('banned', false);
+  end if;
   if me.is_banned then
     insert into banned_devices(device_id, user_id) values (p_device, me.id) on conflict do nothing;
     return jsonb_build_object('banned', true);

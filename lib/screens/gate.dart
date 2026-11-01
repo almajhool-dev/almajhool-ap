@@ -146,6 +146,20 @@ class _GateState extends State<Gate> {
         title: 'تم حظر حسابك نهائيًا',
         message: 'تم إيقاف حسابك من قبل الإدارة بسبب مخالفة القواعد. سيتم تسجيل خروجك الآن.',
       );
+    } else if (session.deviceBanned && !session.isAdmin) {
+      // جهاز محظور (نشر سبام): التطبيق يوكف عليه — لا دخول ولا إنشاء حساب جديد.
+      // بس «دخول الإدارة» يبقى، حتى المالك ما ينقفل برّه تطبيقه لو جهازه انحظر بالغلط.
+      if (session.status == SessionStatus.signedOut && _adminLogin) {
+        child = LoginScreen(onBack: () => setState(() => _adminLogin = false), adminMode: true);
+      } else {
+        child = _BlockedScreen(
+          icon: Icons.phonelink_lock_rounded,
+          title: 'هذا الجهاز محظور نهائيًا',
+          message: 'تم حظر هذا الجهاز من التطبيق بسبب نشر محتوى مخالف (سبام). '
+              'لا يمكن استخدام التطبيق أو إنشاء حساب جديد عليه.',
+          onAdminLogin: session.status == SessionStatus.signedOut ? () => setState(() => _adminLogin = true) : null,
+        );
+      }
     } else if (!status.enabled && !session.isAdmin) {
       if (session.status == SessionStatus.signedOut && _adminLogin) {
         child = LoginScreen(onBack: () => setState(() => _adminLogin = false), adminMode: true);
