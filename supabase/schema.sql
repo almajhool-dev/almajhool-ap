@@ -12602,6 +12602,207 @@ revoke execute on function public._spam_guard_profiles() from public, anon, auth
 revoke execute on function public._flood_guard() from public, anon, authenticated;
 
 -- =====================================================================
+--  الإصدار 95: الستريك 🔥 (مثل سناب) — طلب المالك.
+--  بالمحادثات الثنائية (مو الكروبات): إذا الطرفين يرسلون لبعض — ولو رسالة وحدة — بنفس اليوم
+--  (بتوقيت بغداد) يزيد الستريك يوم. يوم ضايع = يرجع من جديد. مثل سناب: الـ🔥 يبين من يكملون
+--  3 أيام ورا بعض، ويطلع بقائمة المحادثات وداخل المحادثة، و⏳ إذا راح ينتهي الليلة، و💯 بكل 100 يوم.
+--  وتذكير الساعة 8 بالليل للي بعده ما أرسل اليوم (مرة وحدة باليوم، وبيه زر «رد» يكمّل الستريك).
+--  الحساب كله بالخادم (نفس الرقم على كل الأجهزة) وما يكلّف شي: أول رسالة باليوم بس تشتغل.
+-- =====================================================================
+
+-- آخر يوم أرسل بيه كل طرف بكل محادثة
+create table if not exists public.streak_marks (
+  conversation_id uuid not null references public.conversations(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  last_day date not null,
+  primary key (conversation_id, user_id)
+);
+alter table public.streak_marks enable row level security;
+
+create table if not exists public.chat_streaks (
+  conversation_id uuid primary key references public.conversations(id) on delete cascade,
+  count int not null default 0,
+  best int not null default 0,          -- أطول ستريك وصلوله
+  last_mutual_day date,                 -- آخر يوم أرسلوا بيه الثنين
+  reminded_day date,                    -- آخر يوم انرسل بيه تذكير ⏳ (مرة باليوم)
+  updated_at timestamptz not null default now()
+);
+alter table public.chat_streaks enable row level security;
+-- ماكو سياسات: القراءة عبر قائمة المحادثات وتفاصيل الستريك (دوال محمية) بس
+
+-- من كم يوم يبين الـ🔥 (مثل سناب: 3) — رقم واحد يتغيّر من هنا بس
+create or replace function public._streak_min() returns int
+language sql immutable set search_path = public as $$ select 3 $$;
+
+-- اليوم بتوقيت بغداد
+create or replace function public._streak_today(p_now timestamptz default now()) returns date
+language sql stable set search_path = public as $$
+  select (p_now at time zone 'Asia/Baghdad')::date
+$$;
+
+-- حالة العرض: الستريك الحي (0 إذا انقطع)، وهل راح ينتهي الليلة
+-- (⏳: آخر يوم أرسلوا بيه الثنين چان أمس، واليوم بعد ما كملوه، والساعة 8 بالليل أو أكثر)
+create or replace function public._streak_state(p_last date, p_count int, p_now timestamptz default now(),
+  out streak int, out expiring boolean)
+language sql stable set search_path = public as $$
+  select case when p_last is not null and p_last >= _streak_today(p_now) - 1 then coalesce(p_count, 0) else 0 end,
+         coalesce(p_last = _streak_today(p_now) - 1
+                  and extract(hour from p_now at time zone 'Asia/Baghdad') >= 20, false)
+$$;
+
+-- الحساب: بعد كل رسالة بمحادثة ثنائية
+create or replace function public._streak_on_message() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare d date := _streak_today(); other uuid; od date; myd date; s chat_streaks; n int;
+begin
+  if new.type = 'system' or coalesce(new.deleted, false) or new.sender_id is null then return null; end if;
+  -- أغلب الرسائل: المرسل أرسل اليوم بهالمحادثة قبل — ماكو شي نسويه (بحث واحد وبدون أي قفل)
+  select last_day into myd from streak_marks where conversation_id = new.conversation_id and user_id = new.sender_id;
+  if myd = d then return null; end if;
+  if (select type from conversations where id = new.conversation_id) is distinct from 'direct' then return null; end if;
+  select m.user_id into other from conversation_members m
+   where m.conversation_id = new.conversation_id and m.user_id <> new.sender_id limit 1;
+  if other is null then return null; end if;
+  -- حسابات الذكاء الاصطناعي ما تنحسب (الستريك بين الناس)
+  if exists(select 1 from profiles p where p.id in (other, new.sender_id) and p.is_ai) then return null; end if;
+  -- أول رسالة باليوم من الطرفين بالدور: حتى لو أرسلوا بنفس اللحظة ما يضيع اليوم
+  perform pg_advisory_xact_lock(hashtext('streak:' || new.conversation_id::text));
+  insert into streak_marks(conversation_id, user_id, last_day) values (new.conversation_id, new.sender_id, d)
+    on conflict (conversation_id, user_id) do update set last_day = excluded.last_day
+    where streak_marks.last_day < excluded.last_day;
+  select last_day into od from streak_marks where conversation_id = new.conversation_id and user_id = other;
+  if od is distinct from d then return null; end if;   -- الطرف الثاني بعده ما أرسل اليوم
+  select * into s from chat_streaks where conversation_id = new.conversation_id;
+  if s.conversation_id is null then
+    insert into chat_streaks(conversation_id, count, best, last_mutual_day) values (new.conversation_id, 1, 1, d)
+      on conflict (conversation_id) do nothing;
+  elsif s.last_mutual_day is distinct from d then
+    n := case when s.last_mutual_day = d - 1 then s.count + 1 else 1 end;   -- يوم ضايع = من جديد
+    update chat_streaks set count = n, best = greatest(best, n), last_mutual_day = d, updated_at = now()
+     where conversation_id = new.conversation_id;
+  end if;
+  return null;
+end $$;
+drop trigger if exists zz_streak on public.messages;
+create trigger zz_streak after insert on public.messages
+  for each row execute function public._streak_on_message();
+
+-- قائمة المحادثات + الستريك (نفس الأعمدة القديمة + streak و streak_expiring)
+drop function if exists public.get_my_conversations();
+create function public.get_my_conversations()
+returns table(
+  id uuid, type text, name text, avatar_url text, is_public boolean,
+  last_message_at timestamptz, last_message_preview text,
+  muted boolean, archived boolean, my_role text, unread_count bigint,
+  other_user_id uuid, other_username text, other_display_name text,
+  other_avatar_url text, other_last_seen timestamptz, member_count bigint,
+  other_verified boolean, streak int, streak_expiring boolean)
+language sql stable security definer set search_path = public as $$
+  select c.id, c.type, c.name, c.avatar_url, c.is_public,
+         c.last_message_at, c.last_message_preview,
+         m.muted, m.archived, m.role,
+         (select count(*) from messages x
+            where x.conversation_id = c.id and x.created_at > m.last_read_at
+              and x.sender_id is distinct from auth.uid() and not x.deleted and x.type <> 'system'),
+         o.user_id, p.username, p.display_name, p.avatar_url, p.last_seen,
+         (select count(*) from conversation_members z where z.conversation_id = c.id),
+         coalesce(p.is_verified, false),
+         case when ss.streak >= _streak_min() then ss.streak else 0 end,
+         coalesce(ss.streak >= _streak_min() and ss.expiring, false)
+  from conversation_members m
+  join conversations c on c.id = m.conversation_id
+  left join lateral (
+    select mm.user_id from conversation_members mm
+    where mm.conversation_id = c.id and mm.user_id <> auth.uid() and c.type = 'direct'
+    limit 1) o on true
+  left join profiles p on p.id = o.user_id
+  left join chat_streaks st on st.conversation_id = c.id
+  left join lateral _streak_state(st.last_mutual_day, st.count) ss on true
+  where m.user_id = auth.uid()
+  order by c.last_message_at desc;
+$$;
+revoke execute on function public.get_my_conversations() from public, anon;
+grant execute on function public.get_my_conversations() to authenticated;
+
+-- تفاصيل الستريك (لما تضغط 🔥 داخل المحادثة): أطول ستريك، منو أرسل اليوم، وكم ساعة باقية
+create or replace function public.get_streak_info(p_conv uuid) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare me uuid := auth.uid(); other uuid; st chat_streaks; cur int; exp boolean; d date := _streak_today();
+begin
+  if me is null or not exists(select 1 from conversation_members where conversation_id = p_conv and user_id = me) then
+    raise exception 'not_member' using errcode = '42501';
+  end if;
+  select user_id into other from conversation_members where conversation_id = p_conv and user_id <> me limit 1;
+  select * into st from chat_streaks where conversation_id = p_conv;
+  select x.streak, x.expiring into cur, exp from _streak_state(st.last_mutual_day, st.count) x;
+  return jsonb_build_object(
+    'streak', case when cur >= _streak_min() then cur else 0 end,
+    'expiring', coalesce(cur >= _streak_min() and exp, false),
+    'best', coalesce(st.best, 0),
+    'me_today', exists(select 1 from streak_marks k where k.conversation_id = p_conv and k.user_id = me and k.last_day = d),
+    'other_today', exists(select 1 from streak_marks k where k.conversation_id = p_conv and k.user_id = other and k.last_day = d),
+    'hours_left', round((extract(epoch from (((d + 1)::timestamp at time zone 'Asia/Baghdad') - now())) / 3600.0)::numeric, 1),
+    'min', _streak_min());
+end $$;
+revoke execute on function public.get_streak_info(uuid) from public, anon;
+grant execute on function public.get_streak_info(uuid) to authenticated;
+
+-- تذكير ⏳ الساعة 8 بالليل (بغداد): الستريك راح ينتهي الليلة — للي بعده ما أرسل اليوم
+create or replace function public._streak_reminders() returns int
+language plpgsql security definer set search_path = public as $$
+declare d date := _streak_today(); r record; m record; other uuid; nm text; title text; body text; msgs jsonb; sent int := 0;
+begin
+  for r in select s.conversation_id, s.count from chat_streaks s
+            where s.last_mutual_day = d - 1 and s.count >= _streak_min() and s.reminded_day is distinct from d loop
+    update chat_streaks set reminded_day = d where conversation_id = r.conversation_id;
+    for m in select cm.user_id from conversation_members cm
+              where cm.conversation_id = r.conversation_id and not cm.muted loop
+      -- اللي أرسل اليوم ما نذكّره
+      continue when exists(select 1 from streak_marks k
+                            where k.conversation_id = r.conversation_id and k.user_id = m.user_id and k.last_day = d);
+      select o.user_id, p.display_name into other, nm from conversation_members o join profiles p on p.id = o.user_id
+       where o.conversation_id = r.conversation_id and o.user_id <> m.user_id limit 1;
+      -- إذا واحد حاظر الثاني ما نذكّر
+      continue when exists(select 1 from blocks b where (b.blocker_id = m.user_id and b.blocked_id = other)
+                                                     or (b.blocker_id = other and b.blocked_id = m.user_id));
+      title := '⏳ الستريك ويا ' || coalesce(nm, 'صديقك') || ' راح ينتهي!';
+      body := 'عدكم 🔥' || r.count || ' يوم ورا بعض — ارسل رسالة قبل 12 بالليل حتى يستمر';
+      perform notify_user(m.user_id, 'streak', title, body, jsonb_build_object('conversation_id', r.conversation_id));
+      -- إشعار للجهاز مثل إشعار الرسالة: بيه زر «رد» (الرد من الإشعار يكمّل الستريك)، والضغط يفتح المحادثة
+      select coalesce(jsonb_agg(jsonb_build_object(
+          'token', t.token,
+          'data', jsonb_build_object('kind', 'msg', 'conv', r.conversation_id::text, 'title', title, 'body', body),
+          'android', jsonb_build_object('priority', 'high', 'ttl', '14400s'))
+          -- النسخ القديمة (قبل 35) ما تعرض إشعار البيانات، فنرسل لها إشعار جاهز
+          || case when t.app_build >= 35 then '{}'::jsonb else jsonb_build_object(
+            'notification', jsonb_build_object('title', title, 'body', body),
+            'android', jsonb_build_object('priority', 'high', 'ttl', '14400s',
+              'notification', jsonb_build_object('channel_id', 'almajhool_msgs',
+                'tag', 'streak-' || r.conversation_id::text, 'sound', 'default'))) end), '[]'::jsonb)
+        into msgs
+        from fcm_tokens t join profiles p on p.id = t.user_id
+       where t.user_id = m.user_id and p.notifications_enabled;
+      if jsonb_array_length(msgs) > 0 then
+        begin perform _push(msgs); exception when others then null; end;
+      end if;
+      sent := sent + 1;
+    end loop;
+  end loop;
+  return sent;
+end $$;
+
+do $$ begin
+  perform cron.schedule('almajhool-streak-remind', '5 17 * * *', 'select public._streak_reminders()');  -- 8:05 مساءً بغداد
+exception when others then raise notice 'streak cron: %', sqlerrm;
+end $$;
+
+revoke execute on function public._streak_min() from public, anon, authenticated;
+revoke execute on function public._streak_today(timestamptz) from public, anon, authenticated;
+revoke execute on function public._streak_state(date, int, timestamptz) from public, anon, authenticated;
+revoke execute on function public._streak_on_message() from public, anon, authenticated;
+revoke execute on function public._streak_reminders() from public, anon, authenticated;
+
+-- =====================================================================
 --  الحارس الأمني (لازم يبقى آخر شي بالملف قبل تحديث ذاكرة API — أي إصدار جديد ينضاف فوقه):
 --  يسد أي دالة أو جدول انفتح للزائر بالغلط بأي إصدار.
 -- =====================================================================

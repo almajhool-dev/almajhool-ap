@@ -78,6 +78,7 @@ class _NotificationsTabState extends State<NotificationsTab> {
         'appeal' => Icons.gavel_rounded,
         'appeal_result' => Icons.balance_rounded,
         'follow_request' => Icons.person_add_alt_rounded,
+        'streak' => Icons.local_fire_department_rounded,
         _ => Icons.notifications_rounded,
       };
 

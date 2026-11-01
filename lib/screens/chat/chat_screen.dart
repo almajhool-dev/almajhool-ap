@@ -22,6 +22,7 @@ import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../../widgets/message_bubble.dart';
 import '../../widgets/sticker_sheet.dart';
+import '../../widgets/streak.dart';
 import '../groups/group_screens.dart';
 import '../profile/profile_screens.dart';
 import 'location_screens.dart';
@@ -862,6 +863,16 @@ class _ChatScreenState extends State<ChatScreen> {
     final c = _conv;
     final title = c?.title ?? '...';
     final isGroup = c?.isGroup ?? false;
+    // الستريك يتحدّث لحاله (من قائمة المحادثات اللي تتحدّث بعد كل رسالة)
+    var streak = c?.streak ?? 0;
+    var streakExpiring = c?.streakExpiring ?? false;
+    for (final x in hub.conversations) {
+      if (x.id == _id) {
+        streak = x.streak;
+        streakExpiring = x.streakExpiring;
+        break;
+      }
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -882,7 +893,22 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    NameWithBadge(title, verified: !isGroup && (c?.otherVerified ?? false), style: const TextStyle(fontSize: 17)),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: NameWithBadge(title,
+                              verified: !isGroup && (c?.otherVerified ?? false), style: const TextStyle(fontSize: 17)),
+                        ),
+                        if (!isGroup && streak > 0)
+                          StreakBadge(
+                            streak: streak,
+                            expiring: streakExpiring,
+                            fontSize: 14,
+                            onTap: () => showStreakSheet(context,
+                                conversationId: _id, name: title, streak: streak, expiring: streakExpiring),
+                          ),
+                      ],
+                    ),
                     Text(
                       _statusLine(hub),
                       maxLines: 1,

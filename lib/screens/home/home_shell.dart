@@ -9,6 +9,7 @@ import '../../services/couple_service.dart';
 import '../couple/couple_screens.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
+import '../../widgets/streak.dart';
 import '../chat/chat_screen.dart';
 import '../contacts/contacts_tab.dart';
 import '../feed/feed_screens.dart';
@@ -307,11 +308,19 @@ class ConversationTile extends StatelessWidget {
       title: Row(
         children: [
           Expanded(
-            child: Align(
-              alignment: AlignmentDirectional.centerStart,
-              child: NameWithBadge(conv.title,
-                  verified: !conv.isGroup && conv.otherVerified,
-                  style: TextStyle(fontWeight: bold ? FontWeight.w800 : FontWeight.w600)),
+            child: Row(
+              children: [
+                Flexible(
+                  child: NameWithBadge(conv.title,
+                      verified: !conv.isGroup && conv.otherVerified,
+                      style: TextStyle(fontWeight: bold ? FontWeight.w800 : FontWeight.w600)),
+                ),
+                // 🔥 الستريك يم الاسم (مثل سناب)
+                if (conv.streak > 0) ...[
+                  const SizedBox(width: 6),
+                  StreakBadge(streak: conv.streak, expiring: conv.streakExpiring, fontSize: 13.5),
+                ],
+              ],
             ),
           ),
           if (conv.muted) Icon(Icons.volume_off_rounded, size: 16, color: scheme.onSurface.withValues(alpha: 0.4)),

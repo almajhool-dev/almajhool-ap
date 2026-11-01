@@ -75,6 +75,10 @@ class ConversationSummary {
   final DateTime? otherLastSeen;
   final int memberCount;
   final bool otherVerified;
+  /// الستريك 🔥: كم يوم ورا بعض الطرفين يراسلون بعض (0 = ماكو)
+  final int streak;
+  /// ⏳ الستريك راح ينتهي الليلة إذا محد أرسل اليوم
+  final bool streakExpiring;
 
   const ConversationSummary({
     required this.id,
@@ -95,6 +99,8 @@ class ConversationSummary {
     this.otherLastSeen,
     this.memberCount = 0,
     this.otherVerified = false,
+    this.streak = 0,
+    this.streakExpiring = false,
   });
 
   bool get isGroup => type == 'group';
@@ -121,6 +127,8 @@ class ConversationSummary {
         otherLastSeen: _dt(m['other_last_seen']),
         memberCount: ((m['member_count'] ?? 0) as num).toInt(),
         otherVerified: (m['other_verified'] ?? false) as bool,
+        streak: ((m['streak'] ?? 0) as num).toInt(),
+        streakExpiring: (m['streak_expiring'] ?? false) as bool,
       );
 
   Map<String, dynamic> toMap() => {
@@ -142,6 +150,8 @@ class ConversationSummary {
         'other_last_seen': otherLastSeen?.toIso8601String(),
         'member_count': memberCount,
         'other_verified': otherVerified,
+        'streak': streak,
+        'streak_expiring': streakExpiring,
       };
 }
 

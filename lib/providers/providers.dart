@@ -12,6 +12,7 @@ import '../repositories/social_repositories.dart';
 import '../repositories/user_repositories.dart';
 import '../services/core_services.dart';
 import '../services/local_notifications.dart';
+import '../services/push_service.dart';
 import '../services/screen_guard.dart';
 
 class ThemeProvider extends ChangeNotifier {
@@ -397,6 +398,8 @@ class ChatHub extends ChangeNotifier with WidgetsBindingObserver {
             unreadNotifications++;
             notifyListeners();
             final n = AppNotification.fromMap(p.newRecord);
+            // تذكير الستريك يوصل كإشعار جهاز (بيه زر «رد») — إذا التطبيق مو قدام المستخدم ما نكرره
+            if (n.type == 'streak' && PushService.active && !BackgroundBridge.appVisible) return;
             LocalNotifications.show(n.title, n.body);
           },
         )
