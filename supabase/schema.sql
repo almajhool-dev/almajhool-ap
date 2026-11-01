@@ -12803,6 +12803,24 @@ revoke execute on function public._streak_on_message() from public, anon, authen
 revoke execute on function public._streak_reminders() from public, anon, authenticated;
 
 -- =====================================================================
+--  الإصدار 96: حركة الخلفيات بيد المالك بس — طلب المالك.
+--  المالك يطفي/يشغّل حركة الخلفيات عند كل المستخدمين مرة وحدة. القيمة بإعدادات التطبيق
+--  (app_settings) اللي التطبيق أصلًا يتابعها لحظيًا، فتوصل للكل خلال ثواني.
+--  المستخدمين ما عدهم زر الحركة، ويكدرون يضيفون خلفيات ثابتة بس (صورة من المعرض أو ألوان) — بجهازهم.
+-- =====================================================================
+alter table public.app_settings add column if not exists fx_motion boolean not null default true;
+
+create or replace function public.owner_set_fx_motion(p_on boolean) returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  update app_settings set fx_motion = coalesce(p_on, true), updated_at = now() where id = 1;
+  return coalesce(p_on, true);
+end $$;
+revoke execute on function public.owner_set_fx_motion(boolean) from public, anon;
+grant execute on function public.owner_set_fx_motion(boolean) to authenticated;
+
+-- =====================================================================
 --  الحارس الأمني (لازم يبقى آخر شي بالملف قبل تحديث ذاكرة API — أي إصدار جديد ينضاف فوقه):
 --  يسد أي دالة أو جدول انفتح للزائر بالغلط بأي إصدار.
 -- =====================================================================

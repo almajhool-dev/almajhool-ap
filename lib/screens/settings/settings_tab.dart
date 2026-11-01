@@ -14,6 +14,7 @@ import '../../services/update_service.dart';
 import '../../utils/helpers.dart';
 import '../../widgets/common.dart';
 import '../../widgets/fx.dart';
+import '../../widgets/fx_motion_switch.dart';
 import '../../services/fx_settings.dart';
 import 'about_screen.dart';
 import 'themes_screen.dart';
@@ -309,21 +310,13 @@ class _SettingsTabState extends State<SettingsTab> {
               onSelectionChanged: (s) => theme.set(s.first),
             ),
           ),
-          ListenableBuilder(
-            listenable: FxSettings.instance,
-            builder: (context, _) => SwitchListTile(
-              secondary: const Icon(Icons.auto_awesome_rounded),
-              title: const Text('خلفيات متحركة ✨'),
-              subtitle: const Text('طفّيها إذا تريد خلفية ثابتة وتوفير بطارية'),
-              value: FxSettings.instance.enabled,
-              onChanged: FxSettings.instance.setEnabled,
-            ),
-          ),
+          // حركة الخلفيات بيد المالك بس: يطفيها/يشغّلها لكل المستخدمين
+          if (p?.isOwner ?? false) const FxMotionSwitch(),
           ListenableBuilder(
             listenable: FxSettings.instance,
             builder: (context, _) => ListTile(
               leading: const Icon(Icons.palette_rounded),
-              title: const Text('السمات المتحركة 🎨'),
+              title: const Text('الخلفيات 🎨'),
               subtitle: Text('الحالية: ${FxSettings.instance.current.name}'),
               trailing: const Icon(Icons.chevron_left),
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ThemesScreen())),

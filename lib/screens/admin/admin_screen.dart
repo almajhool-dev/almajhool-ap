@@ -17,6 +17,7 @@ import '../../repositories/social_repositories.dart';
 import '../../services/core_services.dart';
 import '../../services/update_service.dart';
 import '../../utils/helpers.dart';
+import '../../widgets/fx_motion_switch.dart';
 import '../../widgets/common.dart';
 import '../../widgets/fx.dart';
 import '../feed/community.dart';
@@ -169,6 +170,9 @@ class _OverviewState extends State<_Overview> {
           ),
           const SizedBox(height: 12),
           if (context.read<SessionProvider>().profile?.isOwner ?? false) ...[
+            // حركة الخلفيات عند كل المستخدمين
+            const Card(child: FxMotionSwitch()),
+            const SizedBox(height: 12),
             Card(
               color: Colors.indigo.withValues(alpha: 0.10),
               child: ListTile(

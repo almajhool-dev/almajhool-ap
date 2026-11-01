@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -8,11 +9,13 @@ import 'package:flutter/material.dart';
 import '../core/theme.dart';
 import '../services/fx_settings.dart';
 
-/// خلفية التطبيق كله المتحركة (تنرسم مرة وحدة ورا كل الشاشات).
-/// السمة والتشغيل/الإيقاف من [FxSettings]. 30 إطار بالثانية وتوقف لما التطبيق بالخلفية.
+/// خلفية التطبيق كله (تنرسم مرة وحدة ورا كل الشاشات).
+/// السمة من [FxSettings]، والحركة يقررها المالك لكل المستخدمين ([FxSettings.motion]).
+/// خلفيات المستخدمين (ألوان/نقوش أو صورة) ثابتة دائمًا. 12 إطار بالثانية وتوقف لما التطبيق بالخلفية.
 class FxBackground extends StatefulWidget {
   final Widget child;
   final FxTheme? theme; // لمعاينة سمة معيّنة بدل السمة المختارة
+  /// معاينة حركة السمة حتى لو الحركة طافية (للمالك وهو يصمم سمة متحركة)
   final bool forceOn;
   const FxBackground({super.key, required this.child, this.theme, this.forceOn = false});
 
@@ -26,7 +29,12 @@ class _FxBackgroundState extends State<FxBackground> with WidgetsBindingObserver
   final _sw = Stopwatch();
 
   FxSettings get _fx => FxSettings.instance;
-  bool get _on => widget.forceOn || _fx.enabled;
+  FxTheme get _th => widget.theme ?? _fx.current;
+  bool get _on {
+    final th = _th;
+    if (th.isPhoto || th.still) return false; // الخلفيات الثابتة والصور ما تتحرك أبدًا
+    return widget.forceOn || _fx.animates(th);
+  }
 
   @override
   void initState() {
@@ -35,6 +43,12 @@ class _FxBackgroundState extends State<FxBackground> with WidgetsBindingObserver
     _fx.addListener(_onFx);
     WidgetsBinding.instance.addObserver(this);
     _sync();
+  }
+
+  @override
+  void didUpdateWidget(FxBackground old) {
+    super.didUpdateWidget(old);
+    if (old.theme != widget.theme || old.forceOn != widget.forceOn) _sync();
   }
 
   void _onFx() {
@@ -98,15 +112,19 @@ class _FxBackgroundState extends State<FxBackground> with WidgetsBindingObserver
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final th = widget.theme ?? _fx.current;
+    final th = _th;
+    final photo = th.isPhoto;
+    // نفس الترتيب دائمًا (طبقتين + الشاشات): تبديل الخلفية ما يعيد بناء شاشات التطبيق
     return Stack(fit: StackFit.expand, children: [
-      // الطبقة الثابتة (اللون والأضواء الكبيرة): تنرسم مرة وحدة وتنحفظ — ما تنعاد بكل إطار
+      // الطبقة الثابتة (اللون والأضواء الكبيرة، أو صورة المستخدم): تنرسم مرة وحدة — ما تنعاد بكل إطار
       RepaintBoundary(
-        child: CustomPaint(painter: _FxBasePainter(th, dark)),
+        child: photo
+            ? DecoratedBox(decoration: fxPhotoDecoration(th, dark))
+            : CustomPaint(painter: _FxBasePainter(th, dark)),
       ),
-      // الطبقة المتحركة (نجوم/شيفرة/شبكة/أمواج) بس: رسم خفيف
+      // الطبقة المتحركة (نجوم/شيفرة/شبكة/أمواج) بس: رسم خفيف — وإذا الحركة طافية تبقى واكفة
       RepaintBoundary(
-        child: CustomPaint(painter: _FxPainter(_clock, th, dark, _on)),
+        child: photo ? const SizedBox.expand() : CustomPaint(painter: _FxPainter(_clock, th, dark, _on)),
       ),
       // أي لمس (مثل فتح محادثة): الحركة توكف حتى الانتقال يصير ناعم، وترجع بعد ما يخلص
       Listener(
@@ -134,6 +152,24 @@ class _FxBackgroundState extends State<FxBackground> with WidgetsBindingObserver
       ),
     ]);
   }
+}
+
+/// خلفية صورة المستخدم: تغطي الشاشة، مع تعتيم خفيف بلون الخلفية حتى الكتابة فوقها تبقى واضحة.
+/// إذا الصورة انمسحت من الجهاز يبقى لون الخلفية العادي.
+BoxDecoration fxPhotoDecoration(FxTheme th, bool dark) {
+  final bg = dark ? const Color(0xFF0A0E17) : const Color(0xFFF1F3FA);
+  final path = th.path;
+  return BoxDecoration(
+    color: bg,
+    image: path == null
+        ? null
+        : DecorationImage(
+            image: FileImage(File(path)),
+            fit: BoxFit.cover,
+            colorFilter: ColorFilter.mode(bg.withValues(alpha: dark ? 0.55 : 0.6), BlendMode.srcATop),
+            onError: (_, __) {},
+          ),
+  );
 }
 
 /// الطبقة الثابتة للخلفية: اللون + الأضواء الكبيرة (أثقل رسم: 3 تدرجات بحجم الشاشة).
@@ -282,11 +318,15 @@ class _FxOpaqueWhileMovingState extends State<FxOpaqueWhileMoving> {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final th = FxSettings.instance.current;
     // طبقة وحدة (RepaintBoundary): تنرسم مرة وتنزلق كصورة — الانزلاق ما يعيد الرسم
     return RepaintBoundary(
-      child: CustomPaint(
-        painter: _moving ? _FxBasePainter(FxSettings.instance.current, dark) : null,
-        child: widget.child,
+      child: DecoratedBox(
+        decoration: _moving && th.isPhoto ? fxPhotoDecoration(th, dark) : const BoxDecoration(),
+        child: CustomPaint(
+          painter: _moving && !th.isPhoto ? _FxBasePainter(th, dark) : null,
+          child: widget.child,
+        ),
       ),
     );
   }

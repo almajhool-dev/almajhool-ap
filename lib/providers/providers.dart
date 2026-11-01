@@ -11,6 +11,7 @@ import '../repositories/chat_repository.dart';
 import '../repositories/social_repositories.dart';
 import '../repositories/user_repositories.dart';
 import '../services/core_services.dart';
+import '../services/fx_settings.dart';
 import '../services/local_notifications.dart';
 import '../services/push_service.dart';
 import '../services/screen_guard.dart';
@@ -199,6 +200,8 @@ class AppStatusProvider extends ChangeNotifier {
     phoneLogin = m['phone_login'] == true;
     final tb = m['tg_bot'];
     tgBot = tb is String && tb.isNotEmpty ? tb : null;
+    // حركة الخلفيات: المالك يطفيها/يشغّلها لكل المستخدمين (توصل لحظيًا)
+    FxSettings.instance.setMotion(m['fx_motion'] != false);
     loaded = true;
     notifyListeners();
   }
