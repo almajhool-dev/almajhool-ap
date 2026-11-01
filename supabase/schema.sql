@@ -12226,6 +12226,8 @@ declare k text := (select value from private_settings where key = 'spam_key');
 begin
   if k is null or char_length(k) < 64 or p_key is distinct from k or p_uid is null
      or p_action is null or p_action not in ('ban', 'block') then return false; end if;
+  -- الحظر لازم يثبت فعلًا: إذا الحساب ما ينشاف من هنا، نرجّع «لا» حتى الحارس يحظر بنفس المعاملة (الاحتياط)
+  if p_action = 'ban' and not exists(select 1 from profiles where id = p_uid) then return false; end if;
   perform _abuse_log(p_uid, p_kind, p_action, p_src, p_snip);
   return true;
 end $$;
