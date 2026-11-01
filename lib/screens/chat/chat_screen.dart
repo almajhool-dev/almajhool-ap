@@ -506,6 +506,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _sendMedia(PickedMedia? media) async {
     if (media == null) return;
+    // ملفات التطبيقات والبرامج (APK/EXE…) ممنوعة: أكثر طريقة تنتشر بيها الفيروسات والتطبيقات المزيفة
+    // (الخادم يرفضها هم — هنا بس حتى ما يضيع وقت الرفع)
+    if (MediaService.isBlockedFile(media.fileName) && !context.read<SessionProvider>().isAdmin) {
+      showSnack(context, MediaService.blockedFileMessage, error: true);
+      return;
+    }
     setState(() => _uploading++);
     try {
       final path = await MediaService.uploadChatFile(_id, media);
@@ -750,6 +756,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _forward(Message m) async {
+    if (m.type == 'file' && MediaService.isBlockedFile(m.fileName ?? '') && !context.read<SessionProvider>().isAdmin) {
+      showSnack(context, MediaService.blockedFileMessage, error: true);
+      return;
+    }
     final targets = _hub.conversations.where((c) => c.id != _id).toList();
     final target = await showModalBottomSheet<ConversationSummary>(
       context: context,

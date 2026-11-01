@@ -8,6 +8,7 @@ import '../core/theme.dart';
 import '../models/models.dart';
 import '../services/media_service.dart';
 import '../utils/helpers.dart';
+import '../utils/phishing.dart';
 import '../screens/chat/location_screens.dart';
 import '../screens/live/live_screens.dart';
 import 'common.dart';
@@ -301,9 +302,29 @@ class MessageBubble extends StatelessWidget {
             ],
           );
         }
-        return SelectableText.rich(
+        final body = SelectableText.rich(
           _linkify(text, fg),
           style: TextStyle(color: fg, fontSize: 15.5, height: 1.35),
+        );
+        // رسالة واصلة شكلها تصيّد (تطلب كود التحقق/كلمة السر أو جائزة برابط): تنبيه صغير تحتها
+        final warn = mine ? null : PhishingHint.of(text);
+        if (warn == null) return body;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            body,
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.amber.withValues(alpha: 0.18),
+                border: Border.all(color: Colors.amber.withValues(alpha: 0.6)),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(warn, style: TextStyle(fontSize: 12, height: 1.3, color: fg, fontWeight: FontWeight.w600)),
+            ),
+          ],
         );
     }
   }

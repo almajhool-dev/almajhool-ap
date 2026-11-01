@@ -103,9 +103,13 @@ void _logError(String raw) {
 String friendlyError(Object e) {
   final raw = e.toString();
   _logError('${e.runtimeType}: $raw');
-  // حماية السبام بالخادم رفضت المحتوى (والحساب انحظر)
-  if (raw.contains('blocked_spam')) {
-    return 'هذا المحتوى ممنوع (سبام) وتم حظر الحساب نهائيًا';
+  // حماية المحتوى بالخادم رفضت المحتوى (blocked_spam = والحساب انحظر، blocked_content = منع بس)
+  if (raw.contains('blocked_spam') || raw.contains('blocked_content')) {
+    final src = e is PostgrestException ? e.message : raw;
+    final m = RegExp(r'blocked_(?:spam|content):\s*([^\n]+)').firstMatch(src);
+    final msg = m?.group(1)?.trim() ?? '';
+    if (e is PostgrestException && msg.isNotEmpty) return msg;
+    return raw.contains('blocked_spam') ? 'هذا المحتوى ممنوع (سبام) وتم حظر الحساب نهائيًا' : 'هذا المحتوى ممنوع';
   }
   if (raw.contains('Bearer') || raw.contains('Invalid API key') || raw.contains('No API key')) {
     return 'مفتاح الخادم غير صحيح. اضغط «تغيير إعدادات الخادم» وأدخل anon public key الصحيح';
@@ -133,7 +137,10 @@ String friendlyError(Object e) {
   }
   if (e is PostgrestException) {
     final m = e.message;
-    if (m.contains('rate_limited')) return 'تمهّل شوية وحاول بعد قليل';
+    if (m.contains('rate_limited')) {
+      final r = RegExp(r'rate_limited:\s*([^\n]+)').firstMatch(m)?.group(1)?.trim() ?? '';
+      return r.isNotEmpty ? r : 'تمهّل شوية وحاول بعد قليل';
+    }
     if (e.code == '23505') return 'القيمة مستخدمة مسبقًا';
     if (e.code == '42501' || m.contains('row-level security')) return 'ليست لديك صلاحية لهذا الإجراء';
     return m;

@@ -1028,7 +1028,8 @@ class _AutoUpdateGuardCardState extends State<_AutoUpdateGuardCard> {
   }
 }
 
-/// حماية السبام (تجارة رمادية): كل حساب انحظر تلقائيًا وسببه، فك الحظر، وتجربة أي نص.
+/// الفلترة والحماية التلقائية: إحصائيات كل منع وحظر تلقائي، آخر الإجراءات، الحسابات المحظورة
+/// وفك حظرها، وتجربة أي نص على كل الفلاتر.
 class _SpamGuardCard extends StatefulWidget {
   const _SpamGuardCard();
   @override
@@ -1047,8 +1048,19 @@ class _SpamGuardCardState extends State<_SpamGuardCard> {
     'profiles': 'الاسم أو البايو',
     'feature_suggestions': 'اقتراح',
   };
+  static const _kinds = {
+    'gray': 'تجارة رمادية',
+    'sex_spam': 'سبام إباحي',
+    'sex_link': 'روابط إباحية',
+    'fake_update': 'تحديث مزيف',
+    'apk_link': 'روابط APK',
+    'exe_file': 'ملفات برامج',
+    'bot_blast': 'بوتات',
+    'reserved_name': 'انتحال الإدارة',
+  };
   final _test = TextEditingController();
   List<Map<String, dynamic>> _bans = const [];
+  Map<String, dynamic> _stats = const {};
   bool _loaded = false;
   bool _busy = false;
   String? _verdict;
@@ -1067,10 +1079,11 @@ class _SpamGuardCardState extends State<_SpamGuardCard> {
 
   Future<void> _load() async {
     try {
-      final r = await supa.rpc('spam_bans_list');
+      final r = await Future.wait([supa.rpc('spam_bans_list'), supa.rpc('abuse_stats')]);
       if (!mounted) return;
       setState(() {
-        _bans = (r as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        _bans = (r[0] as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        _stats = Map<String, dynamic>.from(r[1] as Map);
         _loaded = true;
       });
     } catch (_) {
@@ -1085,10 +1098,17 @@ class _SpamGuardCardState extends State<_SpamGuardCard> {
     try {
       final r = Map<String, dynamic>.from(await supa.rpc('spam_test', params: {'p_text': t}) as Map);
       final terms = (r['terms'] as List? ?? const []).join('، ');
+      String line(String? action, String? msg) => action == 'ban'
+          ? '🚫 حظر نهائي للحساب وجهازه: ${msg ?? ''}'
+          : action == 'block'
+              ? '⛔ ينمنع (بدون حظر): ${msg ?? ''}'
+              : '✅ يعبر بدون مشكلة';
+      final pub = line(r['action'] as String?, r['msg'] as String?);
+      final dm = line(r['dm_action'] as String?, r['dm_msg'] as String?);
       if (mounted) {
         setState(() => _verdict = r['spam'] == true
-            ? '🚫 سبام — اللي ينشره ينحظر هو وجهازه فورًا${terms.isEmpty ? '' : '\nكلمات انكشفت: $terms'}'
-            : '✅ نص عادي — يعبر بدون مشكلة');
+            ? 'بالمنشورات والتعليقات: $pub\nبالرسائل الخاصة: $dm${terms.isEmpty ? '' : '\nكلمات انكشفت: $terms'}'
+            : '✅ نص عادي — يعبر بدون مشكلة بكل مكان');
       }
     } catch (e) {
       if (mounted) showSnack(context, friendlyError(e), error: true);
@@ -1118,8 +1138,14 @@ class _SpamGuardCardState extends State<_SpamGuardCard> {
     return '${d.year}/${two(d.month)}/${two(d.day)} ${two(d.hour)}:${two(d.minute)}';
   }
 
+  String _kind(Object? k) => _kinds['$k'] ?? '${k ?? ''}';
+
   @override
   Widget build(BuildContext context) {
+    final week = Map<String, dynamic>.from(_stats['week'] as Map? ?? const {});
+    final day = Map<String, dynamic>.from(_stats['day'] as Map? ?? const {});
+    final recent = (_stats['recent'] as List? ?? const []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    int sum(Map<String, dynamic> m) => m.values.fold<int>(0, (a, v) => a + ((v as num?)?.toInt() ?? 0));
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1128,22 +1154,36 @@ class _SpamGuardCardState extends State<_SpamGuardCard> {
             const Icon(Icons.shield_rounded, color: Colors.green),
             const SizedBox(width: 8),
             const Expanded(
-              child: Text('حماية السبام', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+              child: Text('الفلترة والحماية التلقائية', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
             ),
             if (_loaded) Chip(label: Text('محظورين: ${_bans.length}'), visualDensity: VisualDensity.compact),
           ]),
           const SizedBox(height: 6),
           const Text(
-              'أي أحد ينشر سبام «تجارة رمادية» (بيع بيانات، غسيل أموال USDT، حسابات، قمار، تزوير…) بأي مكان '
-              'بالتطبيق: المحتوى ما ينشر، وحسابه وجهازه ينحظرون نهائيًا فورًا. جرّب أي نص هنا قبل:',
+              'كلها تشتغل لحالها بالخادم: سبام «التجارة الرمادية» والسبام الإباحي وروابط التحديث المزيفة = حظر نهائي '
+              'للحساب وجهازه. روابط وملفات APK/EXE، ونفس الرسالة برابط لهواية ناس (بوتات)، وأسماء الإدارة المحجوزة = منع. '
+              'وحد للسرعة على الرسائل والمنشورات والتعليقات. جرّب أي نص هنا:',
               style: TextStyle(fontSize: 12.5)),
+          if (_loaded) ...[
+            const SizedBox(height: 8),
+            Text('آخر 24 ساعة: ${sum(day)} إجراء · آخر أسبوع: ${_stats['blocks_week'] ?? 0} منع و ${_stats['bans_week'] ?? 0} حظر',
+                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+            if (week.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Wrap(spacing: 6, runSpacing: 6, children: [
+                  for (final e in week.entries)
+                    Chip(label: Text('${_kind(e.key)}: ${e.value}'), visualDensity: VisualDensity.compact),
+                ]),
+              ),
+          ],
           const SizedBox(height: 8),
           TextField(
             controller: _test,
             minLines: 1,
             maxLines: 4,
             decoration: InputDecoration(
-              hintText: 'الصق نص حتى تشوف إذا ينحسب سبام',
+              hintText: 'الصق نص حتى تشوف شنو يصير بيه',
               isDense: true,
               border: const OutlineInputBorder(),
               suffixIcon: IconButton(
@@ -1159,18 +1199,39 @@ class _SpamGuardCardState extends State<_SpamGuardCard> {
               padding: const EdgeInsets.only(top: 6),
               child: Text(_verdict!, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
             ),
+          if (recent.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            const Text('آخر الإجراءات التلقائية', style: TextStyle(fontWeight: FontWeight.w800)),
+            for (final a in recent.take(10))
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                leading: Icon(a['action'] == 'ban' ? Icons.block_rounded : Icons.do_not_disturb_on_rounded,
+                    color: a['action'] == 'ban' ? Colors.red : Colors.orange),
+                title: Text(
+                    '${a['action'] == 'ban' ? 'حظر' : 'منع'} · ${_kind(a['kind'])} · @${a['username'] ?? '?'}',
+                    style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                subtitle: Text('${_when(a['at'])} · ${_where[a['source']] ?? a['source'] ?? ''}\n${a['snippet'] ?? ''}',
+                    maxLines: 3, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5)),
+                isThreeLine: true,
+              ),
+          ],
           if (_loaded && _bans.isEmpty)
             const Padding(
               padding: EdgeInsets.only(top: 10),
-              child: Text('ماكو أي حساب انحظر بسبب السبام لحد هسه ✅', style: TextStyle(fontSize: 12.5)),
+              child: Text('ماكو أي حساب انحظر تلقائيًا لحد هسه ✅', style: TextStyle(fontSize: 12.5)),
             ),
+          if (_bans.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            const Text('الحسابات المحظورة تلقائيًا', style: TextStyle(fontWeight: FontWeight.w800)),
+          ],
           for (final b in _bans.take(30))
             ListTile(
               contentPadding: EdgeInsets.zero,
               dense: true,
               leading: Icon(b['banned'] == true ? Icons.block_rounded : Icons.check_circle_outline_rounded,
                   color: b['banned'] == true ? Colors.red : Colors.green),
-              title: Text('@${b['username'] ?? ''} · ${_where[b['source']] ?? b['source'] ?? ''}',
+              title: Text('@${b['username'] ?? ''} · ${_kind(b['kind'] ?? 'gray')} · ${_where[b['source']] ?? b['source'] ?? ''}',
                   style: const TextStyle(fontWeight: FontWeight.w700)),
               subtitle: Text(
                 '${_when(b['at'])} · أجهزة: ${b['devices'] ?? 0}\n${b['snippet'] ?? ''}',

@@ -1564,7 +1564,10 @@ begin
   if em !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' then raise exception 'البريد الإلكتروني غير صالح'; end if;
   if char_length(coalesce(p_password, '')) < 8 then raise exception 'كلمة المرور 8 أحرف على الأقل'; end if;
   if un !~ '^[a-z0-9_.]{3,24}$' then raise exception 'اسم المستخدم غير صالح'; end if;
-  if dn = '' then dn := un; end if;
+  -- أسماء الإدارة محجوزة (انتحال): الإصدار 92
+  if _reserved_username(un) then raise exception 'اسم المستخدم محجوز، اختر اسمًا آخر'; end if;
+  dn := btrim(regexp_replace(dn, '[✅☑✓✔]️?', '', 'g'));
+  if dn = '' or _reserved_name(dn) then dn := un; end if;
 
   -- حماية من الإغراق
   delete from signup_attempts where at < now() - interval '1 day';
@@ -2471,6 +2474,9 @@ begin
          and is_blocked_between(uid, m.user_id)) then
     raise exception 'غير مسموح';
   end if;
+  -- الرد من الإشعار ينحسب باسم صاحب الجهاز، حتى كل الحراس (السبام والفلترة وحد السرعة) تشتغل عليه
+  -- مثل أي رسالة من داخل التطبيق (الإصدار 92 — قبلها چانت تعبر بدون فحص)
+  perform set_config('request.jwt.claim.sub', uid::text, true);
   insert into messages(conversation_id, sender_id, type, content, client_id)
     values (p_conv, uid, 'text', left(trim(p_text), 4000), 'n-' || gen_random_uuid()::text);
 end $$;
@@ -11343,7 +11349,7 @@ declare r record; n_anon int := 0; n_int int := 0; n_tab int := 0; had_auth bool
     'unregister_fcm', 'push_ready',
     'ai_img_claim', 'ai_img_done', 'ai_img_pending', 'ai_news_push', 'ai_autopost_gh', 'ci_signing', 'ci_set_release',
     'ci_release_pause', 'push_refresh_config', 'push_promote', 'push_set_access', 'push_diag', 'perf_report',
-    'sys_diag', '_ai_ticket_ok', 'spam_ban_commit', 'device_status'];
+    'sys_diag', '_ai_ticket_ok', 'spam_ban_commit', 'device_status', 'abuse_commit'];
   -- دوال داخلية/تشخيصية: ما يستدعيها أي مستخدم أبدًا (الخادم بس)
   internal text[] := array[
     'ai_diag', 'bg_diag', 'ai_selftest_result', 'push_builds', 'push_config', 'push_drop_tokens', 'push_submit_sa',
@@ -11944,6 +11950,543 @@ revoke execute on function public._spam_guard() from public, anon, authenticated
 revoke execute on function public._spam_guard_profiles() from public, anon, authenticated;
 revoke execute on function public._spam_hide() from public, anon, authenticated;
 revoke execute on function public._spam_backfill_tick() from public, anon, authenticated;
+
+-- =====================================================================
+--  الإصدار 92: فلترة وحماية تلقائية شاملة (طلب المالك) — فوق حماية السبام (91). كله بالخادم وتلقائي:
+--  ١) حد للسرعة بالساعة على الرسائل والمنشورات والتعليقات (فوق حد الثواني القديم) ضد الإغراق والبوتات.
+--  ٢) ملفات وروابط التطبيقات (APK/EXE) ممنوعة، و«تحديث VYFRI» برابط مو رسمي = تصيّد → حظر نهائي.
+--  ٣) السبام الإباحي (كلام إباحي + رابط أو رقم أو معرّف سناب/تلي/انستا…) بالمحتوى العام → حظر نهائي.
+--     بالخاص: يمنع الرسالة بس (والحساب الجديد ينحظر). الشتائم العادية تبقى للمراجعة الذكية مثل قبل.
+--  ٤) البوتات: نفس الرسالة (بيها رابط/رقم/معرّف) لهواية محادثات أو منشورات خلال نص ساعة → تنمنع،
+--     والحساب الجديد اللي يعيدها بعد المنع → ينحظر. «عيد مبارك» لعشرين صديق ما يتأثر (ماكو رابط).
+--  ٥) انتحال الإدارة: أسماء مثل «الدعم الفني» و«VYFRI Support» و«admin» محجوزة (حساب أو كروب)،
+--     وعلامة التوثيق ✅ المزيفة تنشال من اسم أي حساب غير موثّق.
+--  ٦) سجل لكل إجراء تلقائي (منع أو حظر) + إحصائيات للمالك، وينظف نفسه بعد 60 يوم.
+-- =====================================================================
+
+-- ---------- أدوات النص ----------
+-- توحيد العربي: بدون تشكيل وتطويل وحروف مخفية، أ/إ/آ ← ا، ة ← ه، ى/ئ ← ي، أرقام عربية ← إنكليزية،
+-- وكل شي مو حرف أو رقم ← مسافة (الرموز والإيموجي بين الحروف ما تفيد للتمويه)
+create or replace function public._norm_ar(p text) returns text
+language sql immutable set search_path = public as $$
+  select btrim(regexp_replace(
+    translate(
+      regexp_replace(lower(normalize(coalesce(p, ''), NFKC)),
+        '[ً-ٰٟـ­͏؜​-‏‪-‮⁠-⁤﻿]', '', 'g'),
+      'أإآٱةىؤئکی٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', 'ااااهيويكي01234567890123456789'),
+    '[^ء-يٮ-ەۺ-ۿ0-9a-z]+', ' ', 'g'));
+$$;
+
+-- بالنص طريقة تواصل برّه التطبيق؟ رابط، موقع، رقم هاتف، أو معرّف بمنصة ثانية (سناب/تلي/واتس/انستا…).
+-- الإشارة العادية لصديق بالتطبيق (@اسمه) وحدها ما تنحسب.
+create or replace function public._has_contact(p text) returns boolean
+language plpgsql immutable set search_path = public as $$
+declare s text; n text;
+begin
+  if p is null or char_length(p) < 6 then return false; end if;
+  s := translate(lower(normalize(p, NFKC)), '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789');
+  s := regexp_replace(s, '[­͏؜​-‏‪-‮⁠-⁤﻿]', '', 'g');
+  if s ~ '(https?://|www\.|t\.me/|telegram\.(me|dog)/|wa\.me/|chat\.whatsapp\.com|bit\.ly/|tinyurl\.com/|cutt\.ly/)'
+     or s ~ '\m[a-z0-9-]{2,}\.(com|net|org|xyz|top|site|online|live|vip|club|link|info|me|io|app|ru|cn|cc|tk|shop|store|biz|fun|icu|buzz)\M' then
+    return true;
+  end if;
+  if s ~ '(\+|\m00)[ .-]*[1-9][0-9]{0,2}[ .-]*[0-9]{2,4}[ .-]*[0-9]{3,4}[ .-]*[0-9]{3,4}'
+     or s ~ '(^|[^0-9])07[0-9]{2}[ .-]*[0-9]{3}[ .-]*[0-9]{4}([^0-9]|$)' then
+    return true;
+  end if;
+  -- معرّف (@ali أو ali_99 أو sara.2000) + اسم منصة ثانية
+  if not (s ~ '@[a-z0-9_.]{3,}' or s ~ '\m[a-z][a-z0-9]*[_.0-9][a-z0-9_.]+') then return false; end if;
+  n := ' ' || _norm_ar(s) || ' ';
+  return n ~ ' (و|ف|ب|ل|ع)?(ال)?(سناب|سنابي|سنابشات|سناپ|snap|snapchat|تلي|تلكرام|تليكرام|تلغرام|تليغرام|تيليجرام|تيليكرام|تليجرام|telegram|واتس|واتساب|وتساب|واتسب|whatsapp|whats|انستا|انستي|انستكرام|انستغرام|انستقرام|انستجرام|instagram|insta|كيك|kik|تيكتوك|تكتوك|tiktok|فيسبوك|facebook|ديسكورد|discord|سكايب|skype|ايمو|imo|بيكو|bigo) ';
+end $$;
+
+-- كلام إباحي: 2 = كلمة صريحة قوية، 1 = كلمتين أخف مختلفة أو أكثر، 0 = ماكو.
+-- كلمات كاملة بس (مو جزء من كلمة)، مع حروف البداية (و/ف/ب/ل/ال): «والسكس» = «سكس».
+create or replace function public._sex_level(p text) returns int
+language plpgsql immutable set search_path = public as $$
+declare n text; w text; f text[]; t text; hit text[] := '{}';
+  s_terms constant text[] := array['سكس','سكسيه','ممحونه','ممحون','ممحونات','منيوك','منيوكه','منيوكات','نياكه',
+    'xnxx','xvideos','pornhub','porno','onlyfans','nudes','xhamster','brazzers'];
+  w_terms constant text[] := array['نيك','نيكني','نيج','نيجني','شرموطه','شرموط','قحبه','عاهره','بزاز','طيز','نودز',
+    'سكسي','sex','sexy','horny','xxx','nude','escort','porn'];
+begin
+  if p is null or char_length(p) < 3 then return 0; end if;
+  n := _norm_ar(p);
+  if n = '' then return 0; end if;
+  foreach w in array string_to_array(n, ' ') loop
+    f := array[w];
+    if left(w, 1) in ('و', 'ف', 'ب', 'ل') then
+      f := f || substr(w, 2);
+      if substr(w, 2, 2) = 'ال' then f := f || substr(w, 4); end if;
+    end if;
+    if left(w, 2) = 'ال' then f := f || substr(w, 3); end if;
+    if f && s_terms then return 2; end if;
+    if f && w_terms then
+      select x into t from unnest(f) x where x = any(w_terms) limit 1;
+      if not (t = any(hit)) then hit := hit || t; end if;
+    end if;
+  end loop;
+  return case when cardinality(hit) >= 2 then 1 else 0 end;
+end $$;
+
+-- روابط التطبيقات: null | apk_link (منع) | fake_update (تصيّد ← حظر) | fake_update_soft (منع)
+-- الروابط الرسمية (GitHub التطبيق، قناة التلكرام، خادم التطبيق) ما تتأثر.
+create or replace function public._apk_kind(p text) returns text
+language plpgsql immutable set search_path = public as $$
+declare s text := lower(normalize(coalesce(p, ''), NFKC)); n text;
+  apk boolean; filehost boolean; tgl boolean; brand boolean; upd boolean; modv boolean;
+begin
+  if char_length(s) < 6 then return null; end if;
+  s := regexp_replace(s, '[­͏؜​-‏‪-‮⁠-⁤﻿]', '', 'g');
+  if s !~ '(apk|mediafire|mega\.nz|drive\.google|dropbox|4shared|gofile|pixeldrain|sendspace|wetransfer|we\.tl|files\.fm|terabox|mixdrop|krakenfiles|1fichier|t\.me/|telegram\.(me|dog)/|an1\.com|happymod|uptodown|modyolo|rexdl|revdl|5play)' then
+    return null;
+  end if;
+  -- نشيل الروابط الرسمية أول
+  s := regexp_replace(s, '(https?://)?(www\.)?(github\.com/almajhool-dev|almajhool-dev\.github\.io|smjkxsqvdpywumghvnfv\.supabase\.co|t\.me/ikd5n)[^\s]*', ' ', 'g');
+  apk := s ~ '(https?://|www\.|\m[a-z0-9-]+\.[a-z]{2,}/)[^\s]*\.(apk|xapk|apks|apkm)(\?|#|/|\s|$)'
+      or s ~ '\m(apkpure|uptodown|apkcombo|apkmirror|happymod|an1|apkmody|liteapks|apkdone|modyolo|apkmb|rexdl|revdl|apktodo|apkfab|getmodsapk|5play)\.[a-z]{2,}'
+      or s ~ '\m[a-z0-9-]*apk[a-z0-9-]*\.(com|net|org|io|co|me|app|xyz|top|site|info|pro|club|vip|ru|cc|tk)\M';
+  filehost := s ~ '(mediafire\.com|mega\.nz|drive\.google\.com|dropbox\.com|4shared\.com|gofile\.io|pixeldrain\.com|sendspace\.com|wetransfer\.com|we\.tl/|files\.fm|terabox\.com|mixdrop\.|krakenfiles\.com|1fichier\.com)';
+  tgl := s ~ '(t\.me/|telegram\.(me|dog)/)';
+  if not (apk or filehost or tgl) then return null; end if;
+  n := ' ' || _norm_ar(s) || ' ';
+  brand := s ~ 'vyfri' or n ~ ' (و|ف|ب|ل)?(فيفري|فايفري|المجهول) ';
+  upd := n ~ ' (و|ف|ب|ل)?(ال)?(تحديث|تحديثات|نسخه|اصدار|update|updated|version|apk|mod|مهكر|مهكره|بلس|plus|pro|gold|premium|vip|مدفوع|مدفوعه|مفتوح|مفتوحه|unlocked|cracked|كراك|جديد|جديده|new) ';
+  modv := n ~ ' (و|ف|ب|ل)?(ال)?(mod|مهكر|مهكره|بلس|plus|gold|premium|vip|مدفوع|مدفوعه|مفتوح|مفتوحه|unlocked|cracked|كراك|هكر) ';
+  if brand and upd and apk then return 'fake_update'; end if;
+  if brand and modv and (filehost or tgl) then return 'fake_update'; end if;
+  if apk then return 'apk_link'; end if;
+  if brand and upd and (filehost or tgl) then return 'fake_update_soft'; end if;
+  return null;
+end $$;
+
+-- أسماء الإدارة المحجوزة (الاسم الظاهر أو اسم كروب)
+create or replace function public._reserved_name(p text) returns boolean
+language sql immutable set search_path = public as $$
+  select (' ' || _norm_ar(p) || ' ') ~ ' (admin|administrator|moderator|support|official|staff|ادمن|الادمن|الاداره|اداره التطبيق|اداره فيفري|الدعم الفني|دعم فني|الدعم الرسمي|فريق الدعم|خدمه العملاء|المبرمج المجهول|الحساب الرسمي|حساب رسمي|مشرف التطبيق) '
+      or lower(normalize(coalesce(p, ''), NFKC)) ~ 'vyfri';
+$$;
+-- أسماء المستخدم المحجوزة (vyfri بأي مكان، أو admin/support… ككلمة: badminton عادي)
+create or replace function public._reserved_username(p text) returns boolean
+language sql immutable as $$
+  select lower(coalesce(p, '')) ~ 'vyfri'
+      or lower(coalesce(p, '')) ~ '(^|[_.0-9])(admin|administrator|support|official|moderator|staff|helpdesk|security)([_.0-9]|$)';
+$$;
+
+-- كم محادثة/منشور ثاني وصله نفس النص من هذا الحساب خلال نص ساعة
+create or replace function public._blast_count(p_table text, p_uid uuid, p_target uuid, p_txt text) returns int
+language plpgsql stable security definer set search_path = public as $$
+declare h text := md5(_norm_ar(p_txt)); n int := 0; len int := char_length(p_txt);
+  tol int := greatest(12, char_length(p_txt) / 4);
+begin
+  -- الطول يتقارن أول (رخيص)، والتوحيد بس للرسائل اللي طولها قريب
+  if p_table = 'messages' then
+    select count(distinct m.conversation_id) into n from (
+      select conversation_id, content from messages
+       where sender_id = p_uid and created_at > now() - interval '30 minutes' and not deleted
+       order by created_at desc limit 200) m
+     where m.conversation_id is distinct from p_target and abs(char_length(m.content) - len) <= tol
+       and md5(_norm_ar(m.content)) = h;
+  elsif p_table = 'post_comments' then
+    select count(distinct c.post_id) into n from (
+      select post_id, content from post_comments
+       where author_id = p_uid and created_at > now() - interval '30 minutes'
+       order by created_at desc limit 200) c
+     where c.post_id is distinct from p_target and abs(char_length(c.content) - len) <= tol
+       and md5(_norm_ar(c.content)) = h;
+  end if;
+  return coalesce(n, 0);
+end $$;
+
+-- ---------- السجل ----------
+create table if not exists public.abuse_log (
+  id bigserial primary key,
+  at timestamptz not null default now(),
+  user_id uuid,
+  kind text not null,
+  action text not null,
+  source text,
+  snippet text
+);
+create index if not exists idx_abuse_log_at on public.abuse_log(at desc);
+create index if not exists idx_abuse_log_user on public.abuse_log(user_id, kind, at desc);
+alter table public.abuse_log enable row level security;
+-- ماكو سياسات: الخادم بس يقرا ويكتب
+alter table public.spam_bans add column if not exists kind text not null default 'gray';
+
+-- ---------- القرار ----------
+-- يرجّع null (عادي) أو {kind, action: ban|block, msg}
+create or replace function public._abuse_check(p_table text, p_op text, j jsonb, p_txt text, p_uid uuid,
+                                               p_trusted boolean, p_created timestamptz) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare k text; n int; lvl int; strikes int; tgt uuid; contact boolean;
+  pub boolean := p_table <> 'messages';
+  fresh boolean := p_created is not null and p_created > now() - interval '3 days';
+begin
+  if _gray_spam(p_txt) then
+    return jsonb_build_object('kind', 'gray', 'action', 'ban', 'msg', 'هذا المحتوى ممنوع (سبام) وتم حظر الحساب نهائيًا');
+  end if;
+  contact := _has_contact(p_txt);
+  if contact then
+    lvl := _sex_level(p_txt);
+    if lvl = 2 and (pub or fresh) or lvl = 1 and pub then
+      return jsonb_build_object('kind', 'sex_spam', 'action', 'ban', 'msg', 'سبام إباحي ممنوع وتم حظر الحساب نهائيًا');
+    elsif lvl = 2 then
+      return jsonb_build_object('kind', 'sex_link', 'action', 'block', 'msg', 'روابط ومعرّفات المحتوى الإباحي ممنوعة');
+    end if;
+  end if;
+  if p_trusted then return null; end if;  -- المشرفين: بس الحظر فوق
+  if p_table = 'messages' and coalesce(j->>'type', '') = 'file'
+     and lower(coalesce(j->>'file_name', '')) ~ '\.(apk|xapk|apks|apkm|aab|exe|msi|bat|cmd|com|scr|pif|jar|vbs|vbe|js|jse|wsf|ps1|hta|dll|cpl|lnk|reg|sh|ipa|dmg|pkg)\s*$' then
+    return jsonb_build_object('kind', 'exe_file', 'action', 'block',
+      'msg', 'إرسال ملفات التطبيقات والبرامج (APK/EXE) ممنوع حفاظًا على أمان الكل');
+  end if;
+  k := _apk_kind(p_txt);
+  if k = 'fake_update' then
+    return jsonb_build_object('kind', 'fake_update', 'action', 'ban', 'msg', 'رابط تحديث مزيف للتطبيق (تصيّد) — تم حظر الحساب نهائيًا');
+  elsif k = 'apk_link' then
+    return jsonb_build_object('kind', 'apk_link', 'action', 'block',
+      'msg', 'روابط ملفات التطبيقات (APK) ممنوعة حفاظًا على أمانكم — نزّلوا التطبيقات من المتجر، وتحديث VYFRI ينزل من داخل التطبيق');
+  elsif k = 'fake_update_soft' then
+    return jsonb_build_object('kind', 'fake_update', 'action', 'block',
+      'msg', 'تحديثات VYFRI الرسمية تنزل من داخل التطبيق أو قناته الرسمية بس');
+  end if;
+  -- بوت: نفس الرسالة (بيها رابط/رقم/معرّف) لهواية محادثات أو منشورات خلال نص ساعة
+  if contact and p_op = 'INSERT' and p_table in ('messages', 'post_comments') and p_uid is not null
+     and char_length(btrim(coalesce(j->>'content', ''))) >= 12 then
+    tgt := case p_table when 'messages' then (j->>'conversation_id')::uuid else (j->>'post_id')::uuid end;
+    n := _blast_count(p_table, p_uid, tgt, j->>'content');
+    if n >= (case when p_table = 'messages' and not fresh then 7 else 4 end) then
+      select count(*) into strikes from abuse_log
+       where user_id = p_uid and kind = 'bot_blast' and at > now() - interval '1 day';
+      if fresh and strikes >= 2 then
+        return jsonb_build_object('kind', 'bot_blast', 'action', 'ban',
+          'msg', 'بوت سبام: نفس الرسالة لهواية ناس رغم المنع — تم حظر الحساب نهائيًا');
+      end if;
+      return jsonb_build_object('kind', 'bot_blast', 'action', 'block',
+        'msg', 'نفس الرسالة (بيها رابط أو رقم أو معرّف) انرسلت لهواية ناس خلال نص ساعة — هذا سبام، انتظر شوية');
+    end if;
+  end if;
+  return null;
+end $$;
+
+-- ---------- تنفيذ الحظر (نفس 91، وهسه يعرف نوع السبب) ----------
+create or replace function public._spam_ban_local(p_uid uuid, p_src text, p_txt text, p_row_done boolean default false) returns void
+language plpgsql security definer set search_path = public as $$
+declare me profiles; k text := coalesce(nullif(current_setting('app.abuse_kind', true), ''), 'gray');
+begin
+  select * into me from profiles where id = p_uid;
+  if me.id is null or me.is_owner then return; end if;
+  insert into spam_bans(user_id, source, snippet, kind) values (p_uid, left(p_src, 40), left(p_txt, 600), left(k, 30))
+    on conflict (user_id) do update set banned_at = now(), hits = spam_bans.hits + 1,
+      source = excluded.source, snippet = excluded.snippet, kind = excluded.kind;
+  if not me.is_banned then
+    if not p_row_done then
+      perform set_config('app.trusted', '1', true);
+      update profiles set is_banned = true, warnings = greatest(warnings, 4) where id = p_uid;
+      perform set_config('app.trusted', '', true);
+    end if;
+    begin
+      insert into notifications(user_id, type, title, body, data)
+        select o.id, 'warning',
+               '🚫 حظر تلقائي: ' || case k when 'sex_spam' then 'سبام إباحي' when 'fake_update' then 'رابط تحديث مزيف'
+                                          when 'bot_blast' then 'بوت سبام' else 'سبام' end,
+               '@' || me.username || ' ' || case k
+                 when 'sex_spam' then 'نشر سبام إباحي (كلام إباحي + رابط أو رقم أو معرّف)'
+                 when 'fake_update' then 'نشر رابط تحديث مزيف للتطبيق (تصيّد)'
+                 when 'bot_blast' then 'بوت يرسل نفس الرسالة لهواية ناس'
+                 else 'نشر رسائل سبام (تجارة رمادية)' end || ' — انحظر نهائيًا هو وأجهزته.',
+               jsonb_build_object('user_id', p_uid)
+          from profiles o where o.is_owner limit 1;
+    exception when others then null;
+    end;
+  end if;
+  -- كل أجهزته (حتى لو چان محظور من قبل) + قطع كل جلساته
+  insert into banned_devices(device_id, user_id)
+    select device_id, p_uid from user_devices where user_id = p_uid on conflict do nothing;
+  perform _kill_sessions(p_uid);
+end $$;
+
+create or replace function public._abuse_log(p_uid uuid, p_kind text, p_action text, p_src text, p_txt text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into abuse_log(user_id, kind, action, source, snippet)
+    values (p_uid, left(p_kind, 30), left(p_action, 10), left(p_src, 40), left(p_txt, 600));
+  if p_action = 'ban' and p_uid is not null then
+    perform set_config('app.abuse_kind', left(p_kind, 30), true);
+    perform _spam_ban_local(p_uid, p_src, p_txt);
+    perform set_config('app.abuse_kind', '', true);
+  end if;
+end $$;
+
+-- الحفظ المستقل (نفس فكرة 91): الخادم يتصل بنفسه، فالسجل والحظر يثبتون حتى لو الطلب الأصلي انرفض
+create or replace function public.abuse_commit(p_key text, p_uid uuid, p_kind text, p_action text, p_src text, p_snip text)
+returns boolean language plpgsql security definer set search_path = public as $$
+declare k text := (select value from private_settings where key = 'spam_key');
+begin
+  if k is null or char_length(k) < 64 or p_key is distinct from k or p_uid is null
+     or p_action is null or p_action not in ('ban', 'block') then return false; end if;
+  perform _abuse_log(p_uid, p_kind, p_action, p_src, p_snip);
+  return true;
+end $$;
+revoke execute on function public.abuse_commit(text, uuid, text, text, text, text) from public, authenticated;
+grant execute on function public.abuse_commit(text, uuid, text, text, text, text) to anon;
+
+create or replace function public._abuse_commit_remote(p_uid uuid, p_kind text, p_action text, p_src text, p_txt text)
+returns boolean language plpgsql security definer set search_path = public, extensions as $$
+declare r extensions.http_response;
+begin
+  perform set_config('http.timeout_msec', '6000', true);
+  r := extensions.http((
+    'POST', 'https://smjkxsqvdpywumghvnfv.supabase.co/rest/v1/rpc/abuse_commit',
+    array[extensions.http_header('apikey', 'sb_publishable_xqWRKqnOIKKqKgPJrdP5TA_GA7PCSiV')],
+    'application/json',
+    jsonb_build_object('p_key', (select value from private_settings where key = 'spam_key'), 'p_uid', p_uid,
+                       'p_kind', p_kind, 'p_action', p_action, 'p_src', p_src, 'p_snip', left(p_txt, 600))::text
+  )::extensions.http_request);
+  return r.status between 200 and 299 and coalesce(r.content, '') like 'true%';
+exception when others then return false;
+end $$;
+
+-- ---------- الحارس العام (يحل محل نسخة 91 — نفس الجداول والحراس) ----------
+create or replace function public._spam_guard() returns trigger
+language plpgsql security definer set search_path = public, extensions as $$
+declare uid uuid := auth.uid(); j jsonb := to_jsonb(new); txt text := ''; i int; col text; me profiles; v jsonb;
+begin
+  if uid is null then return new; end if;  -- شغل الخادم نفسه
+  for i in 0 .. tg_nargs - 1 loop
+    txt := txt || E'\n' || coalesce(j->>tg_argv[i], '');
+  end loop;
+  if char_length(btrim(txt)) < 4 then return new; end if;
+  select * into me from profiles where id = uid;
+  if coalesce(me.is_owner, false) then return new; end if;
+  -- كروب باسم الإدارة (انتحال)
+  if tg_table_name = 'conversations' and not coalesce(me.is_admin, false)
+     and (tg_op = 'INSERT' or (j->>'name') is distinct from (to_jsonb(old)->>'name'))
+     and _reserved_name(j->>'name') then
+    raise exception 'blocked_content: هذا الاسم محجوز للإدارة — اختر اسم ثاني' using errcode = 'P0001';
+  end if;
+  v := _abuse_check(tg_table_name, tg_op, j, txt, uid, coalesce(me.is_admin, false), me.created_at);
+  if v is null then return new; end if;
+  -- حساب محظور أصلًا: يرفض بدون أي اتصال داخلي (حتى ما يكدر يستنزف الخادم بالمحاولات)
+  if coalesce(me.is_banned, false) then
+    raise exception 'blocked_spam: %', v->>'msg' using errcode = 'P0001';
+  end if;
+  if v->>'action' = 'block' then
+    -- بالسجل للمالك (أفضل جهد) — لحد 20 بالساعة لكل حساب، حتى المحاولات المتكررة ما تستنزف الخادم
+    if (select count(*) from (select 1 from abuse_log where user_id = uid and at > now() - interval '1 hour' limit 20) x) < 20 then
+      perform _abuse_commit_remote(uid, v->>'kind', 'block', tg_table_name, txt);
+    end if;
+    raise exception 'blocked_content: %', v->>'msg' using errcode = 'P0001';
+  end if;
+  -- حظر: ينحفظ بمعاملة مستقلة، وبعدها نرفض المحتوى كليًا
+  if _abuse_commit_remote(uid, v->>'kind', 'ban', tg_table_name, txt) then
+    raise exception 'blocked_spam: %', v->>'msg' using errcode = 'P0001';
+  end if;
+  -- احتياط إذا الاتصال الداخلي ما نجح: نحظر بنفس المعاملة، والمحتوى ينحفظ مخفي وفارغ (ما يطلع لأحد)
+  perform _abuse_log(uid, v->>'kind', 'ban', tg_table_name, txt);
+  for i in 0 .. tg_nargs - 1 loop
+    col := tg_argv[i];
+    if j->>col is not null then j := jsonb_set(j, array[col], to_jsonb('🚫'::text)); end if;
+  end loop;
+  if j ? 'deleted' then j := j || '{"deleted": true}'::jsonb; end if;
+  if j ? 'hidden' then j := j || '{"hidden": true}'::jsonb; end if;
+  if j ? 'removed_by_mod' then j := j || '{"removed_by_mod": true}'::jsonb; end if;
+  if tg_table_name = 'stories' then j := j || jsonb_build_object('expires_at', now()); end if;
+  perform set_config('app.spam_row', tg_table_name || ':' || coalesce(j->>'id', ''), true);
+  new := jsonb_populate_record(new, j);
+  return new;
+end $$;
+
+-- ---------- الحسابات: انتحال الإدارة + علامة التوثيق المزيفة + السبام بالاسم أو البايو ----------
+create or replace function public._spam_guard_profiles() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := auth.uid(); txt text; k text; caller_staff boolean := false;
+  row_staff boolean := coalesce(new.is_admin, false) or coalesce(new.is_ai, false) or coalesce(new.is_owner, false);
+begin
+  if uid is null and tg_op <> 'INSERT' then return new; end if;  -- تعديل من الخادم نفسه
+  if coalesce(new.is_owner, false) then return new; end if;
+  if uid is not null then
+    select coalesce(p.is_admin, false) or coalesce(p.is_owner, false) into caller_staff from profiles p where p.id = uid;
+    caller_staff := coalesce(caller_staff, false);
+  end if;
+  if not (row_staff or caller_staff) then
+    -- علامة التوثيق ✅ بالاسم: بس للحسابات الموثّقة فعلًا
+    if not coalesce(new.is_verified, false) and new.display_name ~ '[✅☑✓✔]' then
+      new.display_name := coalesce(nullif(btrim(regexp_replace(new.display_name, '[✅☑✓✔]️?', '', 'g')), ''),
+                                   new.username);
+    end if;
+    if tg_op = 'INSERT' then
+      if _reserved_username(new.username) then
+        new.username := 'user_' || substr(replace(new.id::text, '-', ''), 1, 10);
+      end if;
+      if _reserved_name(new.display_name) then new.display_name := new.username; end if;
+    else
+      if new.display_name is distinct from old.display_name and _reserved_name(new.display_name) then
+        raise exception 'blocked_content: هذا الاسم محجوز للإدارة — اختر اسم ثاني' using errcode = 'P0001';
+      end if;
+      if new.username is distinct from old.username and _reserved_username(new.username) then
+        raise exception 'blocked_content: اسم المستخدم هذا محجوز للإدارة — اختر اسم ثاني' using errcode = 'P0001';
+      end if;
+    end if;
+  end if;
+  txt := coalesce(new.display_name, '') || E'\n' || coalesce(new.bio, '');
+  if char_length(txt) < 10 then return new; end if;
+  k := case when _gray_spam(txt) then 'gray'
+            when _has_contact(txt) and _sex_level(txt) >= 1 then 'sex_spam' end;
+  if k is null then return new; end if;
+  new.display_name := new.username;
+  new.bio := '';
+  new.is_banned := true;
+  new.warnings := greatest(coalesce(new.warnings, 0), 4);
+  if tg_op = 'UPDATE' then
+    insert into abuse_log(user_id, kind, action, source, snippet) values (new.id, k, 'ban', 'profiles', left(txt, 600));
+    perform set_config('app.abuse_kind', k, true);
+    perform _spam_ban_local(new.id, 'profiles', txt, true);
+    perform set_config('app.abuse_kind', '', true);
+  else
+    -- حساب جديد: الصف بعده ما موجود، فنبلّغ المالك بس (الجهاز ينحظر أول ما يفتح التطبيق)
+    begin
+      insert into notifications(user_id, type, title, body, data)
+        select o.id, 'warning', '🚫 حظر تلقائي: سبام',
+               '@' || new.username || ' سجّل باسم أو بايو سبام' || case k when 'sex_spam' then ' (إباحي)' else ' (تجارة رمادية)' end
+               || ' — انحظر من أول لحظة.',
+               jsonb_build_object('user_id', new.id)
+          from profiles o where o.is_owner limit 1;
+    exception when others then null;
+    end;
+  end if;
+  return new;
+end $$;
+drop trigger if exists zz_spam_guard on public.profiles;
+create trigger zz_spam_guard before insert or update of display_name, bio, username on public.profiles
+  for each row execute function public._spam_guard_profiles();
+
+-- الأسماء القديمة: علامة التوثيق المزيفة وأسماء الإدارة تنشال (تعيد نفسها كل تحديث، وما تلمس إلا المخالف)
+update public.profiles
+   set display_name = case
+         when _reserved_name(display_name) then username
+         else coalesce(nullif(btrim(regexp_replace(display_name, '[✅☑✓✔]️?', '', 'g')), ''), username) end
+ where not coalesce(is_owner, false) and not coalesce(is_admin, false) and not coalesce(is_ai, false)
+   and ((not coalesce(is_verified, false) and display_name ~ '[✅☑✓✔]') or _reserved_name(display_name));
+
+-- شاشة التسجيل تسأل «الاسم متاح؟» — أسماء الإدارة تطلع غير متاحة
+create or replace function public.username_available(uname text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select not _reserved_username(uname) and not exists(select 1 from profiles where username = lower(uname));
+$$;
+grant execute on function public.username_available(text) to anon, authenticated;
+
+-- ---------- حد السرعة بالساعة (فوق حد الثواني القديم). المشرفين وشغل الخادم مستثنين ----------
+create or replace function public._flood_guard() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare uid uuid := auth.uid(); n int;
+begin
+  if uid is null then return new; end if;
+  if tg_table_name = 'messages' then
+    if new.type = 'system' then return new; end if;
+    select count(*) into n from (select 1 from messages where sender_id = uid and created_at > now() - interval '1 minute' limit 60) x;
+    if n >= 60 and not is_admin() then raise exception 'rate_limited: رسائل كثيرة خلال دقيقة، انتظر شوية'; end if;
+    select count(*) into n from (select 1 from messages where sender_id = uid and created_at > now() - interval '1 hour' limit 1500) x;
+    if n >= 1500 and not is_admin() then raise exception 'rate_limited: وصلت حد الرسائل لهالساعة، حاول بعد شوية'; end if;
+  elsif tg_table_name = 'posts' then
+    select count(*) into n from (select 1 from posts where author_id = uid and created_at > now() - interval '1 hour' limit 30) x;
+    if n >= 30 and not is_admin() then raise exception 'rate_limited: منشورات كثيرة خلال ساعة، حاول بعد شوية'; end if;
+  elsif tg_table_name = 'post_comments' then
+    select count(*) into n from (select 1 from post_comments where author_id = uid and created_at > now() - interval '1 hour' limit 300) x;
+    if n >= 300 and not is_admin() then raise exception 'rate_limited: تعليقات كثيرة خلال ساعة، حاول بعد شوية'; end if;
+  end if;
+  return new;
+end $$;
+do $$
+declare t text;
+begin
+  foreach t in array array['messages', 'posts', 'post_comments'] loop
+    begin
+      execute format('drop trigger if exists rl_flood on public.%I', t);
+      execute format('create trigger rl_flood before insert on public.%I for each row execute function public._flood_guard()', t);
+    exception when others then raise notice 'flood guard %: %', t, sqlerrm;
+    end;
+  end loop;
+end $$;
+
+-- ---------- لوحة المالك ----------
+create or replace function public.abuse_stats() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  return jsonb_build_object(
+    'day', coalesce((select jsonb_object_agg(kind, n) from (select kind, count(*) n from abuse_log
+                      where at > now() - interval '1 day' group by kind) d), '{}'::jsonb),
+    'week', coalesce((select jsonb_object_agg(kind, n) from (select kind, count(*) n from abuse_log
+                       where at > now() - interval '7 days' group by kind) w), '{}'::jsonb),
+    'bans_week', (select count(*) from abuse_log where action = 'ban' and at > now() - interval '7 days'),
+    'blocks_week', (select count(*) from abuse_log where action = 'block' and at > now() - interval '7 days'),
+    'recent', coalesce((select jsonb_agg(jsonb_build_object('at', a.at, 'kind', a.kind, 'action', a.action, 'source', a.source,
+                          'username', p.username, 'snippet', left(a.snippet, 160)) order by a.at desc)
+                        from (select * from abuse_log order by at desc limit 40) a left join profiles p on p.id = a.user_id), '[]'::jsonb));
+end $$;
+grant execute on function public.abuse_stats() to authenticated;
+
+create or replace function public.spam_bans_list() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  return coalesce((select jsonb_agg(jsonb_build_object(
+      'user_id', s.user_id, 'username', p.username, 'display_name', p.display_name, 'at', s.banned_at,
+      'hits', s.hits, 'source', s.source, 'kind', s.kind, 'snippet', left(s.snippet, 300), 'banned', p.is_banned,
+      'devices', (select count(*) from banned_devices d where d.user_id = s.user_id)) order by s.banned_at desc)
+    from (select * from spam_bans order by banned_at desc limit 200) s join profiles p on p.id = s.user_id), '[]'::jsonb);
+end $$;
+grant execute on function public.spam_bans_list() to authenticated;
+
+-- المالك يجرّب أي نص على كل الفلاتر (بدون ما ينحظر أحد): بالمحتوى العام وبالرسائل الخاصة
+create or replace function public.spam_test(p_text text) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare v jsonb; d jsonb;
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  v := _abuse_check('posts', 'TEST', jsonb_build_object('content', p_text), p_text, null, false, null);
+  d := _abuse_check('messages', 'TEST', jsonb_build_object('content', p_text, 'type', 'text'), p_text, null, false, null);
+  if v is null and _reserved_name(p_text) then
+    v := jsonb_build_object('kind', 'reserved_name', 'action', 'block', 'msg', 'اسم محجوز للإدارة (ما يكدر أحد يسمّي نفسه أو كروبه بيه)');
+  end if;
+  return coalesce(v, '{}'::jsonb) || jsonb_build_object('spam', v is not null or d is not null,
+    'dm_action', d->>'action', 'dm_msg', d->>'msg',
+    'terms', coalesce(_gray_spam_info(p_text)->'terms', '[]'::jsonb));
+end $$;
+grant execute on function public.spam_test(text) to authenticated;
+
+-- ملفات التطبيقات والبرامج (APK/EXE…) ما تنرفع أصلًا لمرفقات المحادثات (إلا للإدارة)
+drop policy if exists media_write on storage.objects;
+create policy media_write on storage.objects for insert to authenticated
+  with check (bucket_id = 'chat-media'
+              and public.can_send(((storage.foldername(name))[1])::uuid)
+              and (lower(name) !~ '\.(apk|xapk|apks|apkm|aab|exe|msi|bat|cmd|com|scr|pif|jar|vbs|vbe|js|jse|wsf|ps1|hta|dll|cpl|lnk|reg|sh|ipa|dmg|pkg)$'
+                   or public.is_admin()));
+
+-- السجل ينظف نفسه (أقدم من 60 يوم)
+do $$ begin
+  perform cron.schedule('almajhool-abuse-log-clean', '41 3 * * *',
+    'delete from public.abuse_log where at < now() - interval ''60 days''');
+exception when others then raise notice 'abuse log cron: %', sqlerrm;
+end $$;
+
+-- كل الأدوات الداخلية ما يوصلها أحد (حتى ما أحد يجرّب نصوصه عليها ليتجاوزها)
+revoke execute on function public._norm_ar(text) from public, anon, authenticated;
+revoke execute on function public._has_contact(text) from public, anon, authenticated;
+revoke execute on function public._sex_level(text) from public, anon, authenticated;
+revoke execute on function public._apk_kind(text) from public, anon, authenticated;
+revoke execute on function public._reserved_name(text) from public, anon, authenticated;
+revoke execute on function public._reserved_username(text) from public, anon, authenticated;
+revoke execute on function public._blast_count(text, uuid, uuid, text) from public, anon, authenticated;
+revoke execute on function public._abuse_check(text, text, jsonb, text, uuid, boolean, timestamptz) from public, anon, authenticated;
+revoke execute on function public._abuse_log(uuid, text, text, text, text) from public, anon, authenticated;
+revoke execute on function public._abuse_commit_remote(uuid, text, text, text, text) from public, anon, authenticated;
+revoke execute on function public._spam_ban_local(uuid, text, text, boolean) from public, anon, authenticated;
+revoke execute on function public._spam_guard() from public, anon, authenticated;
+revoke execute on function public._spam_guard_profiles() from public, anon, authenticated;
+revoke execute on function public._flood_guard() from public, anon, authenticated;
 
 -- =====================================================================
 --  الحارس الأمني (لازم يبقى آخر شي بالملف قبل تحديث ذاكرة API — أي إصدار جديد ينضاف فوقه):

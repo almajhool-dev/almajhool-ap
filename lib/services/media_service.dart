@@ -67,6 +67,17 @@ class MediaService {
     return PickedMedia(f, 'file', one.name, await f.length());
   }
 
+  /// ملفات التطبيقات والبرامج: ما تنرسل بالمحادثات (نفس قائمة الخادم)
+  static const _blockedExts = {
+    'apk', 'xapk', 'apks', 'apkm', 'aab', 'exe', 'msi', 'bat', 'cmd', 'com', 'scr', 'pif', 'jar', 'vbs', 'vbe',
+    'js', 'jse', 'wsf', 'ps1', 'hta', 'dll', 'cpl', 'lnk', 'reg', 'sh', 'ipa', 'dmg', 'pkg',
+  };
+  static const blockedFileMessage = 'إرسال ملفات التطبيقات والبرامج (APK/EXE) ممنوع حفاظًا على أمان الكل';
+  static bool isBlockedFile(String name) {
+    final i = name.trim().lastIndexOf('.');
+    return i >= 0 && _blockedExts.contains(name.trim().substring(i + 1).toLowerCase());
+  }
+
   static String _ext(String name) {
     final i = name.lastIndexOf('.');
     if (i < 0 || i == name.length - 1) return 'bin';
