@@ -18,8 +18,11 @@ void main() {
     return rb.debugSymmetricPaintCount + rb.debugAsymmetricPaintCount;
   }
 
+  // ساعة الخلفية تمشي بالوقت الحقيقي: نخلي وقت حقيقي صغير يعبر بين الإطارات
+  // (بدونه العدّ يعتمد على سرعة الجهاز والاختبار يفشل أحيانًا)
   Future<void> run(WidgetTester t, int frames) async {
     for (var i = 0; i < frames; i++) {
+      await t.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 3)));
       await t.pump(const Duration(milliseconds: 80));
     }
   }
