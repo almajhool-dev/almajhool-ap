@@ -12821,6 +12821,15 @@ revoke execute on function public.owner_set_fx_motion(boolean) from public, anon
 grant execute on function public.owner_set_fx_motion(boolean) to authenticated;
 
 -- =====================================================================
+--  الإصدار 97: تسريع عامل النشر التلقائي (صيانة — من تقرير الأداء perf_report).
+--  جدول ai_autoposts چان أكثر جدول ينقرا كله (~36 ألف قراءة كاملة): _autopost_tick كل دقيقة
+--  يحسب max(created_at) حسب الحالة والنوع، و_news_dup يدور أخبار آخر 3 أيام — كلها بدون فهرس.
+--  فهارس بس (بدون تغيير بالمنطق أو البيانات)، تنعاد بأمان بكل تحديث.
+-- =====================================================================
+create index if not exists ai_autoposts_created_idx on public.ai_autoposts(created_at);
+create index if not exists ai_autoposts_kind_created_idx on public.ai_autoposts(kind, created_at);
+
+-- =====================================================================
 --  الحارس الأمني (لازم يبقى آخر شي بالملف قبل تحديث ذاكرة API — أي إصدار جديد ينضاف فوقه):
 --  يسد أي دالة أو جدول انفتح للزائر بالغلط بأي إصدار.
 -- =====================================================================
