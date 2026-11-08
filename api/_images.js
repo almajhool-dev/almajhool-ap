@@ -28,7 +28,10 @@ async function search(query) {
     const m = ii.extmetadata || {};
     const lic = strip(m.LicenseShortName?.value);
     if (!lic || /non-free|fair use/i.test(lic)) return null;
-    return { url: ii.thumburl || ii.url, author: strip(m.Artist?.value).slice(0, 60), license: lic, title: p.title.replace(/^File:/, "") };
+    const title = p.title.replace(/^File:/, "");
+    // نص الصورة كامل (الاسم + الوصف + التصنيفات) حتى نحكم على مطابقتها للموضوع بدقة
+    const text = `${title} ${strip(m.ImageDescription?.value).slice(0, 400)} ${strip(m.Categories?.value).replace(/\|/g, " ")}`.toLowerCase().replace(/[_\-.]/g, " ");
+    return { url: ii.thumburl || ii.url, author: strip(m.Artist?.value).slice(0, 60), license: lic, title, text };
   }).filter(Boolean);
 }
 
@@ -46,11 +49,23 @@ async function download(c) {
   } catch { return null; } finally { clearTimeout(t); }
 }
 
-const STOP = new Set(["with", "from", "and", "the", "for", "into", "over", "under", "between", "photo", "image", "view", "system", "process"]);
-/** A Commons photo counts only if its file name mentions a meaningful word of the query (avoids off-topic pictures). */
+const STOP = new Set(["with", "from", "and", "the", "for", "into", "over", "under", "between", "photo", "image", "view", "system", "process",
+  "using", "based", "about", "their", "this", "that", "type", "types", "role", "effect", "effects", "impact", "analysis", "study", "overview",
+  "principle", "principles", "method", "methods", "design", "basic", "basics", "general", "modern", "different", "main", "important",
+  "its", "use", "new", "how", "why", "two", "one", "per", "via", "are", "was", "all", "any", "can", "not", "but", "has", "our", "out", "off", "top", "end", "key", "way", "set"]);
+// مواضيع ما تخص تقرير أكاديمي هندسي/علمي إلا إذا الموضوع نفسه يذكرها (يمنع صور حشرات ورياضة وأشخاص بتقرير نفط مثلًا)
+const OFF = /\b(insect|dragonfly|butterfl|moth|beetle|spider|bird|animal|mammal|reptile|flower|gymnast|athlet|sport|football|soccer|basketball|tennis|esport|gaming|concert|festival|wedding|portrait|selfie|actor|actress|singer|politician|celebrit|fashion|caster|streamer)/;
+const words = (q) => [...new Set(String(q).toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !STOP.has(w)).map((w) => (w.length > 4 ? w.replace(/(es|s)$/, "") : w)))];
+// الكلمات القصيرة (oil, gas, rig) لازم تجي ككلمة كاملة حتى ما تطابق soil أو right
+const has = (text, w) => new RegExp(`\\b${w}${w.length <= 4 ? "(e?s)?\\b" : ""}`).test(text);
+/** صورة Commons تُقبل فقط إذا نصها يذكر كلمتين مهمتين من الموضوع (أو الكلمة الوحيدة) وما بيها موضوع غريب عنه. */
 function relevant(c, query) {
-  const name = c.title.toLowerCase().replace(/[_\-.]/g, " ");
-  return query.toLowerCase().split(/\s+/).filter((w) => w.length > 3 && !STOP.has(w)).some((w) => name.includes(w.replace(/s$/, "")));
+  const ws = words(query);
+  if (!ws.length) return false;
+  const off = c.text.match(OFF);
+  if (off && !String(query).toLowerCase().includes(off[1])) return false;
+  const hits = ws.filter((w) => has(c.text, w)).length;
+  return hits >= Math.min(2, ws.length);
 }
 
 async function commonsImage(query, used) {

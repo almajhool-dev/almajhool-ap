@@ -55,7 +55,8 @@ async function processLogo(b64) {
 let opsReady = false;
 async function ensureOps() {
   if (opsReady) return;
-  await sql`CREATE TABLE IF NOT EXISTS gen_locks (user_id text PRIMARY KEY, until timestamptz NOT NULL)`;
+  await sql`CREATE TABLE IF NOT EXISTS gen_slots (id serial PRIMARY KEY, user_id text NOT NULL, until timestamptz NOT NULL)`;
+  await sql`CREATE INDEX IF NOT EXISTS gen_slots_user ON gen_slots (user_id)`;
   // رابط الملف المحفوظ حتى ينزّل المستخدم تقريره أي عدد مرات ومن أي جهاز
   await sql`ALTER TABLE reports ADD COLUMN IF NOT EXISTS file_url text, ADD COLUMN IF NOT EXISTS size integer`.catch(() => {});
   await sql`CREATE TABLE IF NOT EXISTS gen_errors (id serial PRIMARY KEY, user_id text, stage text, message text, at timestamptz NOT NULL DEFAULT now())`;
@@ -72,7 +73,7 @@ export const POST = route(async (request) => {
   const len = Number(request.headers.get("content-length") || 0);
   if (len > 4_450_000) throw new HttpError(413, "حجم الطلب كبير جدًا — صغّر الشعارات أو الملف المرفوع");
   const user = await requireUser(request);
-  // No report quota. Abuse protection only: a flood guard per network address and one report at a time per account.
+  // No report quota. Abuse protection only: a flood guard per network address and up to 3 reports in progress at once per account.
   await rateLimit(`ip:${clientIp(request)}`, 40, 600, "طلبات كثيرة جدًا من نفس الشبكة خلال دقائق، انتظر قليلًا.");
 
   const body = await request.json().catch(() => { throw new HttpError(400, "بيانات غير صالحة"); });
@@ -119,9 +120,11 @@ export const POST = route(async (request) => {
   setOidcToken(request.headers.get("x-vercel-oidc-token"));
 
   await ensureOps();
-  const [lock] = await sql`INSERT INTO gen_locks (user_id, until) VALUES (${user.id}, now() + interval '6 minutes')
-    ON CONFLICT (user_id) DO UPDATE SET until = EXCLUDED.until WHERE gen_locks.until < now() RETURNING user_id`;
-  if (!lock) throw new HttpError(429, "لديك تقرير قيد الإنشاء الآن — انتظر حتى يكتمل ثم أنشئ التالي.");
+  // ما اكو حد لعدد التقارير. بس نسمح بـ3 تقارير قيد الإنشاء بنفس اللحظة لكل حساب (حماية من الإغراق)،
+  // والحجز ينفك تلقائيًا بعد مدة الدالة القصوى حتى لو انقطع الاتصال.
+  const [slot] = await sql`INSERT INTO gen_slots (user_id, until) SELECT ${user.id}, now() + interval '320 seconds'
+    WHERE (SELECT count(*) FROM gen_slots WHERE user_id = ${user.id} AND until > now()) < 3 RETURNING id`;
+  if (!slot) throw new HttpError(429, "عندك 3 تقارير قيد الإنشاء الآن — انتظر حتى يكتمل واحد منها ثم أنشئ التالي.");
 
   const shared = sharedBrowser();
   let report, file, stage = "content";
@@ -144,7 +147,7 @@ export const POST = route(async (request) => {
     throw e;
   } finally {
     await shared.close();
-    await sql`DELETE FROM gen_locks WHERE user_id = ${user.id}`.catch(() => {});
+    await sql`DELETE FROM gen_slots WHERE id = ${slot.id} OR until < now()`.catch(() => {});
   }
   const name = `${report.title.slice(0, 80)}.${format}`;
   const stats = JSON.stringify({ ms: report.stats.ms, fail: report.stats.fail.length, refs: report.references.length, images: report.chapters.flatMap((c) => c.sections).filter((x) => x.image).length, kinds: report.chapters.flatMap((c) => c.sections).map((x) => x.image?.kind?.[0] || '-').join(''), source: !!source }).slice(0, 900);
