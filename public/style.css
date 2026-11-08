@@ -195,3 +195,4 @@ legend { font-weight: 700; color: var(--navy); padding: 0 8px; }
 #pv-logo2 { width: 30px; height: 30px; object-fit: contain; }
 .pv-names { display: flex !important; flex-direction: column; align-items: center; }
 @media (max-width: 640px) { .logos-grid { grid-template-columns: 1fr; } }
+.tag.dl{background:var(--accent,#1B2A6B);color:#fff;text-decoration:none;cursor:pointer;margin-inline-start:6px}

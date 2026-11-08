@@ -75,6 +75,15 @@ function renderDash() {
     tag.className = "tag";
     tag.textContent = FORMAT_LABEL[r.format] || r.format;
     m.append(tag);
+    // زر تنزيل لكل تقرير محفوظ — تنزيل غير محدود من أي جهاز
+    if (/^https:\/\//.test(r.file_url || "")) {
+      const a = document.createElement("a");
+      a.className = "tag dl";
+      a.href = r.file_url + (r.file_url.includes("?") ? "&" : "?") + "download=1";
+      a.textContent = "⬇ تحميل";
+      a.rel = "noopener";
+      m.append(a);
+    }
     li.append(t, m);
     list.append(li);
   }
@@ -455,17 +464,26 @@ async function generate(e) {
       const j = await res.json().catch(() => ({}));
       throw new Error(j.error || (res.status === 504 ? "انتهت مهلة الإنشاء. جرّب عددًا أقل من الصفحات." : "تعذّر إنشاء التقرير"));
     }
-    const blob = await res.blob();
-    if (state.fileUrl) URL.revokeObjectURL(state.fileUrl);
-    state.fileUrl = URL.createObjectURL(blob);
-    const fromHeader = decodeURIComponent((res.headers.get("Content-Disposition") || "").match(/filename\*=UTF-8''([^;]+)/)?.[1] || "");
-    const name = (fromHeader || `${(data.title || "report").slice(0, 80)}.${data.format}`).replace(/[\\/:*?"<>|]/g, "");
+    let href, openHref, size, name;
+    if ((res.headers.get("Content-Type") || "").includes("application/json")) {
+      // الملف محفوظ بالسحابة: رابط مباشر يشتغل بكل المتصفحات وينزل أي عدد مرات
+      const j = await res.json();
+      if (!/^https:\/\//.test(j.downloadUrl || "")) throw new Error("تعذّر تجهيز رابط التنزيل");
+      href = j.downloadUrl; openHref = j.url; size = j.size; name = j.name;
+    } else {
+      const blob = await res.blob();
+      if (state.fileUrl) URL.revokeObjectURL(state.fileUrl);
+      state.fileUrl = URL.createObjectURL(blob);
+      href = openHref = state.fileUrl; size = blob.size;
+      name = decodeURIComponent((res.headers.get("Content-Disposition") || "").match(/filename\*=UTF-8''([^;]+)/)?.[1] || "");
+    }
+    name = (name || `${(data.title || "report").slice(0, 80)}.${data.format}`).replace(/[\\/:*?"<>|]/g, "");
     const dl = $("#btn-download");
-    dl.href = state.fileUrl;
+    dl.href = href;
     dl.download = name;
-    $("#btn-open").href = state.fileUrl;
+    $("#btn-open").href = openHref;
     $("#btn-open").hidden = data.format !== "pdf"; // browsers can only preview PDF directly
-    $("#done-name").textContent = `${name} — ${(blob.size / 1024).toFixed(0)} KB`;
+    $("#done-name").textContent = `${name} — ${(size / 1024).toFixed(0)} KB`;
     $("#work-bar").style.width = "100%";
     $("#working").hidden = true;
     $("#done").hidden = false;

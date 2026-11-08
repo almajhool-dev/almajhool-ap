@@ -8,6 +8,7 @@ import { sharedBrowser } from "./_browser.js";
 import { removeBackground } from "./_logo.js";
 import { ensureTable } from "./style.js";
 import { cleanSource } from "./_source.js";
+import { put } from "@vercel/blob";
 
 const PALETTES = { navy: "1B2A6B", burgundy: "6D1A2A", emerald: "0F6B4F", charcoal: "36454F" };
 const BACKGROUNDS = { none: null, ivory: "FBF8F1", mist: "F4F7FB", sage: "F3F7F2" };
@@ -55,6 +56,8 @@ let opsReady = false;
 async function ensureOps() {
   if (opsReady) return;
   await sql`CREATE TABLE IF NOT EXISTS gen_locks (user_id text PRIMARY KEY, until timestamptz NOT NULL)`;
+  // رابط الملف المحفوظ حتى ينزّل المستخدم تقريره أي عدد مرات ومن أي جهاز
+  await sql`ALTER TABLE reports ADD COLUMN IF NOT EXISTS file_url text, ADD COLUMN IF NOT EXISTS size integer`.catch(() => {});
   await sql`CREATE TABLE IF NOT EXISTS gen_errors (id serial PRIMARY KEY, user_id text, stage text, message text, at timestamptz NOT NULL DEFAULT now())`;
   opsReady = true;
 }
@@ -143,15 +146,30 @@ export const POST = route(async (request) => {
     await shared.close();
     await sql`DELETE FROM gen_locks WHERE user_id = ${user.id}`.catch(() => {});
   }
-  await sql`INSERT INTO reports (user_id, title, lang, format, pages) VALUES (${user.id}, ${report.title}, ${lang}, ${format}, ${pages})`;
-
   const name = `${report.title.slice(0, 80)}.${format}`;
+  const stats = JSON.stringify({ ms: report.stats.ms, fail: report.stats.fail.length, refs: report.references.length, images: report.chapters.flatMap((c) => c.sections).filter((x) => x.image).length, kinds: report.chapters.flatMap((c) => c.sections).map((x) => x.image?.kind?.[0] || '-').join(''), source: !!source }).slice(0, 900);
+
+  // نحفظ الملف بالتخزين السحابي ونرجّع رابط مباشر: يتجاوز حد 4.5 ميغا لاستجابة الدالة
+  // ويشتغل بكل المتصفحات (حتى المتصفحات داخل التطبيقات) ويخلي التنزيل غير محدود من السجل.
+  let stored = null;
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    const safe = name.replace(/[\\/?#%"<>|*:\u0000-\u001f]+/g, " ").trim() || `report.${format}`;
+    const opts = { access: "public", addRandomSuffix: true, contentType: FORMATS[format].mime };
+    for (const path of [`reports/${safe}`, `reports/report.${format}`]) {
+      try { stored = await put(path, file, opts); break; } catch (e) { await logError(user.id, "blob", e); }
+    }
+  }
+  const size = file.byteLength ?? file.length ?? 0;
+  await sql`INSERT INTO reports (user_id, title, lang, format, pages, file_url, size) VALUES (${user.id}, ${report.title}, ${lang}, ${format}, ${pages}, ${stored?.url || null}, ${size})`;
+
+  if (stored) return json({ url: stored.url, downloadUrl: stored.downloadUrl, name, size, stats });
+  if (size > 4_300_000) throw new HttpError(500, "الملف كبير ولم يُحفظ بالتخزين — حاول مرة ثانية");
   return new Response(file, {
     headers: {
       "Content-Type": FORMATS[format].mime,
       "Content-Disposition": `attachment; filename="report.${format}"; filename*=UTF-8''${encodeURIComponent(name)}`,
       "Cache-Control": "no-store",
-      "X-Gen-Stats": JSON.stringify({ ms: report.stats.ms, fail: report.stats.fail.length, refs: report.references.length, images: report.chapters.flatMap((c) => c.sections).filter((x) => x.image).length, kinds: report.chapters.flatMap((c) => c.sections).map((x) => x.image?.kind?.[0] || '-').join(''), source: !!source }).slice(0, 900),
+      "X-Gen-Stats": stats,
     },
   });
 });
