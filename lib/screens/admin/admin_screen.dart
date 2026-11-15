@@ -24,6 +24,7 @@ import '../feed/community.dart';
 import '../live/live_screens.dart';
 import '../profile/profile_screens.dart';
 import 'ai_memory_screen.dart';
+import 'self_doctor_card.dart';
 
 /// لوحة تحكم المدير داخل التطبيق.
 class AdminScreen extends StatelessWidget {
@@ -170,6 +171,9 @@ class _OverviewState extends State<_Overview> {
           ),
           const SizedBox(height: 12),
           if (context.read<SessionProvider>().profile?.isOwner ?? false) ...[
+            // الطبيب الذاتي: صحة الخادم وشنو صلّح لحاله وشنو يحتاجك
+            const SelfDoctorCard(),
+            const SizedBox(height: 12),
             // حركة الخلفيات عند كل المستخدمين
             const Card(child: FxMotionSwitch()),
             const SizedBox(height: 12),

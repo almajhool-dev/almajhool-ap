@@ -12899,7 +12899,7 @@ declare
   me oid := (select oid from pg_roles where rolname = current_user);
   notify boolean := not coalesce(p_manual, false);
   n_fixed int := 0; n_alert int := 0; items jsonb := '[]'::jsonb;
-  jobs_ok int := 0; upd text := 'unknown'; rls_fixed int := 0; views_fixed int := 0; perms_fixed int := 0;
+  jobs_ok int := 0; jobs_total int := 0; upd text := 'unknown'; rls_fixed int := 0; views_fixed int := 0; perms_fixed int := 0;
   storage_ok text := 'ok'; failing int := 0; crashes int := 0; n int; fixed_new text[] := '{}';
   -- المهام اللي لازم تبقى شغالة دائمًا (البنية والحماية والإشعارات والمدفوعات والدخول) —
   -- مهام الذكاء الاصطناعي مو هنا لأن إطفاءها ممكن يكون مقصود (توفير)
@@ -12950,6 +12950,8 @@ begin
       insert into private_settings(key, value) values ('doctor_cron_baseline', base::text)
         on conflict (key) do update set value = excluded.value, updated_at = now();
     end if;
+    -- العدد الكلي = المهام الأساسية الموجودة فعلًا بهذا الخادم (اللي عمرها ما انضافت ما تنحسب ناقصة)
+    jobs_total := (select count(*) from unnest(critical) x where base ? x);
   exception when others then
     items := items || jsonb_build_object('kind', 'cron', 'action', 'error', 'detail', left(sqlerrm, 200));
   end;
@@ -13121,7 +13123,7 @@ begin
   begin
     insert into private_settings(key, value) values ('doctor', jsonb_build_object(
         'at', now(), 'manual', coalesce(p_manual, false), 'fixed', n_fixed, 'alerts', n_alert,
-        'checks', jsonb_build_object('jobs_ok', jobs_ok, 'jobs_total', array_length(critical, 1), 'update', upd,
+        'checks', jsonb_build_object('jobs_ok', jobs_ok, 'jobs_total', jobs_total, 'update', upd,
           'rls_fixed', rls_fixed, 'views_fixed', views_fixed, 'storage', storage_ok, 'perms_fixed', perms_fixed,
           'cron_failing', failing, 'crashes_1h', crashes))::text)
       on conflict (key) do update set value = excluded.value, updated_at = now();
@@ -13130,7 +13132,7 @@ begin
   end;
 
   return jsonb_build_object('at', now(), 'fixed', n_fixed, 'alerts', n_alert, 'items', items,
-    'checks', jsonb_build_object('jobs_ok', jobs_ok, 'jobs_total', array_length(critical, 1), 'update', upd,
+    'checks', jsonb_build_object('jobs_ok', jobs_ok, 'jobs_total', jobs_total, 'update', upd,
       'rls_fixed', rls_fixed, 'views_fixed', views_fixed, 'storage', storage_ok, 'perms_fixed', perms_fixed,
       'cron_failing', failing, 'crashes_1h', crashes));
 exception when others then
