@@ -12830,6 +12830,357 @@ create index if not exists ai_autoposts_created_idx on public.ai_autoposts(creat
 create index if not exists ai_autoposts_kind_created_idx on public.ai_autoposts(kind, created_at);
 
 -- =====================================================================
+--  الإصدار 98: «الطبيب الذاتي» — صيانة وحماية تلقائية من داخل الخادم نفسه (طلب المالك).
+--  يشتغل كل 5 دقايق داخل قاعدة البيانات (ببلاش، بدون أي أداة أو اشتراك خارجي) ويصلّح لحاله:
+--   1) مهام الخادم الأساسية (التحديث التلقائي، الحراس، الإشعارات، المدفوعات، الرقابة، الدخول...):
+--      إذا وحدة توقفت ترجع تشتغل، وإذا انمسحت ترجع تنضاف بنفس وقتها وأمرها (آخر نسخة شافها).
+--   2) أي جدول انشالت عنه حماية الصفوف (RLS) بالغلط ترجع تنحط.
+--   3) أي «عرض» (view) يكشف بيانات للزائر أو المستخدم بدون حماية ينسد.
+--   4) ملفات المحادثات الخاصة (chat-media) تبقى خاصة دائمًا.
+--   5) الحارس الأمني (صلاحيات الدوال والجداول) يشتغل كل 5 دقايق بدل كل ساعة.
+--  واللي ما يگدر يصلحه لحاله (يحتاج تعديل كود) يبلّغ المالك بإشعار — مرة وحدة لكل مشكلة:
+--   6) إذا التحديث التلقائي للخادم واگف بسبب خطأ بملف schema.sql.
+--   7) إذا مهمة مجدولة تفشل بشكل متكرر.
+--   8) إذا نفس الانهيار يتكرر عند المستخدمين (5 مرات أو أكثر بساعة).
+--  كل شي ينحفظ بسجل (maintenance_log) يشوفه المالك بلوحة التحكم ← «الطبيب الذاتي»، ويگدر يشغّل الفحص يدويًا.
+--  مهم: إذا شلت أو غيّرت اسم مهمة من قائمة critical بالمستقبل، لازم تغيّرها بقائمة _self_doctor هم
+--  (وإلا الطبيب يرجّعها).
+-- =====================================================================
+
+create table if not exists public.maintenance_log (
+  id bigint generated always as identity primary key,
+  at timestamptz not null default now(),
+  kind text not null,               -- cron / update / rls / view / storage / perms / crash
+  action text not null,             -- fixed = صلّحها لحاله، alert = تحتاج المالك
+  detail text not null default '',
+  key text                          -- مفتاح يمنع تكرار نفس التنبيه
+);
+alter table public.maintenance_log enable row level security;
+-- ماكو سياسات: المالك يقرا عن طريق doctor_report بس
+revoke all on public.maintenance_log from public, anon, authenticated;
+create index if not exists maintenance_log_key_idx on public.maintenance_log(key, at desc);
+
+-- تسجيل بالسجل (مرة وحدة لكل مفتاح خلال المدة). يرجّع true إذا انسجل شي جديد
+create or replace function public._doctor_note(p_kind text, p_action text, p_detail text, p_key text,
+  p_dedupe interval) returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  if p_key is not null and exists(select 1 from maintenance_log where key = p_key and at > now() - p_dedupe) then
+    return false;
+  end if;
+  insert into maintenance_log(kind, action, detail, key) values (p_kind, p_action, left(coalesce(p_detail, ''), 900), p_key);
+  return true;
+exception when others then return false;
+end $$;
+revoke execute on function public._doctor_note(text, text, text, text, interval) from public, anon, authenticated;
+
+-- إشعار للمالك بحد أعلى بالساعة لكل نوع: التنبيهات اللي تحتاجه (alert) 6، وملخصات التصليح (fixed) 3
+-- — فالتصليحات الكثيرة ما تغطي على تنبيه مهم
+create or replace function public._doctor_notify(p_action text, p_body text) returns void
+language plpgsql security definer set search_path = public as $$
+declare lim int := case when p_action = 'alert' then 6 else 3 end;
+begin
+  if (select count(*) from maintenance_log where action = 'notified' and kind = p_action and at > now() - interval '1 hour') >= lim then
+    return;
+  end if;
+  insert into maintenance_log(kind, action, detail) values (p_action, 'notified', '');
+  insert into notifications(user_id, type, title, body, data)
+    select o.id, 'warning', case when p_action = 'alert' then '🩺 الطبيب الذاتي يحتاجك' else '🩺 الطبيب الذاتي صلّح لحاله' end,
+           left(coalesce(p_body, ''), 300), jsonb_build_object('src', 'doctor', 'kind', p_action)
+      from profiles o where o.is_owner limit 1;
+exception when others then null;
+end $$;
+revoke execute on function public._doctor_notify(text, text) from public, anon, authenticated;
+
+create or replace function public._self_doctor(p_manual boolean default false) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  r record; t text; msg text; st text[]; sw jsonb; base jsonb; old_base text; maxrun bigint;
+  me oid := (select oid from pg_roles where rolname = current_user);
+  notify boolean := not coalesce(p_manual, false);
+  n_fixed int := 0; n_alert int := 0; items jsonb := '[]'::jsonb;
+  jobs_ok int := 0; upd text := 'unknown'; rls_fixed int := 0; views_fixed int := 0; perms_fixed int := 0;
+  storage_ok text := 'ok'; failing int := 0; crashes int := 0; n int; fixed_new text[] := '{}';
+  -- المهام اللي لازم تبقى شغالة دائمًا (البنية والحماية والإشعارات والمدفوعات والدخول) —
+  -- مهام الذكاء الاصطناعي مو هنا لأن إطفاءها ممكن يكون مقصود (توفير)
+  critical text[] := array['almajhool-auto-update', 'almajhool-minute-guard', 'almajhool-self-heal',
+    'almajhool-security-sweep', 'almajhool-push-watchdog', 'almajhool-push-prune', 'almajhool-cron-log-prune',
+    'almajhool-moderation', 'almajhool-topup-sweep', 'almajhool-live-cleanup', 'almajhool-abuse-log-clean',
+    'almajhool-media-filter', 'almajhool-streak-remind', 'almajhool-tg-login', 'almajhool-doctor'];
+begin
+  perform set_config('lock_timeout', '3s', true);
+
+  -- (1) مهام الخادم الأساسية: الموقوفة ترجع تشتغل، والمنمسحة ترجع بآخر وقت وأمر شافهم الطبيب
+  begin
+    select value into old_base from private_settings where key = 'doctor_cron_baseline';
+    begin base := coalesce(old_base::jsonb, '{}'::jsonb); exception when others then base := '{}'::jsonb; end;
+    for r in select jobid, jobname, schedule, command, active from cron.job where jobname = any(critical) loop
+      base := base || jsonb_build_object(r.jobname, jsonb_build_object('s', r.schedule, 'c', r.command));
+      if r.active then
+        jobs_ok := jobs_ok + 1;
+      else
+        begin
+          begin
+            perform cron.alter_job(job_id := r.jobid, active := true);
+          exception when undefined_function then
+            update cron.job set active = true where jobid = r.jobid;
+          end;
+          jobs_ok := jobs_ok + 1; n_fixed := n_fixed + 1;
+          msg := 'مهمة الخادم «' || r.jobname || '» چانت موقوفة ورجّعتها تشتغل.';
+          items := items || jsonb_build_object('kind', 'cron', 'action', 'fixed', 'detail', msg);
+          if _doctor_note('cron', 'fixed', msg, 'cron-on:' || r.jobname, interval '1 hour') then fixed_new := fixed_new || msg; end if;
+        exception when others then
+          items := items || jsonb_build_object('kind', 'cron', 'action', 'error', 'detail', r.jobname || ': ' || left(sqlerrm, 150));
+        end;
+      end if;
+    end loop;
+    for t in select x from unnest(critical) x
+              where not exists(select 1 from cron.job j where j.jobname = x) and base ? x loop
+      begin
+        perform cron.schedule(t, base->t->>'s', base->t->>'c');
+        jobs_ok := jobs_ok + 1; n_fixed := n_fixed + 1;
+        msg := 'مهمة الخادم «' || t || '» انمسحت ورجّعتها بنفس وقتها وأمرها.';
+        items := items || jsonb_build_object('kind', 'cron', 'action', 'fixed', 'detail', msg);
+        if _doctor_note('cron', 'fixed', msg, 'cron-back:' || t, interval '1 hour') then fixed_new := fixed_new || msg; end if;
+      exception when others then
+        items := items || jsonb_build_object('kind', 'cron', 'action', 'error', 'detail', t || ': ' || left(sqlerrm, 150));
+      end;
+    end loop;
+    if base::text is distinct from old_base then
+      insert into private_settings(key, value) values ('doctor_cron_baseline', base::text)
+        on conflict (key) do update set value = excluded.value, updated_at = now();
+    end if;
+  exception when others then
+    items := items || jsonb_build_object('kind', 'cron', 'action', 'error', 'detail', left(sqlerrm, 200));
+  end;
+
+  begin select max(runid) into maxrun from cron.job_run_details; exception when others then maxrun := null; end;
+
+  -- (2) التحديث التلقائي للخادم: إذا آخر محاولتين فشلن = خطأ بالملف يوقف كل التحديثات → ينبّه المالك
+  begin
+    if coalesce((select value from private_settings where key = 'auto_update_off'), '') = '1' then
+      upd := 'paused';
+    else
+      select array_agg(x.status order by x.runid desc), (array_agg(x.return_message order by x.runid desc))[1]
+        into st, msg
+        from (select d.runid, d.status, d.return_message
+                from cron.job_run_details d join cron.job j on j.jobid = d.jobid
+               where j.jobname = 'almajhool-auto-update' and d.runid > coalesce(maxrun, 0) - 10000
+                 and d.status in ('succeeded', 'failed')
+               order by d.runid desc limit 2) x;
+      if st is null or maxrun is null then
+        upd := 'unknown';
+      elsif st[1] = 'failed' and coalesce(st[2], 'failed') = 'failed' then
+        upd := 'fail'; n_alert := n_alert + 1;
+        msg := 'التحديث التلقائي للخادم واگف: آخر محاولتين فشلن بسبب خطأ بملف schema.sql: ' || left(coalesce(msg, ''), 300)
+               || ' — الخادم شغّال على آخر نسخة سليمة، بس أي تحديث جديد ما يوصل لحد ما ينصلّح هذا الخطأ.';
+        items := items || jsonb_build_object('kind', 'update', 'action', 'alert', 'detail', msg);
+        if _doctor_note('update', 'alert', msg, 'update-fail:' || md5(msg), interval '6 hours') and notify then
+          perform _doctor_notify('alert', 'التحديث التلقائي للخادم واگف بسبب خطأ بملف الخادم. التفاصيل بلوحة التحكم ← الطبيب الذاتي.');
+        end if;
+      else
+        upd := 'ok';
+      end if;
+    end if;
+  exception when others then
+    items := items || jsonb_build_object('kind', 'update', 'action', 'error', 'detail', left(sqlerrm, 200));
+  end;
+
+  -- (3) أي مهمة مجدولة تفشل بشكل متكرر (آخر تشغيل فشل، وربع التشغيلات الأخيرة أو آخر ثنين فشلن)
+  begin
+    for r in select j.jobname, count(*) n, count(*) filter (where d.status = 'failed') f,
+                    (array_agg(d.status order by d.runid desc))[1:2] last2,
+                    (array_agg(d.return_message order by d.runid desc) filter (where d.status = 'failed'))[1] m
+               from cron.job_run_details d join cron.job j on j.jobid = d.jobid
+              where maxrun is not null and d.runid > maxrun - 8000 and j.jobname like 'almajhool-%'
+                and j.jobname <> 'almajhool-auto-update' and d.status in ('succeeded', 'failed')
+              group by j.jobname loop
+      if r.last2[1] = 'failed' and ((r.n >= 10 and r.f * 4 >= r.n) or (r.n < 10 and coalesce(r.last2[2], '') = 'failed')) then
+        failing := failing + 1; n_alert := n_alert + 1;
+        msg := 'مهمة الخادم «' || r.jobname || '» تفشل بشكل متكرر (فشلت ' || r.f || ' من آخر ' || r.n || ' تشغيلات): '
+               || left(coalesce(r.m, ''), 250);
+        items := items || jsonb_build_object('kind', 'cron', 'action', 'alert', 'detail', msg);
+        if _doctor_note('cron', 'alert', msg, 'cron-fail:' || r.jobname, interval '12 hours') and notify then
+          perform _doctor_notify('alert', 'مهمة الخادم «' || r.jobname || '» تفشل بشكل متكرر. التفاصيل بلوحة التحكم ← الطبيب الذاتي.');
+        end if;
+      end if;
+    end loop;
+  exception when others then
+    items := items || jsonb_build_object('kind', 'cron', 'action', 'error', 'detail', left(sqlerrm, 200));
+  end;
+
+  -- (4) حماية الصفوف (RLS): كل جداول التطبيق لازم تكون محمية — اللي انشالت عنه بالغلط ترجع
+  begin
+    for r in select c.relname from pg_class c join pg_namespace s on s.oid = c.relnamespace
+              where s.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity and c.relowner = me
+                and not exists(select 1 from pg_depend d where d.objid = c.oid and d.deptype = 'e') loop
+      begin
+        execute format('alter table public.%I enable row level security', r.relname);
+        rls_fixed := rls_fixed + 1; n_fixed := n_fixed + 1;
+        msg := 'جدول «' || r.relname || '» انشالت عنه حماية الصفوف (RLS) ورجّعتها.';
+        items := items || jsonb_build_object('kind', 'rls', 'action', 'fixed', 'detail', msg);
+        if _doctor_note('rls', 'fixed', msg, 'rls:' || r.relname, interval '1 hour') then fixed_new := fixed_new || msg; end if;
+      exception when others then
+        items := items || jsonb_build_object('kind', 'rls', 'action', 'error', 'detail', r.relname || ': ' || left(sqlerrm, 150));
+      end;
+    end loop;
+  exception when others then
+    items := items || jsonb_build_object('kind', 'rls', 'action', 'error', 'detail', left(sqlerrm, 200));
+  end;
+
+  -- (5) العروض (views): تشتغل بصلاحية صاحبها فتتجاوز حماية الصفوف — أي عرض مفتوح للمستخدمين ينسد
+  begin
+    for r in select c.relname from pg_class c join pg_namespace s on s.oid = c.relnamespace
+              where s.nspname = 'public' and c.relkind in ('v', 'm') and c.relowner = me
+                and not exists(select 1 from pg_depend d where d.objid = c.oid and d.deptype = 'e')
+                and (has_table_privilege('anon', c.oid, 'select') or has_table_privilege('authenticated', c.oid, 'select'))
+                and (c.relkind = 'm' or not coalesce(array_to_string(c.reloptions, ',') ~* 'security_invoker=(true|on|1|yes)', false)) loop
+      begin
+        execute format('revoke all on public.%I from public, anon, authenticated', r.relname);
+        views_fixed := views_fixed + 1; n_fixed := n_fixed + 1;
+        msg := 'العرض «' || r.relname || '» چان يكشف بيانات بدون حماية الصفوف وانسد.';
+        items := items || jsonb_build_object('kind', 'view', 'action', 'fixed', 'detail', msg);
+        if _doctor_note('view', 'fixed', msg, 'view:' || r.relname, interval '1 hour') then fixed_new := fixed_new || msg; end if;
+      exception when others then
+        items := items || jsonb_build_object('kind', 'view', 'action', 'error', 'detail', r.relname || ': ' || left(sqlerrm, 150));
+      end;
+    end loop;
+  exception when others then
+    items := items || jsonb_build_object('kind', 'view', 'action', 'error', 'detail', left(sqlerrm, 200));
+  end;
+
+  -- (6) ملفات المحادثات الخاصة تبقى خاصة دائمًا
+  begin
+    update storage.buckets set public = false where id = 'chat-media' and public;
+    get diagnostics n = row_count;
+    if n > 0 then
+      storage_ok := 'fixed'; n_fixed := n_fixed + 1;
+      msg := 'مخزن ملفات المحادثات الخاصة (chat-media) انفتح للعامة بالغلط ورجّعته خاص.';
+      items := items || jsonb_build_object('kind', 'storage', 'action', 'fixed', 'detail', msg);
+      if _doctor_note('storage', 'fixed', msg, 'storage:chat-media', interval '1 hour') then fixed_new := fixed_new || msg; end if;
+    end if;
+  exception when others then
+    storage_ok := 'unknown';
+  end;
+
+  -- (7) الحارس الأمني: أي دالة أو جدول انفتح بالغلط ينسد (كل 5 دقايق بدل كل ساعة)
+  begin
+    sw := _security_sweep();
+    perms_fixed := coalesce((sw->>'functions_closed_for_visitors')::int, 0) + coalesce((sw->>'internal_closed')::int, 0)
+                   + coalesce((sw->>'tables_tightened')::int, 0);
+    if perms_fixed > 0 then
+      n_fixed := n_fixed + 1;
+      msg := 'انسدّت ' || perms_fixed || ' صلاحية انفتحت بالغلط (دوال مفتوحة للزائر: '
+             || coalesce(sw->>'functions_closed_for_visitors', '0') || '، دوال داخلية: ' || coalesce(sw->>'internal_closed', '0')
+             || '، جداول: ' || coalesce(sw->>'tables_tightened', '0') || ').';
+      items := items || jsonb_build_object('kind', 'perms', 'action', 'fixed', 'detail', msg);
+      if _doctor_note('perms', 'fixed', msg, 'perms:' || md5(sw::text), interval '1 hour') then fixed_new := fixed_new || msg; end if;
+    end if;
+  exception when others then
+    items := items || jsonb_build_object('kind', 'perms', 'action', 'error', 'detail', left(sqlerrm, 200));
+  end;
+
+  -- (8) انهيار يتكرر عند المستخدمين: نفس الخطأ 5 مرات أو أكثر بساعة → ينبّه المالك (الإصلاح يحتاج تعديل كود).
+  --     السجلات بدون أي هوية (رقم النسخة ونص الخطأ بس). النص يجي من الأجهزة فينشال منه أي رابط،
+  --     والإشعار نفسه ما بيه نص الخطأ (التفاصيل بلوحة التحكم بس).
+  begin
+    select count(*) into crashes from client_logs
+     where at > now() - interval '1 hour' and info ~ '^b\d+ (exit|dart:|flutter:|native:)' and info !~ '^b\d+ exit\+';
+    for r in
+      with l as (
+        select substring(info from '^b(\d+) ') b, substring(info from '^b\d+ ([a-z]+)') k,
+               regexp_replace(info, '^b\d+ \S+ ?(L\d+: ?)?', '') m
+          from client_logs
+         where at > now() - interval '1 hour' and info ~ '^b\d+ (exit|dart:|flutter:|native:)' and info !~ '^b\d+ exit\+'
+      )
+      select b, k, md5(left(regexp_replace(split_part(m, ' | ', 1), '[0-9a-fx]{4,}|[0-9]+', '#', 'gi'), 90)) sig,
+             min(m) sample, count(*) c
+        from l group by 1, 2, 3 having count(*) >= 5 order by count(*) desc limit 3
+    loop
+      n_alert := n_alert + 1;
+      msg := 'انهيار يتكرر عند المستخدمين بالنسخة b' || coalesce(r.b, '?') || ' (' || r.c || ' مرات آخر ساعة، نوع ' || r.k || '): '
+             || left(regexp_replace(split_part(r.sample, ' | ', 1), 'https?://\S+|www\.\S+', '[رابط]', 'gi'), 220);
+      items := items || jsonb_build_object('kind', 'crash', 'action', 'alert', 'detail', msg);
+      if _doctor_note('crash', 'alert', msg, 'crash:' || coalesce(r.b, '') || ':' || r.k || ':' || r.sig, interval '24 hours')
+         and notify then
+        perform _doctor_notify('alert', 'انهيار يتكرر عند المستخدمين بالنسخة b' || coalesce(r.b, '?') || ' (' || r.c
+          || ' مرات بساعة). تصليحه يحتاج تعديل بالكود — التفاصيل بلوحة التحكم ← الطبيب الذاتي.');
+      end if;
+    end loop;
+  exception when others then
+    items := items || jsonb_build_object('kind', 'crash', 'action', 'error', 'detail', left(sqlerrm, 200));
+  end;
+
+  -- التصليحات الجديدة توصل المالك بإشعار واحد (مو إشعار لكل تصليح)
+  if notify and cardinality(fixed_new) > 0 then
+    perform _doctor_notify('fixed', case when cardinality(fixed_new) = 1 then fixed_new[1]
+      else 'صلّح ' || cardinality(fixed_new) || ' مشاكل: ' || array_to_string(fixed_new, ' • ') end);
+  end if;
+
+  -- ملخص آخر فحص (تعرضه لوحة التحكم) + تنظيف السجل القديم
+  begin
+    insert into private_settings(key, value) values ('doctor', jsonb_build_object(
+        'at', now(), 'manual', coalesce(p_manual, false), 'fixed', n_fixed, 'alerts', n_alert,
+        'checks', jsonb_build_object('jobs_ok', jobs_ok, 'jobs_total', array_length(critical, 1), 'update', upd,
+          'rls_fixed', rls_fixed, 'views_fixed', views_fixed, 'storage', storage_ok, 'perms_fixed', perms_fixed,
+          'cron_failing', failing, 'crashes_1h', crashes))::text)
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+    delete from maintenance_log where at < now() - interval '30 days';
+  exception when others then null;
+  end;
+
+  return jsonb_build_object('at', now(), 'fixed', n_fixed, 'alerts', n_alert, 'items', items,
+    'checks', jsonb_build_object('jobs_ok', jobs_ok, 'jobs_total', array_length(critical, 1), 'update', upd,
+      'rls_fixed', rls_fixed, 'views_fixed', views_fixed, 'storage', storage_ok, 'perms_fixed', perms_fixed,
+      'cron_failing', failing, 'crashes_1h', crashes));
+exception when others then
+  return jsonb_build_object('error', left(sqlerrm, 200));
+end $$;
+revoke execute on function public._self_doctor(boolean) from public, anon, authenticated;
+
+-- للمالك بس: حالة الطبيب وآخر سجلاته (لوحة التحكم)
+create or replace function public.doctor_report() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare last jsonb;
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  begin last := (select value::jsonb from private_settings where key = 'doctor'); exception when others then last := null; end;
+  return jsonb_build_object(
+    'last', last,
+    'fixed_24h', (select count(*) from maintenance_log where action = 'fixed' and at > now() - interval '24 hours'),
+    'alerts_24h', (select count(*) from maintenance_log where action = 'alert' and at > now() - interval '24 hours'),
+    'log', coalesce((select jsonb_agg(jsonb_build_object('at', x.at, 'kind', x.kind, 'action', x.action, 'detail', x.detail)
+                                      order by x.id desc)
+                       from (select * from maintenance_log where action in ('fixed', 'alert') order by id desc limit 40) x),
+                    '[]'::jsonb));
+end $$;
+revoke execute on function public.doctor_report() from public, anon;
+grant execute on function public.doctor_report() to authenticated;
+
+-- للمالك بس: «افحص وصلّح هسه» (مرة كل 20 ثانية بالكثير). الفحص اليدوي ما يرسل إشعارات — النتيجة تطلع بالشاشة
+create or replace function public.doctor_run_now() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare prev timestamptz;
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  begin
+    prev := (select value::timestamptz from private_settings where key = 'doctor_manual_at');
+  exception when others then prev := null;
+  end;
+  if prev > now() - interval '20 seconds' then raise exception 'انتظر ثواني وجرّب مرة ثانية'; end if;
+  insert into private_settings(key, value) values ('doctor_manual_at', now()::text)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  return _self_doctor(true);
+end $$;
+revoke execute on function public.doctor_run_now() from public, anon;
+grant execute on function public.doctor_run_now() to authenticated;
+
+do $$ begin
+  perform cron.schedule('almajhool-doctor', '3-59/5 * * * *', 'select public._self_doctor()');
+exception when others then raise notice 'doctor cron: %', sqlerrm;
+end $$;
+
+-- =====================================================================
 --  الحارس الأمني (لازم يبقى آخر شي بالملف قبل تحديث ذاكرة API — أي إصدار جديد ينضاف فوقه):
 --  يسد أي دالة أو جدول انفتح للزائر بالغلط بأي إصدار.
 -- =====================================================================
