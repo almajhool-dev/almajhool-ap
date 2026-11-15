@@ -250,6 +250,11 @@ def patch_kts(path):
             s,
             count=1,
         )
+    if "checkReleaseBuilds" not in s:
+        # فحص lint وقت بناء نسخة الإصدار: lint بأدوات Flutter 3.50 يحتاج Java 21 وينهار على Java 17
+        # (firebase_core:lintVitalAnalyzeRelease → NoSuchMethodError List.removeLast). هذا فحص إضافي
+        # مو ضروري للبناء (flutter analyze يفحص الكود قبله)، فينطفي لنسخ الإصدار بس
+        s = re.sub(r"\n    defaultConfig\s*\{", "\n    lint {\n        checkReleaseBuilds = false\n    }\n\n    defaultConfig {", s, count=1)
     write(path, s)
     print("build.gradle.kts patched")
 
@@ -303,6 +308,9 @@ def patch_groovy(path):
             s,
             count=1,
         )
+    if "checkReleaseBuilds" not in s:
+        # نفس سبب نسخة kts فوق: lint الإصدار ينهار على Java 17 بأدوات Flutter 3.50
+        s = re.sub(r"\n    defaultConfig\s*\{", "\n    lint {\n        checkReleaseBuilds false\n    }\n\n    defaultConfig {", s, count=1)
     write(path, s)
     print("build.gradle patched")
 
