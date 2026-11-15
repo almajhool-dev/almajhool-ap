@@ -13183,6 +13183,775 @@ exception when others then raise notice 'doctor cron: %', sqlerrm;
 end $$;
 
 -- =====================================================================
+--  الإصدار 99: الطبيب الذاتي يفحص «كل شي» بالتطبيق، على طول عمر التطبيق، وكلشي بالعربي (طلب المالك).
+--  فوق فحوصات الإصدار 98 (مهام الخادم، التحديث، الحماية، الصلاحيات، الملفات الخاصة، الانهيارات) صار يفحص:
+--   • الإشعارات: جاهزية إشعارات Google ومفتاح الإرسال، والإشعارات على أجهزة النسخة المنشورة.
+--   • التطبيق عند المستخدمين: الأجهزة النشطة، نسخ التطبيق، خدمة الخلفية، والأخطاء اللي يشوفها المستخدمين.
+--   • الخادم بالعمق: الاتصالات، الاستعلامات العالقة، حجم القاعدة، الفهارس التالفة، العدّادات القريبة من حدها،
+--     الجداول المحتاجة تنظيف، وسرعة دوال التطبيق (بطء آخر ساعة، مو من البداية).
+--   • الأمان بالعمق: خزنة الأسرار والمحافظ مقفولة (ويقفلها لحاله)، المخازن العامة، مالك/مدير جديد،
+--     وأي تغيير بإعداد حساس (مفاتيح الخدمات، البث، المكالمات، الإشعارات، مكبح التحديث).
+--   • البيانات والفلوس: كل محفظة لازم تطابق دفتر الحسابات (يراقب بس، ما يلمس الفلوس أبدًا)،
+--     وطلبات السحب والشحن والبلاغات والطعون اللي تنتظر المالك.
+--   • الطوابير: المساعد الذكي، الترجمة، النشر التلقائي.
+--  كل النتائج بالعربي (أسماء المهام والجداول بالعربي، والأخطاء التقنية وياها شرح بالعربي). الخادم يرسل قائمة
+--  الفحوصات جاهزة والتطبيق يعرض أي شي يوصله — فأي فحص جديد مستقبلًا يطلع بالتطبيق بدون تحديث.
+--  سجل يومي دائمي (doctor_daily) لصحة التطبيق على طول عمره. الفحوصات الثقيلة كل ساعة والباقي كل 5 دقايق.
+--  حراسة متبادلة: الطبيب يرجّع «حارس الدقيقة» إذا وگف، وحارس الدقيقة يرجّع الطبيب.
+--  ما يلمس منطق الإشعارات ولا الفلوس — يراقبهن بس.
+-- =====================================================================
+
+create table if not exists public.doctor_daily (
+  day date primary key,                 -- اليوم بتوقيت بغداد
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table public.doctor_daily enable row level security;
+revoke all on public.doctor_daily from public, anon, authenticated;
+
+-- أسماء عربية للمهام والجداول والإعدادات (اللي ما إله اسم يبقى مثل ما هو)
+create or replace function public._ar_name(p text) returns text
+language sql immutable as $$
+  select coalesce('{
+    "almajhool-auto-update": "التحديث التلقائي للخادم", "almajhool-minute-guard": "حارس الدقيقة",
+    "almajhool-self-heal": "التنظيف الذاتي", "almajhool-security-sweep": "الحارس الأمني",
+    "almajhool-push-watchdog": "حارس الإشعارات", "almajhool-push-prune": "تنظيف رموز الإشعارات",
+    "almajhool-cron-log-prune": "تنظيف سجل المهام", "almajhool-moderation": "الرقابة على المحتوى",
+    "almajhool-topup-sweep": "متابعة الشحن والمدفوعات", "almajhool-live-cleanup": "تنظيف البث المباشر",
+    "almajhool-abuse-log-clean": "تنظيف سجل الإساءة", "almajhool-media-filter": "فلتر الصور والفيديو",
+    "almajhool-streak-remind": "تذكير الستريك", "almajhool-tg-login": "الدخول برقم الهاتف",
+    "almajhool-doctor": "الطبيب الذاتي", "almajhool-ai": "المساعد الذكي",
+    "almajhool-ai-personas": "منشورات حسابات الذكاء", "almajhool-ai-persona-replies": "ردود حسابات الذكاء",
+    "almajhool-ai-selftest": "فحص المساعد الذكي", "almajhool-autopost": "النشر التلقائي",
+    "almajhool-translate": "الترجمة", "almajhool-spam-backfill": "فحص السبام القديم",
+    "posts": "المنشورات", "post_comments": "التعليقات", "messages": "الرسائل", "conversations": "المحادثات",
+    "conversation_members": "أعضاء المحادثات", "profiles": "الحسابات", "notifications": "الإشعارات",
+    "wallets": "المحافظ", "ledger": "دفتر الحسابات", "withdrawals": "طلبات السحب", "manual_topups": "الشحن اليدوي",
+    "payment_intents": "المدفوعات", "gift_events": "الهدايا", "private_settings": "خزنة الأسرار",
+    "reports": "البلاغات", "mod_violations": "المخالفات", "lives": "البث المباشر", "call_sessions": "المكالمات",
+    "device_tokens": "أجهزة المستخدمين", "fcm_tokens": "رموز إشعارات Google", "client_logs": "سجل الأعطال",
+    "chat_streaks": "الستريك", "streak_marks": "علامات الستريك", "translations": "الترجمات",
+    "ai_jobs": "مهام المساعد الذكي", "ai_autoposts": "النشر التلقائي", "app_settings": "إعدادات التطبيق",
+    "app_themes": "الخلفيات", "maintenance_log": "سجل الطبيب", "doctor_daily": "سجل الصحة اليومي",
+    "chat-media": "ملفات المحادثات الخاصة", "avatars": "الصور الشخصية", "releases": "ملفات التحديث",
+    "fcm_sa": "ملف حساب إشعارات Google", "livekit_url": "رابط خادم البث", "livekit_key": "مفتاح خادم البث",
+    "livekit_secret": "سر خادم البث", "turn_user": "مستخدم خادم المكالمات", "turn_pass": "كلمة سر خادم المكالمات",
+    "auto_update_off": "مكبح التحديث التلقائي", "ai_key_openai": "مفتاح OpenAI", "ai_key_anthropic": "مفتاح Anthropic",
+    "ai_key_gemini": "مفتاح Gemini", "ai_key_groq": "مفتاح Groq", "ai_key_openrouter": "مفتاح OpenRouter",
+    "ai_key_cloudflare": "مفتاح Cloudflare"
+  }'::jsonb ->> p, p);
+$$;
+
+-- كل اسم بين «» يتحول لاسمه العربي
+create or replace function public._ar_text(p text) returns text
+language plpgsql immutable as $$
+declare s text := coalesce(p, ''); m text[];
+begin
+  for m in select regexp_matches(coalesce(p, ''), '«([A-Za-z0-9_.-]+)»', 'g') loop
+    s := replace(s, '«' || m[1] || '»', '«' || _ar_name(m[1]) || '»');
+  end loop;
+  return s;
+end $$;
+
+-- شرح عربي للأخطاء التقنية الشائعة (null = ما معروف)
+create or replace function public._ar_explain(p text) returns text
+language sql immutable as $$
+  select case
+    when coalesce(p, '') = '' then null
+    when p ~* 'null check operator' then 'قيمة فارغة (null) ما چانت متوقعة بالكود'
+    when p ~* 'type ''?null''? is not a subtype' then 'وصلت قيمة فارغة لمكان يحتاج قيمة'
+    when p ~* 'is not a subtype of' then 'نوع بيانات غير متوقع بالكود'
+    when p ~* 'rangeerror|index out of range|out of bounds' then 'محاولة وصول لعنصر برا حدود القائمة'
+    when p ~* 'setstate\(\) called after dispose' then 'تحديث شاشة بعد ما انسدّت'
+    when p ~* 'outofmemory|out of memory' then 'الذاكرة خلصت'
+    when p ~* 'sigsegv|sigabrt|native crash|tombstone|crash_native' then 'انهيار بالجزء الأصلي من التطبيق (أندرويد)'
+    when p ~* '\manr\M|not responding' then 'التطبيق علّق وما يستجيب'
+    when p ~* 'socketexception|failed host lookup|clientexception|connection (closed|reset|refused)|handshake|network is unreachable'
+      then 'مشكلة اتصال بالإنترنت'
+    when p ~* 'statement timeout|canceling statement' then 'استعلام بقاعدة البيانات طوّل وانقطع'
+    when p ~* 'timeout|timed out' then 'العملية طوّلت وانقطعت'
+    when p ~* 'permission denied for function' then 'صلاحية ناقصة على دالة بالخادم'
+    when p ~* 'permission denied|row-level security|42501' then 'صلاحية ناقصة بالخادم'
+    when p ~* 'pgrst202|could not find the function' then 'دالة يطلبها التطبيق مو موجودة بالخادم'
+    when p ~* 'syntax error' then 'خطأ كتابة بأوامر الخادم'
+    when p ~* 'deadlock' then 'تعارض أقفال بقاعدة البيانات'
+    when p ~* 'does not exist' then 'شي مطلوب مو موجود بقاعدة البيانات'
+    when p ~* 'duplicate key|23505' then 'محاولة حفظ شي مكرر'
+    when p ~* 'violates (check|foreign key|not-null)' then 'بيانات ما تنطبق عليها شروط الحفظ'
+    when p ~* 'too many connections|remaining connection slots' then 'الاتصالات بقاعدة البيانات خلصت'
+    when p ~* 'jwt|token.{0,20}expired' then 'جلسة الدخول منتهية'
+    when p ~* 'quota|rate.?limit|\m429\M' then 'وصلنا الحد المسموح (ضغط أو حصة الخدمة)'
+    when p ~* '\m(401|403)\M|unauthori[sz]ed|forbidden' then 'الخدمة رفضت الصلاحية'
+    when p ~* '\m5\d\d\M|internal server error|bad gateway|service unavailable' then 'الخدمة الخارجية عاطلة مؤقتًا'
+    when p ~* 'formatexception|unexpected character|invalid json' then 'بيانات بصيغة غلط'
+    when p ~* 'nosuchmethoderror' then 'استدعاء شي مو موجود بالكود'
+    when p ~* 'platformexception|missingpluginexception' then 'خطأ من نظام الجهاز أو إضافة بالتطبيق'
+    when p ~* 'bad state' then 'حالة غير متوقعة بالكود'
+    when p ~* 'storageexception|upload' then 'مشكلة برفع أو تنزيل ملف'
+    else null end;
+$$;
+
+-- نص السجل للعرض: الأسماء بالعربي + شرح عربي إذا بيه خطأ تقني بالإنگليزي
+create or replace function public._ar_detail(p text) returns text
+language sql immutable as $$
+  select case when _ar_explain(regexp_replace(coalesce(p, ''), '«[^»]*»', '', 'g')) is not null
+              then _ar_text(p) || ' ⟵ يعني: ' || _ar_explain(regexp_replace(coalesce(p, ''), '«[^»]*»', '', 'g'))
+              else _ar_text(p) end;
+$$;
+
+create or replace function public._ago_ar(p timestamptz) returns text
+language sql stable as $$
+  select case when p is null then ''
+    when now() - p < interval '1 minute' then 'هسه'
+    when now() - p < interval '1 hour' then 'قبل ' || floor(extract(epoch from now() - p) / 60)::int || ' دقيقة'
+    when now() - p < interval '1 day' then 'قبل ' || floor(extract(epoch from now() - p) / 3600)::int || ' ساعة'
+    else 'قبل ' || floor(extract(epoch from now() - p) / 86400)::int || ' يوم' end;
+$$;
+
+-- عنصر بقائمة الفحوصات: المجموعة، الاسم، الحالة (ok/fixed/warn/alert/info)، القيمة، وشرح قصير
+create or replace function public._doctor_item(p_g text, p_n text, p_s text, p_v text, p_h text default '') returns jsonb
+language sql immutable as $$
+  select jsonb_build_object('g', p_g, 'n', p_n, 's', p_s, 'v', coalesce(p_v, ''), 'h', coalesce(p_h, ''));
+$$;
+
+-- الأسوأ بين حالتين (للسجل اليومي)
+create or replace function public._doctor_worse(a text, b text) returns text
+language sql immutable as $$
+  select (array['ok', 'fixed', 'warn', 'alert'])[greatest(coalesce(array_position(array['ok', 'fixed', 'warn', 'alert'], a), 1),
+                                                          coalesce(array_position(array['ok', 'fixed', 'warn', 'alert'], b), 1))];
+$$;
+
+-- الإشعار يطلع بالعربي (أسماء المهام والجداول)
+create or replace function public._doctor_notify(p_action text, p_body text) returns void
+language plpgsql security definer set search_path = public as $$
+declare lim int := case when p_action = 'alert' then 6 else 3 end;
+begin
+  if (select count(*) from maintenance_log where action = 'notified' and kind = p_action and at > now() - interval '1 hour') >= lim then
+    return;
+  end if;
+  insert into maintenance_log(kind, action, detail) values (p_action, 'notified', '');
+  insert into notifications(user_id, type, title, body, data)
+    select o.id, 'warning', case when p_action = 'alert' then '🩺 الطبيب الذاتي يحتاجك' else '🩺 الطبيب الذاتي صلّح لحاله' end,
+           left(_ar_text(coalesce(p_body, '')), 300), jsonb_build_object('src', 'doctor', 'kind', p_action)
+      from profiles o where o.is_owner limit 1;
+exception when others then null;
+end $$;
+
+-- الفحوصات الموسّعة (فوق فحوصات الإصدار 98)
+create or replace function public._doctor_ext(p_deep boolean, p_notify boolean) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  L jsonb := '[]'::jsonb; deep jsonb := '[]'::jsonb; v jsonb; cur jsonb; old jsonb; r record;
+  msg text; s text; t text; k text; since timestamptz; mx int; n int; n1 int; n2 int; n3 int;
+  a_1h int := 0; a_24h int := 0; bg_err int := 0; nb_true int := 0; nb_false int := 0;
+  n_fixed int := 0; n_alert int := 0; fixed_new text[] := '{}'; ntables int := 0; db_mb int;
+  G_SRV text := 'الخادم'; G_SEC text := 'الأمان'; G_PUSH text := 'الإشعارات'; G_APP text := 'التطبيق عند المستخدمين';
+  G_DATA text := 'البيانات والفلوس'; G_Q text := 'الطوابير';
+  -- أخطاء الاتصال العادية (نت المستخدم) ما تنحسب أعطال
+  netre text := '(socketexception|failed host lookup|clientexception|connection (closed|reset|refused|timed out|terminated|abort)'
+                || '|handshakeexception|timeoutexception|timed out|network is unreachable|لا يوجد اتصال|no address associated'
+                || '|xmlhttprequest|authretryablefetch|software caused connection abort)';
+begin
+  perform set_config('lock_timeout', '3s', true);
+  begin
+    select count(*) into ntables from pg_class c join pg_namespace sp on sp.oid = c.relnamespace
+     where sp.nspname = 'public' and c.relkind in ('r', 'p');
+  exception when others then ntables := 0;
+  end;
+
+  -- ===== الإشعارات =====
+  -- إشعارات Google: إذا مو جاهزة 15 دقيقة متواصلة = تنبيه للمالك (الإشعار يوصل وقتها عن طريق خدمة الخلفية)
+  begin
+    v := push_diag();
+    if not coalesce((v->>'sa')::boolean, false) then s := 'warn'; t := 'ملف حساب Google مو مضاف';
+    elsif coalesce((v->>'ready')::boolean, false) then s := 'ok'; t := 'جاهزة';
+    else s := 'warn'; t := 'مو جاهزة';
+    end if;
+    if s = 'ok' then
+      delete from private_settings where key = 'doctor_push_down';
+    else
+      since := (select value::timestamptz from private_settings where key = 'doctor_push_down');
+      if since is null then
+        insert into private_settings(key, value) values ('doctor_push_down', now()::text)
+          on conflict (key) do update set value = excluded.value, updated_at = now();
+      elsif since < now() - interval '15 minutes' then
+        s := 'alert'; n_alert := n_alert + 1;
+        msg := 'إشعارات Google واگفة من ' || round(extract(epoch from now() - since) / 60) || ' دقيقة (' || t
+               || '). الإشعارات توصل المستخدمين عن طريق خدمة الخلفية بس لحد ما ترجع.';
+        if _doctor_note('push', 'alert', msg, 'push-down', interval '6 hours') and p_notify then
+          perform _doctor_notify('alert', msg);
+        end if;
+      end if;
+    end if;
+    L := L || _doctor_item(G_PUSH, 'إشعارات Google', s, t, 'إذا وگفت، الإشعارات توصل عن طريق خدمة الخلفية لحد ما ترجع.');
+    n := coalesce((v->>'access_left_min')::int, 0);
+    L := L || _doctor_item(G_PUSH, 'مفتاح الإرسال', case when n > 0 then 'ok' else 'info' end,
+                           case when n > 0 then 'صالح ' || n || ' دقيقة (يتجدد لحاله)' else 'يتجدد هسه' end);
+    L := L || _doctor_item(G_PUSH, 'الأجهزة المسجلة للإشعارات', 'info', coalesce(v->>'tokens', '0') || ' جهاز');
+  exception when others then
+    L := L || _doctor_item(G_PUSH, 'إشعارات Google', 'info', 'ما گدرت أفحصها هسه');
+  end;
+
+  -- الأجهزة: النشطة، النسخ، خدمة الخلفية، والإشعارات على النسخة المنشورة (أهم شي عند المالك)
+  begin
+    begin mx := (select build from app_release where id = 1); exception when others then mx := null; end;
+    select count(*) filter (where last_poll > now() - interval '1 hour'), count(*),
+           count(*) filter (where coalesce(last_error, '') <> ''),
+           count(*) filter (where mx is not null and b >= mx and g = 'true'),
+           count(*) filter (where mx is not null and b >= mx and g = 'false')
+      into a_1h, a_24h, bg_err, nb_true, nb_false
+      from (select last_poll, last_error, coalesce(substring(info from '^b(\d+)')::int, 0) b, substring(info from ' g=(\w+)') g
+              from device_tokens where last_poll > now() - interval '24 hours') d;
+    L := L || _doctor_item(G_APP, 'الأجهزة النشطة', 'info', a_1h || ' بآخر ساعة · ' || a_24h || ' باليوم',
+                           'الأجهزة اللي خدمة الخلفية بيها شغّالة وتتصل بالخادم.');
+    select string_agg('b' || b || ': ' || c, ' · ' order by b desc) into t from (
+      select coalesce(substring(info from '^b(\d+)')::int, 0) b, count(*) c from device_tokens
+       where last_poll > now() - interval '24 hours' group by 1 order by 1 desc limit 4) z;
+    L := L || _doctor_item(G_APP, 'نسخ التطبيق عند المستخدمين', 'info', coalesce(t, 'ماكو أجهزة'),
+                           case when mx is not null then 'النسخة المنشورة هسه: b' || mx else '' end);
+    L := L || _doctor_item(G_APP, 'خدمة الخلفية', case when bg_err >= 3 and bg_err * 10 >= a_24h * 3 then 'warn' else 'ok' end,
+                           case when bg_err = 0 then 'شغّالة بكل الأجهزة' else bg_err || ' جهاز آخر تقرير منه بيه خطأ' end,
+                           'خدمة الخلفية تجيب الرسائل والمكالمات حتى لو التطبيق مسدود.');
+    if nb_true + nb_false = 0 then
+      L := L || _doctor_item(G_PUSH, 'الإشعارات على النسخة الأخيرة', 'info', 'بعد ماكو أجهزة كافية للفحص');
+    elsif nb_true + nb_false >= 3 and nb_false * 2 > nb_true + nb_false then
+      n_alert := n_alert + 1;
+      msg := 'إشعارات Google ما تشتغل عند أغلب أجهزة النسخة b' || mx || ' (' || nb_false || ' من ' || (nb_true + nb_false) || ' جهاز).';
+      L := L || _doctor_item(G_PUSH, 'الإشعارات على النسخة الأخيرة', 'alert', nb_true || ' من ' || (nb_true + nb_false) || ' شغّالة');
+      if _doctor_note('push', 'alert', msg, 'push-build:' || mx, interval '12 hours') and p_notify then
+        perform _doctor_notify('alert', msg || ' تصليحها يحتاج تعديل بالكود.');
+      end if;
+    else
+      L := L || _doctor_item(G_PUSH, 'الإشعارات على النسخة الأخيرة', case when nb_false = 0 then 'ok' else 'info' end,
+                             nb_true || ' من ' || (nb_true + nb_false) || ' جهاز شغّالة',
+                             'بعض الأجهزة (مثل هواوي) ما بيها خدمات Google أصلًا، فتعتمد على خدمة الخلفية.');
+    end if;
+  exception when others then
+    L := L || _doctor_item(G_APP, 'الأجهزة النشطة', 'info', 'ما گدرت أفحصها هسه');
+  end;
+
+  -- ===== التطبيق عند المستخدمين: الأخطاء اللي يشوفونها (آخر ساعة، بدون مشاكل النت العادية) =====
+  begin
+    select count(*) into n from client_logs
+     where at > now() - interval '1 hour' and info ~ '^b\d+ err:' and info !~* netre;
+    s := case when n = 0 then 'ok' when n < 10 then 'info' else 'warn' end; t := null;
+    for r in
+      select b, sig, min(m) sample, count(*) c from (
+        select substring(info from '^b(\d+) ') b, regexp_replace(info, '^b\d+ err: ?', '') m,
+               md5(left(regexp_replace(regexp_replace(info, '^b\d+ err: ?', ''), '[0-9a-fx]{4,}|[0-9]+', '#', 'gi'), 90)) sig
+          from client_logs
+         where at > now() - interval '1 hour' and info ~ '^b\d+ err:' and info !~* netre) l
+       group by b, sig order by count(*) desc limit 2
+    loop
+      if t is null then t := coalesce(_ar_explain(r.sample), 'خطأ تقني'); end if;
+      if r.c >= 10 then
+        n_alert := n_alert + 1; s := 'alert';
+        msg := 'خطأ يتكرر عند المستخدمين بالنسخة b' || coalesce(r.b, '?') || ' (' || r.c || ' مرات آخر ساعة): '
+               || coalesce(_ar_explain(r.sample), 'خطأ تقني') || ' — النص التقني: '
+               || left(regexp_replace(r.sample, 'https?://\S+|www\.\S+', '[رابط]', 'gi'), 160);
+        if _doctor_note('error', 'alert', msg, 'err:' || coalesce(r.b, '') || ':' || r.sig, interval '24 hours') and p_notify then
+          perform _doctor_notify('alert', 'خطأ يتكرر عند المستخدمين بالنسخة b' || coalesce(r.b, '?') || ' (' || r.c || ' مرات بساعة): '
+            || coalesce(_ar_explain(r.sample), 'خطأ تقني') || '. التفاصيل بلوحة التحكم ← الطبيب الذاتي.');
+        end if;
+      end if;
+    end loop;
+    L := L || _doctor_item(G_APP, 'أخطاء يشوفها المستخدمين (آخر ساعة)', s, n::text,
+                           coalesce('أكثر خطأ: ' || t || '. ', '') || 'مشاكل النت العادية ما تنحسب.');
+  exception when others then
+    L := L || _doctor_item(G_APP, 'أخطاء يشوفها المستخدمين (آخر ساعة)', 'info', 'ما گدرت أفحصها هسه');
+  end;
+
+  -- ===== الخادم: الاتصالات والاستعلامات العالقة =====
+  begin
+    n := (select count(*) from pg_stat_activity);
+    n1 := current_setting('max_connections')::int;
+    s := case when n * 10 >= n1 * 9 then 'alert' when n * 10 >= n1 * 7 then 'warn' else 'ok' end;
+    if s = 'alert' then
+      n_alert := n_alert + 1;
+      msg := 'الاتصالات بقاعدة البيانات قربت تخلص (' || n || ' من ' || n1 || '). إذا خلصت، التطبيق يوگف عند المستخدمين.';
+      if _doctor_note('db', 'alert', msg, 'db-conns', interval '1 hour') and p_notify then perform _doctor_notify('alert', msg); end if;
+    end if;
+    L := L || _doctor_item(G_SRV, 'الاتصالات بقاعدة البيانات', s, n || ' من ' || n1);
+    select count(*) filter (where state = 'active' and now() - query_start > interval '5 minutes'),
+           count(*) filter (where wait_event_type = 'Lock' and now() - state_change > interval '1 minute')
+      into n2, n3
+      from pg_stat_activity where backend_type = 'client backend' and pid <> pg_backend_pid();
+    L := L || _doctor_item(G_SRV, 'استعلامات عالقة أو تنتظر قفل', case when n2 + n3 = 0 then 'ok' else 'warn' end,
+                           case when n2 + n3 = 0 then 'ماكو' else n2 || ' طوّلت · ' || n3 || ' تنتظر قفل' end,
+                           'حارس الدقيقة يقطع الجلسات المعلّقة لحاله.');
+  exception when others then
+    L := L || _doctor_item(G_SRV, 'الاتصالات بقاعدة البيانات', 'info', 'ما گدرت أفحصها هسه');
+  end;
+
+  -- ===== الأمان =====
+  -- خزنة الأسرار والمحافظ ودفتر الحسابات وسجلات الطبيب: ما يوصلها أي مستخدم أبدًا — إذا انفتحت تنقفل لحالها
+  begin
+    n := 0;
+    foreach k in array array['private_settings', 'wallets', 'ledger', 'maintenance_log', 'doctor_daily'] loop
+      if to_regclass('public.' || k) is not null and (
+           has_table_privilege('anon', ('public.' || k)::regclass, 'select')
+        or has_table_privilege('anon', ('public.' || k)::regclass, 'insert')
+        or has_table_privilege('anon', ('public.' || k)::regclass, 'update')
+        or has_table_privilege('anon', ('public.' || k)::regclass, 'delete')
+        or has_table_privilege('authenticated', ('public.' || k)::regclass, 'select')
+        or has_table_privilege('authenticated', ('public.' || k)::regclass, 'insert')
+        or has_table_privilege('authenticated', ('public.' || k)::regclass, 'update')
+        or has_table_privilege('authenticated', ('public.' || k)::regclass, 'delete')) then
+        execute format('revoke all on public.%I from public, anon, authenticated', k);
+        n := n + 1;
+        msg := 'جدول «' || k || '» انفتح للمستخدمين بالغلط ورجّعته مقفول.';
+        if _doctor_note('secrets', 'fixed', msg, 'vault:' || k, interval '1 hour') then fixed_new := fixed_new || msg; end if;
+      end if;
+    end loop;
+    n_fixed := n_fixed + n;
+    L := L || _doctor_item(G_SEC, 'خزنة الأسرار والمحافظ', case when n > 0 then 'fixed' else 'ok' end,
+                           case when n > 0 then 'رجّع قفل ' || n || ' جدول' else 'مقفولة' end,
+                           'مفاتيح الخدمات والمحافظ ودفتر الحسابات ما يوصلها أي مستخدم — بس دوال الخادم.');
+  exception when others then
+    L := L || _doctor_item(G_SEC, 'خزنة الأسرار والمحافظ', 'info', 'ما گدرت أفحصها هسه');
+  end;
+
+  -- المالك والمدراء: أي مالك أو مدير جديد = تنبيه فوري (أول فحص يحفظ الموجودين بدون تنبيه)
+  begin
+    select coalesce(jsonb_agg(id::text order by id), '[]'::jsonb), count(*) filter (where is_owner),
+           count(*) filter (where is_admin and not is_owner)
+      into cur, n1, n2
+      from profiles where is_admin or is_owner;
+    old := (select value::jsonb from private_settings where key = 'doctor_admins');
+    if old is not null then
+      for r in select p.id, p.username, p.is_owner from profiles p
+                where (p.is_admin or p.is_owner) and not (old ? p.id::text) loop
+        n_alert := n_alert + 1;
+        msg := case when r.is_owner then 'صار عندك مالك جديد' else 'صار عندك مدير جديد' end || ': @' || r.username
+               || '. إذا مو انت سوّيته، غيّر كلمة سرّك وشيله فورًا.';
+        if _doctor_note('admins', 'alert', msg, 'admin:' || r.id, interval '30 days') and p_notify then
+          perform _doctor_notify('alert', msg);
+        end if;
+      end loop;
+    end if;
+    if old is distinct from cur then
+      insert into private_settings(key, value) values ('doctor_admins', cur::text)
+        on conflict (key) do update set value = excluded.value, updated_at = now();
+    end if;
+    if n1 <> 1 then
+      n_alert := n_alert + 1;
+      msg := 'عدد المالكين بالتطبيق ' || n1 || ' (لازم واحد بس). راجع الحسابات فورًا.';
+      if _doctor_note('admins', 'alert', msg, 'owners:' || n1, interval '24 hours') and p_notify then perform _doctor_notify('alert', msg); end if;
+    end if;
+    L := L || _doctor_item(G_SEC, 'المالك والمدراء', case when n1 = 1 then 'ok' else 'alert' end,
+                           'مالك ' || n1 || ' · ' || n2 || ' مدير', 'أي مالك أو مدير جديد يوصلك عنه تنبيه فورًا.');
+  exception when others then
+    L := L || _doctor_item(G_SEC, 'المالك والمدراء', 'info', 'ما گدرت أفحصها هسه');
+  end;
+
+  -- الإعدادات الحساسة: أي تغيير = تنبيه (أول فحص يحفظ الموجود بدون تنبيه)
+  begin
+    select coalesce(jsonb_object_agg(key, updated_at), '{}'::jsonb) into cur from private_settings
+     where key in ('fcm_sa', 'livekit_url', 'livekit_key', 'livekit_secret', 'turn_user', 'turn_pass', 'auto_update_off')
+        or key like 'ai\_key\_%';
+    old := (select value::jsonb from private_settings where key = 'doctor_secrets');
+    n := 0;
+    if old is not null then
+      for k in select x from jsonb_object_keys(cur) x where (old->>x) is distinct from (cur->>x) loop
+        n := n + 1; n_alert := n_alert + 1;
+        msg := case when k = 'auto_update_off' then 'انوگف التحديث التلقائي للخادم (مكبح الطوارئ).'
+                    else 'انغيّر إعداد حساس: «' || k || '».' end || ' إذا مو انت سوّيته، غيّر كلمة سرّك فورًا.';
+        if _doctor_note('secrets', 'alert', msg, 'secret:' || k || ':' || (cur->>k), interval '30 days') and p_notify then
+          perform _doctor_notify('alert', msg);
+        end if;
+      end loop;
+    end if;
+    if old is distinct from cur then
+      insert into private_settings(key, value) values ('doctor_secrets', cur::text)
+        on conflict (key) do update set value = excluded.value, updated_at = now();
+    end if;
+    L := L || _doctor_item(G_SEC, 'الإعدادات الحساسة', case when n > 0 then 'alert' else 'ok' end,
+                           case when n > 0 then 'انغيّر ' || n else 'ما تغيّرت' end,
+                           'مفاتيح الخدمات وإعدادات البث والمكالمات والإشعارات ومكبح التحديث — أي تغيير يوصلك عنه تنبيه.');
+  exception when others then
+    L := L || _doctor_item(G_SEC, 'الإعدادات الحساسة', 'info', 'ما گدرت أفحصها هسه');
+  end;
+
+  -- ===== البيانات والفلوس: اللي ينتظر المالك =====
+  begin
+    select count(*), min(created_at) into n, since from withdrawals where status = 'pending';
+    L := L || _doctor_item(G_DATA, 'طلبات السحب المعلقة', case when n = 0 then 'ok' else 'warn' end,
+                           case when n = 0 then 'ماكو' else n || ' تنتظرك (أقدمها ' || _ago_ar(since) || ')' end);
+  exception when others then null;
+  end;
+  begin
+    select count(*), min(created_at) into n, since from manual_topups where status = 'pending';
+    L := L || _doctor_item(G_DATA, 'طلبات الشحن اليدوي المعلقة', case when n = 0 then 'ok' else 'warn' end,
+                           case when n = 0 then 'ماكو' else n || ' تنتظرك (أقدمها ' || _ago_ar(since) || ')' end);
+  exception when others then null;
+  end;
+  begin
+    select count(*) into n from payment_intents where status = 'pending' and created_at < now() - interval '2 days';
+    L := L || _doctor_item(G_DATA, 'مدفوعات عالقة', case when n = 0 then 'ok' else 'warn' end,
+                           case when n = 0 then 'ماكو' else n || ' معلّقة أكثر من يومين' end,
+                           'المدفوعات اللي ما كملت لازم تنتهي لحالها — إذا علكت، متابعة الشحن عاطلة.');
+  exception when others then null;
+  end;
+  begin
+    select count(*), min(created_at) into n, since from reports where status = 'open';
+    L := L || _doctor_item(G_DATA, 'البلاغات المفتوحة', case when n = 0 then 'ok' else 'warn' end,
+                           case when n = 0 then 'ماكو' else n || ' بلاغ ينتظر (أقدمها ' || _ago_ar(since) || ')' end);
+  exception when others then null;
+  end;
+  begin
+    select count(*), min(appealed_at) into n, since from mod_violations where appeal_status = 'pending';
+    L := L || _doctor_item(G_DATA, 'الطعون المعلقة', case when n = 0 then 'ok' else 'warn' end,
+                           case when n = 0 then 'ماكو' else n || ' طعن ينتظر (أقدمها ' || _ago_ar(since) || ')' end);
+  exception when others then null;
+  end;
+
+  -- ===== الطوابير =====
+  begin
+    select count(*), min(created_at) into n, since from ai_jobs where status = 'pending';
+    L := L || _doctor_item(G_Q, 'المساعد الذكي', case when n > 0 and since < now() - interval '15 minutes' then 'warn' else 'ok' end,
+                           case when n = 0 then 'ماكو شي ينتظر' else n || ' ينتظر (أقدمها ' || _ago_ar(since) || ')' end);
+  exception when others then null;
+  end;
+  begin
+    select count(*), min(created_at) into n, since from translations where status = 'pending';
+    L := L || _doctor_item(G_Q, 'الترجمة', case when n > 0 and since < now() - interval '30 minutes' then 'warn' else 'ok' end,
+                           case when n = 0 then 'ماكو شي ينتظر' else n || ' تنتظر (أقدمها ' || _ago_ar(since) || ')' end);
+  exception when others then null;
+  end;
+  begin
+    select count(*), min(created_at) into n, since from ai_autoposts where status = 'need_image';
+    L := L || _doctor_item(G_Q, 'النشر التلقائي (ينتظر صورة)', case when n > 0 and since < now() - interval '3 hours' then 'warn' else 'ok' end,
+                           case when n = 0 then 'ماكو شي ينتظر' else n || ' ينتظر (أقدمها ' || _ago_ar(since) || ')' end);
+  exception when others then null;
+  end;
+
+  -- ===== الفحوصات الثقيلة (كل ساعة، ونتيجتها تنحفظ وتنعرض لحد الفحص الجاي) =====
+  if p_deep then
+    -- تطابق كل محفظة مع دفتر الحسابات (يراقب بس — ما يغيّر الفلوس أبدًا)
+    begin
+      select count(*), coalesce(md5(string_agg(user_id::text, ',' order by user_id)), '') into n, t
+        from (select w.user_id from wallets w
+                left join (select user_id, sum(delta) s from ledger where account = 'coins' and user_id is not null group by user_id) l
+                  on l.user_id = w.user_id
+               where w.coins <> coalesce(l.s, 0)) z;
+      n1 := (select count(*) from wallets);
+      if n > 0 then
+        n_alert := n_alert + 1;
+        msg := n || ' محفظة رصيدها ما يطابق دفتر الحسابات — يعني خلل أو تلاعب بالرصيد. گلي حتى أتحقق (الطبيب ما يلمس الفلوس أبدًا).';
+        if _doctor_note('money', 'alert', msg, 'wallet:' || t, interval '30 days') and p_notify then perform _doctor_notify('alert', msg); end if;
+      end if;
+      deep := deep || _doctor_item(G_DATA, 'تطابق المحافظ مع دفتر الحسابات', case when n = 0 then 'ok' else 'alert' end,
+                                   case when n = 0 then 'كل الـ' || n1 || ' محفظة مطابقة' else n || ' ما تطابق' end,
+                                   'كل رصيد لازم يساوي مجموع حركاته بالدفتر.');
+    exception when others then
+      deep := deep || _doctor_item(G_DATA, 'تطابق المحافظ مع دفتر الحسابات', 'info', 'ما گدرت أفحصها هسه');
+    end;
+    -- حجم قاعدة البيانات
+    begin
+      db_mb := round(pg_database_size(current_database()) / 1048576.0);
+      deep := deep || _doctor_item(G_SRV, 'حجم قاعدة البيانات', 'info', db_mb || ' ميگا', 'السجل اليومي يبين إذا يكبر بسرعة.');
+    exception when others then null;
+    end;
+    -- الفهارس التالفة
+    begin
+      select count(*), string_agg(c.relname, '، ') into n, t
+        from pg_index i join pg_class c on c.oid = i.indexrelid join pg_namespace sp on sp.oid = c.relnamespace
+       where sp.nspname = 'public' and not i.indisvalid;
+      if n > 0 then
+        n_alert := n_alert + 1;
+        msg := 'فهرس تالف بقاعدة البيانات: ' || t || ' — يبطّئ البحث أو يخرّبه ويحتاج إعادة بناء.';
+        if _doctor_note('db', 'alert', msg, 'index:' || md5(t), interval '24 hours') and p_notify then perform _doctor_notify('alert', msg); end if;
+      end if;
+      deep := deep || _doctor_item(G_SRV, 'الفهارس', case when n = 0 then 'ok' else 'alert' end,
+                                   case when n = 0 then 'سليمة' else n || ' تالف' end);
+    exception when others then null;
+    end;
+    -- العدّادات (الأرقام التسلسلية) القريبة من حدها الأقصى
+    begin
+      select count(*), string_agg(sequencename || ' ' || round(100.0 * last_value / max_value) || '%', '، ') into n, t
+        from pg_sequences where schemaname = 'public' and last_value is not null and last_value::numeric >= max_value::numeric * 0.8;
+      if n > 0 then
+        n_alert := n_alert + 1;
+        msg := 'عدّاد قرب يوصل حده الأقصى: ' || t || ' — إذا وصل، الحفظ يوگف بهذا الجدول.';
+        if _doctor_note('db', 'alert', msg, 'seq:' || md5(t), interval '7 days') and p_notify then perform _doctor_notify('alert', msg); end if;
+      end if;
+      deep := deep || _doctor_item(G_SRV, 'العدّادات (الأرقام التسلسلية)', case when n = 0 then 'ok' else 'alert' end,
+                                   case when n = 0 then 'بعيدة عن الحد' else n || ' قريبة من الحد' end);
+    exception when others then null;
+    end;
+    -- جداول تحتاج تنظيف (صفوف ميتة أكثر من الحية)
+    begin
+      select count(*), string_agg('«' || relname || '»', '، ') into n, t from (
+        select relname from pg_stat_user_tables
+         where schemaname = 'public' and n_dead_tup > 10000 and n_dead_tup > n_live_tup order by n_dead_tup desc limit 5) z;
+      deep := deep || _doctor_item(G_SRV, 'تنظيف الجداول', case when n = 0 then 'ok' else 'warn' end,
+                                   case when n = 0 then 'ماكو جدول يحتاج' else _ar_text(t) end,
+                                   'قاعدة البيانات تنظف نفسها لحالها؛ إذا تأخرت تبطأ الجداول هاي.');
+    exception when others then null;
+    end;
+    -- سرعة دوال التطبيق: البطء بآخر ساعة (فرق بين قياسين، مو معدل من البداية)
+    begin
+      select coalesce(jsonb_object_agg(queryid::text, jsonb_build_array(calls, round(total_exec_time::numeric, 1), coalesce(nm, '?'))), '{}'::jsonb)
+        into cur
+        from (select queryid, calls, total_exec_time, substring(query from '"public"\."([a-z0-9_]+)"\(') nm
+                from extensions.pg_stat_statements
+               where query like 'WITH pgrst_source AS%' and queryid is not null
+               order by total_exec_time desc limit 150) q;
+      old := (select value::jsonb from private_settings where key = 'doctor_pgss');
+      n := 0; t := null;
+      if old is not null then
+        select count(*), string_agg(nm || ' (' || round(ms / 1000.0, 1) || ' ثانية)', '، ' order by ms desc) into n, t
+          from (select cur->x->>2 nm,
+                       ((cur->x->>1)::numeric - (old->x->>1)::numeric) / nullif((cur->x->>0)::numeric - (old->x->>0)::numeric, 0) ms,
+                       (cur->x->>0)::numeric - (old->x->>0)::numeric dc
+                  from jsonb_object_keys(cur) x where old ? x) z
+         where dc >= 30 and ms >= 800;
+      end if;
+      insert into private_settings(key, value) values ('doctor_pgss', cur::text)
+        on conflict (key) do update set value = excluded.value, updated_at = now();
+      deep := deep || _doctor_item(G_SRV, 'سرعة دوال التطبيق (آخر ساعة)',
+                                   case when old is null then 'info' when n = 0 then 'ok' else 'warn' end,
+                                   case when old is null then 'بدأ القياس — النتيجة بعد ساعة' when n = 0 then 'كلها سريعة'
+                                        else n || ' بطيئة: ' || t end,
+                                   'الدالة البطيئة = المستخدم ينتظر. تسريعها يحتاج تعديل بالخادم.');
+    exception when others then
+      deep := deep || _doctor_item(G_SRV, 'سرعة دوال التطبيق (آخر ساعة)', 'info', 'القياس مو متوفر');
+    end;
+    -- مخازن الملفات العامة: بس المعروفة (الصور الشخصية، المنشورات، ملفات التحديث)
+    begin
+      select count(*), string_agg(id, '، ') filter (where id not in ('avatars', 'posts', 'releases')) into n, t
+        from storage.buckets where public;
+      if t is not null then
+        n_alert := n_alert + 1;
+        msg := 'مخزن ملفات صار عام (أي أحد يگدر يشوف ملفاته): ' || t || '.';
+        if _doctor_note('storage', 'alert', msg, 'bucket:' || t, interval '24 hours') and p_notify then perform _doctor_notify('alert', msg); end if;
+      end if;
+      deep := deep || _doctor_item(G_SEC, 'مخازن الملفات العامة', case when t is null then 'ok' else 'alert' end,
+                                   case when t is null then n || ' عامة (كلها معروفة)' else 'مخزن جديد عام: ' || t end,
+                                   'العامة المعروفة: الصور الشخصية، صور المنشورات، ملفات التحديث.');
+    exception when others then null;
+    end;
+    -- دوال تنطلب بدون تسجيل دخول (معلومة: الحارس الأمني يخليها بس اللي بقائمة المسموح)
+    begin
+      select count(*) into n from pg_proc p join pg_namespace sp on sp.oid = p.pronamespace
+       where sp.nspname = 'public' and p.prokind = 'f' and p.proowner = (select oid from pg_roles where rolname = current_user)
+         and has_function_privilege('anon', p.oid, 'execute');
+      deep := deep || _doctor_item(G_SEC, 'دوال تنطلب بدون تسجيل دخول', 'info', n || ' دالة (كلها بقائمة المسموح)',
+                                   'الدخول وإنشاء الحساب وخدمة الخلفية ومراقبة الخادم — وكل وحدة تتحقق بنفسها.');
+    exception when others then null;
+    end;
+    insert into private_settings(key, value) values ('doctor_deep', jsonb_build_object('at', now(), 'items', deep, 'db_mb', db_mb)::text)
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  else
+    begin
+      deep := coalesce((select value::jsonb->'items' from private_settings where key = 'doctor_deep'), '[]'::jsonb);
+    exception when others then deep := '[]'::jsonb;
+    end;
+  end if;
+  L := L || deep;
+
+  return jsonb_build_object('list', L, 'fixed', n_fixed, 'alerts', n_alert, 'fixed_msgs', to_jsonb(fixed_new),
+    'tables', ntables, 'devices_24h', a_24h, 'db_mb', db_mb);
+exception when others then
+  return jsonb_build_object('list', L || deep, 'fixed', n_fixed, 'alerts', n_alert, 'fixed_msgs', to_jsonb(fixed_new),
+    'tables', ntables, 'error', left(sqlerrm, 200));
+end $$;
+
+-- الفحص الكامل: فحوصات الإصدار 98 (تصليح) + الموسّعة، والنتيجة قائمة جاهزة بالعربي + السجل اليومي
+create or replace function public._doctor_full(p_manual boolean default false, p_deep boolean default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  core jsonb; ext jsonb; c jsonb; deep boolean; L jsonb := '[]'::jsonb; fx text[]; n_fixed int; n_alert int;
+  worst text; prev jsonb; jo int; jt int; upd text; tables int; today date := (now() at time zone 'Asia/Baghdad')::date;
+  groups text[] := array['الخادم', 'الأمان', 'الإشعارات', 'التطبيق عند المستخدمين', 'البيانات والفلوس', 'الطوابير'];
+begin
+  core := _self_doctor(p_manual);
+  c := coalesce(core->'checks', '{}'::jsonb);
+  begin
+    deep := coalesce(p_deep, coalesce((select value::timestamptz from private_settings where key = 'doctor_deep_at'), 'epoch')
+                             < now() - interval '55 minutes');
+  exception when others then deep := true;
+  end;
+  if deep then
+    insert into private_settings(key, value) values ('doctor_deep_at', now()::text)
+      on conflict (key) do update set value = excluded.value, updated_at = now();
+  end if;
+  ext := _doctor_ext(deep, not coalesce(p_manual, false));
+  tables := coalesce((ext->>'tables')::int, 0);
+  jo := coalesce((c->>'jobs_ok')::int, 0); jt := coalesce((c->>'jobs_total')::int, 0); upd := coalesce(c->>'update', 'unknown');
+  -- فحوصات الإصدار 98 بصيغة القائمة
+  L := jsonb_build_array(
+    _doctor_item('الخادم', 'مهام الخادم الأساسية', case when jo >= jt then 'ok' else 'alert' end, jo || '/' || jt || ' شغّالة',
+                 'التحديث التلقائي والحراس والإشعارات والمدفوعات والرقابة والدخول — إذا وحدة وگفت ترجع لحالها.'),
+    _doctor_item('الخادم', 'التحديث التلقائي للخادم',
+                 case upd when 'ok' then 'ok' when 'fail' then 'alert' when 'paused' then 'warn' else 'info' end,
+                 case upd when 'ok' then 'شغّال' when 'fail' then 'واگف بسبب خطأ' when 'paused' then 'موقوف منك (مكبح الطوارئ)'
+                          else 'بعده ما معروف' end,
+                 'كل تصليح بالخادم يوصل كل المستخدمين خلال 10 دقايق عن طريقه.'),
+    _doctor_item('الخادم', 'مهام تفشل بشكل متكرر', case when coalesce((c->>'cron_failing')::int, 0) = 0 then 'ok' else 'alert' end,
+                 case when coalesce((c->>'cron_failing')::int, 0) = 0 then 'ماكو' else (c->>'cron_failing') || ' مهمة' end),
+    _doctor_item('الأمان', 'حماية الجداول (RLS)', case when coalesce((c->>'rls_fixed')::int, 0) > 0 then 'fixed' else 'ok' end,
+                 case when coalesce((c->>'rls_fixed')::int, 0) > 0 then 'رجّع حماية ' || (c->>'rls_fixed') || ' جدول'
+                      else 'كل الـ' || tables || ' جدول محمية' end,
+                 'كل مستخدم يشوف بس اللي يخصه.'),
+    _doctor_item('الأمان', 'صلاحيات الدوال والجداول', case when coalesce((c->>'perms_fixed')::int, 0) > 0 then 'fixed' else 'ok' end,
+                 case when coalesce((c->>'perms_fixed')::int, 0) > 0 then 'سدّ ' || (c->>'perms_fixed') || ' صلاحية' else 'مضبوطة' end,
+                 'أي صلاحية تنفتح بالغلط تنسد لحالها.'),
+    _doctor_item('الأمان', 'العروض المكشوفة (views)', case when coalesce((c->>'views_fixed')::int, 0) > 0 then 'fixed' else 'ok' end,
+                 case when coalesce((c->>'views_fixed')::int, 0) > 0 then 'سدّ ' || (c->>'views_fixed') else 'ماكو' end),
+    _doctor_item('الأمان', 'ملفات المحادثات الخاصة', case c->>'storage' when 'ok' then 'ok' when 'fixed' then 'fixed' else 'info' end,
+                 case c->>'storage' when 'ok' then 'خاصة' when 'fixed' then 'رجّعها خاصة' else 'ما معروف' end),
+    _doctor_item('التطبيق عند المستخدمين', 'الانهيارات (آخر ساعة)',
+                 case when coalesce((c->>'crashes_1h')::int, 0) >= 5 then 'alert' when coalesce((c->>'crashes_1h')::int, 0) > 0 then 'warn'
+                      else 'ok' end,
+                 coalesce(c->>'crashes_1h', '0'), 'إذا نفس الانهيار تكرر 5 مرات بساعة يوصلك تنبيه.'))
+    || coalesce(ext->'list', '[]'::jsonb);
+  select coalesce(jsonb_agg(e order by coalesce(array_position(groups, e->>'g'), 99), o), '[]'::jsonb) into L
+    from jsonb_array_elements(L) with ordinality x(e, o);
+  n_fixed := coalesce((core->>'fixed')::int, 0) + coalesce((ext->>'fixed')::int, 0);
+  -- «يحتاجك» = عدد الفحوصات اللي حالتها تنبيه هسه (وياها الثقيلة المحفوظة من آخر ساعة)
+  n_alert := (select count(*) from jsonb_array_elements(L) e where e->>'s' = 'alert');
+  -- تصليحات الفحوصات الموسّعة بإشعار واحد
+  fx := array(select jsonb_array_elements_text(coalesce(ext->'fixed_msgs', '[]'::jsonb)));
+  if not coalesce(p_manual, false) and cardinality(fx) > 0 then
+    perform _doctor_notify('fixed', case when cardinality(fx) = 1 then fx[1]
+                                         else 'صلّح ' || cardinality(fx) || ' مشاكل: ' || array_to_string(fx, ' • ') end);
+  end if;
+  worst := case when exists(select 1 from jsonb_array_elements(L) e where e->>'s' = 'alert') then 'alert'
+                when exists(select 1 from jsonb_array_elements(L) e where e->>'s' = 'warn') then 'warn'
+                when n_fixed > 0 or exists(select 1 from jsonb_array_elements(L) e where e->>'s' = 'fixed') then 'fixed'
+                else 'ok' end;
+  insert into private_settings(key, value) values ('doctor', jsonb_build_object(
+      'at', now(), 'manual', coalesce(p_manual, false), 'fixed', n_fixed, 'alerts', n_alert, 'worst', worst, 'checks', c, 'list', L)::text)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  -- السجل اليومي الدائمي (يوم بتوقيت بغداد): أسوأ حالة باليوم، التصليحات والتنبيهات، أكثر انهيارات بساعة، الأجهزة، حجم القاعدة
+  begin
+    prev := (select data from doctor_daily where day = today);
+    insert into doctor_daily(day, data) values (today, jsonb_build_object(
+        'worst', _doctor_worse(prev->>'worst', worst),
+        'fixed', (select count(*) from maintenance_log where action = 'fixed' and (at at time zone 'Asia/Baghdad')::date = today),
+        'alerts', (select count(*) from maintenance_log where action = 'alert' and (at at time zone 'Asia/Baghdad')::date = today),
+        'crashes', greatest(coalesce((prev->>'crashes')::int, 0), coalesce((c->>'crashes_1h')::int, 0)),
+        'devices', greatest(coalesce((prev->>'devices')::int, 0), coalesce((ext->>'devices_24h')::int, 0)),
+        'db_mb', coalesce((ext->>'db_mb')::int, (prev->>'db_mb')::int)))
+      on conflict (day) do update set data = excluded.data, updated_at = now();
+  exception when others then null;
+  end;
+  return jsonb_build_object('at', now(), 'fixed', n_fixed, 'alerts', n_alert, 'worst', worst, 'deep', deep,
+    'items', coalesce(core->'items', '[]'::jsonb), 'checks', c, 'list', L);
+exception when others then
+  return jsonb_build_object('error', left(sqlerrm, 200));
+end $$;
+
+-- للمالك بس: «افحص وصلّح هسه» = الفحص الكامل بكل الفحوصات الثقيلة (مرة كل 20 ثانية بالكثير، وبدون إشعارات)
+create or replace function public.doctor_run_now() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare prev timestamptz;
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  begin
+    prev := (select value::timestamptz from private_settings where key = 'doctor_manual_at');
+  exception when others then prev := null;
+  end;
+  if prev > now() - interval '20 seconds' then raise exception 'انتظر ثواني وجرّب مرة ثانية'; end if;
+  insert into private_settings(key, value) values ('doctor_manual_at', now()::text)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+  return _doctor_full(true, true);
+end $$;
+
+-- للمالك بس: آخر فحص (القائمة الكاملة بالعربي) + السجل (بالعربي) + صحة آخر 30 يوم
+create or replace function public.doctor_report() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare last jsonb;
+begin
+  if not _is_owner_me() then raise exception 'للمالك فقط'; end if;
+  begin last := (select value::jsonb from private_settings where key = 'doctor'); exception when others then last := null; end;
+  return jsonb_build_object(
+    'last', last,
+    'fixed_24h', (select count(*) from maintenance_log where action = 'fixed' and at > now() - interval '24 hours'),
+    'alerts_24h', (select count(*) from maintenance_log where action = 'alert' and at > now() - interval '24 hours'),
+    'log', coalesce((select jsonb_agg(jsonb_build_object('at', x.at, 'kind', x.kind, 'action', x.action, 'detail', _ar_detail(x.detail))
+                                      order by x.id desc)
+                       from (select * from maintenance_log where action in ('fixed', 'alert') order by id desc limit 60) x),
+                    '[]'::jsonb),
+    'days', coalesce((select jsonb_agg(jsonb_build_object('d', d.day, 'worst', d.data->>'worst', 'fixed', d.data->'fixed',
+                                         'alerts', d.data->'alerts', 'crashes', d.data->'crashes', 'devices', d.data->'devices',
+                                         'db_mb', d.data->'db_mb') order by d.day desc)
+                        from (select * from doctor_daily order by day desc limit 30) d), '[]'::jsonb),
+    'since', (select min(day) from doctor_daily));
+end $$;
+revoke execute on function public.doctor_report() from public, anon;
+grant execute on function public.doctor_report() to authenticated;
+revoke execute on function public.doctor_run_now() from public, anon;
+grant execute on function public.doctor_run_now() to authenticated;
+
+revoke execute on function public._ar_name(text) from public, anon, authenticated;
+revoke execute on function public._ar_text(text) from public, anon, authenticated;
+revoke execute on function public._ar_explain(text) from public, anon, authenticated;
+revoke execute on function public._ar_detail(text) from public, anon, authenticated;
+revoke execute on function public._ago_ar(timestamptz) from public, anon, authenticated;
+revoke execute on function public._doctor_item(text, text, text, text, text) from public, anon, authenticated;
+revoke execute on function public._doctor_worse(text, text) from public, anon, authenticated;
+revoke execute on function public._doctor_notify(text, text) from public, anon, authenticated;
+revoke execute on function public._doctor_ext(boolean, boolean) from public, anon, authenticated;
+revoke execute on function public._doctor_full(boolean, boolean) from public, anon, authenticated;
+
+-- حارس الدقيقة (نفس الإصدار السابق حرفيًا) + حراسة الطبيب الذاتي
+create or replace function public._minute_guard() returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare n_idle int := 0; n_ai int := 0; errs int := 0;
+begin
+  -- (1) جلسات مفتوحة بمعاملة واقفة أكثر من دقيقتين = أقفال تبطّئ الكل → تنقطع
+  begin
+    select count(*) into n_idle from (
+      select pg_terminate_backend(pid) from pg_stat_activity
+       where state = 'idle in transaction' and now() - state_change > interval '2 minutes'
+         and usename in ('authenticator', 'authenticated', 'anon')) x;
+  exception when others then null;
+  end;
+  -- (2) مهام المساعد اللي علكت (عملية انقطعت بالنص) ترجع للطابور
+  begin
+    -- مرة وحدة بس لكل مهمة: اللي فشلت بسبب ازدحام مؤقت قبل 5-6 دقايق ترجع تنحاول
+    update ai_jobs set status = 'pending', next_at = now(), attempts = 5
+     where status = 'error' and done_at between now() - interval '6 minutes' and now() - interval '5 minutes'
+       and info ~* '(busy|503|429|500|502|504|timed out|unavailable|overloaded|demand)';
+    get diagnostics n_ai = row_count;
+  exception when others then null;
+  end;
+  -- (3) تنظيف خفيف
+  begin delete from couple_codes where expires_at < now() - interval '1 hour'; exception when others then null; end;
+  begin delete from ip_events where at < now() - interval '1 day'; exception when others then null; end;
+  -- (4) صحة النظام (عدد الأخطاء اللي شافها المستخدمين آخر دقيقة)
+  begin
+    select count(*) into errs from client_logs where at > now() - interval '1 minute' and info ~ '(err:|exit:|fail)';
+  exception when others then null;
+  end;
+  -- (5) حراسة متبادلة: الطبيب الذاتي لازم يبقى شغّال (هو يحرس هذا الحارس، وهذا الحارس يحرسه)
+  begin
+    if exists(select 1 from cron.job where jobname = 'almajhool-doctor' and not active) then
+      begin
+        perform cron.alter_job(job_id := (select jobid from cron.job where jobname = 'almajhool-doctor'), active := true);
+      exception when undefined_function then
+        update cron.job set active = true where jobname = 'almajhool-doctor';
+      end;
+    elsif not exists(select 1 from cron.job where jobname = 'almajhool-doctor') then
+      perform cron.schedule('almajhool-doctor', '3-59/5 * * * *', 'select public._doctor_full()');
+    end if;
+  exception when others then null;
+  end;
+  insert into private_settings(key, value) values ('minute_guard',
+      jsonb_build_object('at', now(), 'idle_killed', n_idle, 'ai_requeued', n_ai, 'errors_1m', errs)::text)
+    on conflict (key) do update set value = excluded.value, updated_at = now();
+exception when others then null;
+end $$;
+revoke execute on function public._minute_guard() from public, anon, authenticated;
+
+do $$ begin
+  perform cron.schedule('almajhool-doctor', '3-59/5 * * * *', 'select public._doctor_full()');
+exception when others then raise notice 'doctor cron v99: %', sqlerrm;
+end $$;
+
+-- =====================================================================
 --  الحارس الأمني (لازم يبقى آخر شي بالملف قبل تحديث ذاكرة API — أي إصدار جديد ينضاف فوقه):
 --  يسد أي دالة أو جدول انفتح للزائر بالغلط بأي إصدار.
 -- =====================================================================

@@ -125,4 +125,82 @@ void main() {
     await open(tester, SelfDoctorCard(key: UniqueKey(), load: () async => throw Exception('للمالك فقط')));
     expect(find.text('للمالك فقط'), findsOneWidget);
   });
+
+  // ===== قائمة الفحوصات الكاملة (الخادم يرسلها جاهزة بالعربي) =====
+  Map<String, dynamic> fullReport() => {
+        'last': {
+          'at': DateTime.now().subtract(const Duration(minutes: 1)).toUtc().toIso8601String(),
+          'fixed': 1,
+          'alerts': 1,
+          'worst': 'alert',
+          'list': [
+            {'g': 'الخادم', 'n': 'مهام الخادم الأساسية', 's': 'ok', 'v': '15/15 شغّالة', 'h': ''},
+            {'g': 'الخادم', 'n': 'حجم قاعدة البيانات', 's': 'info', 'v': '120 ميگا', 'h': ''},
+            {'g': 'الأمان', 'n': 'خزنة الأسرار والمحافظ', 's': 'fixed', 'v': 'رجّع قفل 1 جدول', 'h': ''},
+            {'g': 'الإشعارات', 'n': 'إشعارات Google', 's': 'ok', 'v': 'جاهزة', 'h': 'شرح الإشعارات'},
+            {'g': 'التطبيق عند المستخدمين', 'n': 'أخطاء يشوفها المستخدمين (آخر ساعة)', 's': 'alert', 'v': '12', 'h': ''},
+            {'g': 'البيانات والفلوس', 'n': 'طلبات السحب المعلقة', 's': 'warn', 'v': '2 تنتظرك', 'h': ''},
+          ],
+        },
+        'fixed_24h': 1,
+        'alerts_24h': 1,
+        'since': '2026-11-15',
+        'days': [
+          {'d': '2026-11-15', 'worst': 'alert', 'fixed': 1, 'alerts': 1, 'crashes': 0, 'devices': 40, 'db_mb': 120},
+          {'d': '2026-11-14', 'worst': 'ok', 'fixed': 0, 'alerts': 0, 'crashes': 0, 'devices': 38},
+        ],
+        'log': [
+          {'at': DateTime.now().toUtc().toIso8601String(), 'action': 'alert', 'detail': 'خطأ يتكرر عند المستخدمين ⟵ يعني: صلاحية ناقصة'},
+        ],
+      };
+
+  testWidgets('البطاقة بالقائمة الكاملة: تبين المشاكل بس + عدد كل الفحوصات', (tester) async {
+    await open(tester, SelfDoctorCard(load: () async => fullReport()));
+    expect(find.text('يحتاجك (1)'), findsOneWidget);
+    expect(find.textContaining('6 فحص: 2 سليم · 1 صلّحها · 1 ينراد انتباه · 1 يحتاجك'), findsOneWidget);
+    // المشاكل تطلع، والسليم لا
+    expect(find.text('أخطاء يشوفها المستخدمين (آخر ساعة)'), findsOneWidget);
+    expect(find.text('طلبات السحب المعلقة'), findsOneWidget);
+    expect(find.text('خزنة الأسرار والمحافظ'), findsOneWidget);
+    expect(find.text('مهام الخادم الأساسية'), findsNothing);
+    expect(find.text('كل الفحوصات (6)'), findsOneWidget);
+  });
+
+  testWidgets('الشاشة الكاملة: كل المجموعات والفحوصات وصحة الأيام والسجل بالعربي', (tester) async {
+    tester.view.physicalSize = const Size(900, 5000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    var runs = 0;
+    await open(
+        tester,
+        SelfDoctorCard(
+          load: () async => fullReport(),
+          run: () async {
+            runs++;
+            return {'fixed': 0, 'alerts': 1};
+          },
+        ));
+    await tester.tap(find.text('كل الفحوصات (6)'));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    for (final g in ['الخادم', 'الأمان', 'الإشعارات', 'التطبيق عند المستخدمين', 'البيانات والفلوس']) {
+      expect(find.text(g), findsOneWidget, reason: g);
+    }
+    expect(find.text('مهام الخادم الأساسية'), findsOneWidget);
+    expect(find.text('120 ميگا'), findsOneWidget);
+    expect(find.text('شرح الإشعارات'), findsOneWidget);
+    expect(find.text('صحة التطبيق آخر 2 يوم'), findsOneWidget);
+    expect(find.text('15/11'), findsOneWidget);
+    expect(find.textContaining('أجهزة 40 · 120 ميگا'), findsOneWidget);
+    expect(find.textContaining('يراقب صحة التطبيق من 15/11/2026'), findsOneWidget);
+    expect(find.text('خطأ يتكرر عند المستخدمين ⟵ يعني: صلاحية ناقصة'), findsOneWidget);
+    // الزر اللي بالشاشة (البطاقة بعدها موجودة تحتها)
+    await tester.tap(find.descendant(of: find.byType(SelfDoctorScreen), matching: find.text('افحص وصلّح هسه')));
+    await tester.pump();
+    await tester.pump();
+    expect(runs, 1);
+    expect(find.descendant(of: find.byType(SelfDoctorScreen), matching: find.text('خلص الفحص: صلّح 0، ويحتاجك 1')),
+        findsOneWidget);
+  });
 }
